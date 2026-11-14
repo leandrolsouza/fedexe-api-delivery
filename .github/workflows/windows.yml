@@ -2,8 +2,6 @@ name: Windows installer
 
 on:
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
@@ -29,8 +27,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --features custom-protocol
       - name: Verify release versions
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
           $npmVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
@@ -42,9 +38,6 @@ jobs:
           if ($version -cne $npmVersion -or $version -cne $npmLock.version -or
               $version -cne $npmLock.packages[''].version -or $version -cne $cargoVersion) {
             throw 'As versões do Tauri, npm e Cargo precisam coincidir.'
-          }
-          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -cne "v$version") {
-            throw "A tag da release precisa corresponder a v$version."
           }
       - name: Build installer
         run: .\node_modules\.bin\tauri.cmd build --ci -- --locked
@@ -124,48 +117,4 @@ jobs:
           if ($restored.settings.workspaceName -cne $data.settings.workspaceName -or
               $restored.collections[0].name -cne $data.collections[0].name) {
             throw 'O Fedexe não preservou os dados ao reabrir.'
-          }
-
-  publish:
-    if: github.event_name == 'release'
-    needs: verify-installer
-    runs-on: windows-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: fedexe-windows-nsis
-          path: release-assets
-      - name: Attach installer to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          $installer = @(Get-ChildItem release-assets -File -Filter '*-setup.exe')
-          if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
-          $checksum = "$($installer[0].FullName).sha256"
-          if (!(Test-Path -LiteralPath $checksum)) { throw 'Checksum ausente.' }
-          $release = gh release view $env:RELEASE_TAG --json assets
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $assets = ($release | ConvertFrom-Json).assets
-          $paths = $installer[0].FullName, $checksum, 'docs/BENCHMARK.md',
-            'tools/benchmark-scenario.mjs', 'tools/benchmark-memory.ps1'
-          $missing = @(foreach ($path in $paths) {
-            $file = Get-Item -LiteralPath $path
-            $existing = $assets | Where-Object name -CEQ $file.Name
-            if (!$existing) {
-              $file.FullName
-              continue
-            }
-            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($existing.digest -cne "sha256:$hash") {
-              throw "O anexo $($file.Name) já existe com conteúdo diferente."
-            }
-          })
-          if ($missing.Count) {
-            gh release upload $env:RELEASE_TAG @missing
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
