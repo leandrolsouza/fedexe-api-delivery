@@ -21,3 +21,5 @@ Valide em uma VM Windows descartável. Use somente dados fictícios. Para não u
 | Restaurar o manifesto correto e instalar | O NSIS atualiza, o app reabre na versão esperada e os dados e segredos continuam acessíveis. |
 
 Registre os dois builds, a versão do Windows e o resultado de cada cenário. O workflow instala a release 1.0.0, grava dados de teste e verifica se o instalador novo substitui o executável e preserva o workspace. A matriz também cobre o cofre, a decisão de adiar e a atualização pelo app.
+
+Em Windows build 26300, a 1.1.0 detectou a 1.1.1 em um canal local de teste. Os dois instaladores NSIS usaram uma chave descartável e um identificador de app separado. **Adiar** manteve a sessão aberta, o app recusou um pacote adulterado e a segunda tentativa com o pacote válido reabriu a 1.1.1. O workspace de teste e o segredo fictício no cofre permaneceram acessíveis. A [execução no GitHub Actions](https://github.com/leandrolsouza/fedexe-api-delivery/actions/runs/43644039344) registrou a migração manual a partir da 1.0.0.
