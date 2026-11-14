@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::time::Duration;
 use tauri::{AppHandle, State, ipc::Channel};
-use tauri_plugin_updater::{Update, UpdaterBuilder, UpdaterExt};
+use tauri_plugin_updater::{Error, Update, UpdaterBuilder, UpdaterExt};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -67,7 +67,6 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tauri::test::{mock_builder, mock_context, noop_assets};
-    use tauri_plugin_updater::Error;
 
     #[test]
     fn accepts_only_new_stable_versions_and_verifies_the_signed_package() {
@@ -137,5 +136,20 @@ pub(crate) async fn install_update(
         || { let _ = progress.send("Verificando assinatura e preparando a instalação…"); },
     )
     .await
-    .map_err(|_| "Não foi possível baixar, verificar ou instalar o pacote. Tente novamente ou baixe a versão no GitHub Releases.".into())
+    .map_err(|error| {
+        match error {
+            Error::Minisign(_)
+            | Error::Base64(_)
+            | Error::SignatureUtf8(_)
+            | Error::MissingSignedVersion
+            | Error::SignedVersionMismatch { .. } => {
+                "A assinatura do pacote não pôde ser validada. Baixe a versão oficial no GitHub Releases."
+            }
+            Error::Reqwest(_) | Error::Network(_) => {
+                "Não foi possível baixar a atualização. Verifique a conexão e tente novamente."
+            }
+            _ => "Não foi possível iniciar o instalador. Tente novamente ou baixe a versão no GitHub Releases.",
+        }
+        .into()
+    })
 }
