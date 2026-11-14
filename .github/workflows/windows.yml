@@ -52,8 +52,10 @@ jobs:
         run: |
           $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*-setup.exe')
           if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
-          $hash = (Get-FileHash -LiteralPath $installer[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $($installer[0].Name)" | Set-Content -Encoding ascii "$($installer[0].FullName).sha256"
+          $name = $installer[0].Name.Replace(' ', '.')
+          $installer = Rename-Item -LiteralPath $installer[0].FullName -NewName $name -PassThru
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Encoding ascii "$($installer.FullName).sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: fedexe-windows-nsis
@@ -146,4 +148,24 @@ jobs:
           if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
           $checksum = "$($installer[0].FullName).sha256"
           if (!(Test-Path -LiteralPath $checksum)) { throw 'Checksum ausente.' }
-          gh release upload $env:RELEASE_TAG $installer[0].FullName $checksum docs/BENCHMARK.md tools/benchmark-scenario.mjs tools/benchmark-memory.ps1
+          $release = gh release view $env:RELEASE_TAG --json assets
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $assets = ($release | ConvertFrom-Json).assets
+          $paths = $installer[0].FullName, $checksum, 'docs/BENCHMARK.md',
+            'tools/benchmark-scenario.mjs', 'tools/benchmark-memory.ps1'
+          $missing = @(foreach ($path in $paths) {
+            $file = Get-Item -LiteralPath $path
+            $existing = $assets | Where-Object name -CEQ $file.Name
+            if (!$existing) {
+              $file.FullName
+              continue
+            }
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($existing.digest -cne "sha256:$hash") {
+              throw "O anexo $($file.Name) já existe com conteúdo diferente."
+            }
+          })
+          if ($missing.Count) {
+            gh release upload $env:RELEASE_TAG @missing
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
