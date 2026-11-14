@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Controles da janela principal. Requisições HTTP usam os comandos Rust existentes.","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-minimize","core:window:allow-toggle-maximize","core:window:allow-close","core:window:allow-destroy","core:window:allow-start-dragging"]}}

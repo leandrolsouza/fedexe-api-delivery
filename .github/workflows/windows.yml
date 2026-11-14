@@ -1,0 +1,149 @@
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: |
+          npm run format:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --features custom-protocol
+      - name: Verify release versions
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
+          $npmVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $npmLock = Get-Content package-lock.json -Raw | ConvertFrom-Json -AsHashtable
+          $metadata = cargo metadata --locked --no-deps --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargoVersion = ($metadata | ConvertFrom-Json).packages |
+            Where-Object name -EQ 'fedexe-api-delivery' | Select-Object -ExpandProperty version
+          if ($version -cne $npmVersion -or $version -cne $npmLock.version -or
+              $version -cne $npmLock.packages[''].version -or $version -cne $cargoVersion) {
+            throw 'As versões do Tauri, npm e Cargo precisam coincidir.'
+          }
+          if ($env:RELEASE_TAG -and $env:RELEASE_TAG -cne "v$version") {
+            throw "A tag da release precisa corresponder a v$version."
+          }
+      - name: Build installer
+        run: .\node_modules\.bin\tauri.cmd build --ci -- --locked
+      - name: Generate installer checksum
+        run: |
+          $installer = @(Get-ChildItem target/release/bundle/nsis -File -Filter '*-setup.exe')
+          if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
+          $hash = (Get-FileHash -LiteralPath $installer[0].FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer[0].Name)" | Set-Content -Encoding ascii "$($installer[0].FullName).sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedexe-windows-nsis
+          if-no-files-found: error
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*-setup.exe.sha256
+
+  verify-installer:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fedexe-windows-nsis
+      - name: Verify installation and workspace preservation
+        run: |
+          $installer = @(Get-ChildItem -File -Filter '*-setup.exe')
+          if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
+          $expected = ((Get-Content -LiteralPath "$($installer[0].FullName).sha256" -Raw) -split '\s+')[0]
+          $actual = (Get-FileHash -LiteralPath $installer[0].FullName -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw 'Checksum divergente.' }
+
+          $directory = Join-Path $env:RUNNER_TEMP 'fedexe-installer-smoke'
+          if (Test-Path -LiteralPath $directory) { throw 'A pasta de teste deve estar vazia.' }
+          $binary = Join-Path $directory 'fedexe-api-delivery.exe'
+          $workspace = Join-Path $env:APPDATA 'app.fedexe.api/workspace.json'
+          if (Test-Path -LiteralPath $workspace) { throw 'O perfil de teste já contém um workspace.' }
+
+          function Install-Package {
+            $setup = Start-Process -FilePath $installer[0].FullName -ArgumentList "/S /D=$directory" -WindowStyle Hidden -Wait -PassThru
+            if ($setup.ExitCode -ne 0) { throw "Falha do instalador: $($setup.ExitCode)." }
+            if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Executável ausente.' }
+          }
+
+          function Read-WorkspaceAfterLaunch([DateTime]$PreviousWrite) {
+            $app = Start-Process -FilePath $binary -WindowStyle Hidden -PassThru
+            try {
+              $deadline = [DateTime]::UtcNow.AddSeconds(30)
+              while ([DateTime]::UtcNow -lt $deadline) {
+                if ($app.HasExited) { throw "O Fedexe saiu antes de gravar o workspace: $($app.ExitCode)." }
+                $file = Get-Item -LiteralPath $workspace -ErrorAction SilentlyContinue
+                if ($file -and $file.LastWriteTimeUtc -gt $PreviousWrite) {
+                  return Get-Content -LiteralPath $workspace -Raw | ConvertFrom-Json
+                }
+                Start-Sleep -Milliseconds 250
+              }
+              throw 'O Fedexe não gravou o workspace no prazo.'
+            } finally {
+              if (!$app.HasExited) { Stop-Process -Id $app.Id; $app.WaitForExit() }
+            }
+          }
+
+          Install-Package
+          $data = Read-WorkspaceAfterLaunch ([DateTime]::MinValue)
+          if ($data.version -ne 1 -or !$data.collections.Count) { throw 'Workspace inicial inválido.' }
+          $data.settings.workspaceName = 'Fedexe Installer QA'
+          $data.collections[0].name = 'Coleção preservada'
+          $data | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $workspace -Encoding utf8
+          $before = (Get-FileHash -LiteralPath $workspace).Hash
+          Install-Package
+          if ((Get-FileHash -LiteralPath $workspace).Hash -ne $before) { throw 'O instalador alterou o workspace.' }
+          [IO.File]::SetLastWriteTimeUtc($workspace, [DateTime]::UtcNow.AddMinutes(-1))
+          $restored = Read-WorkspaceAfterLaunch ((Get-Item -LiteralPath $workspace).LastWriteTimeUtc)
+          if ($restored.settings.workspaceName -cne $data.settings.workspaceName -or
+              $restored.collections[0].name -cne $data.collections[0].name) {
+            throw 'O Fedexe não preservou os dados ao reabrir.'
+          }
+
+  publish:
+    if: github.event_name == 'release'
+    needs: verify-installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: fedexe-windows-nsis
+          path: release-assets
+      - name: Attach installer to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $installer = @(Get-ChildItem release-assets -File -Filter '*-setup.exe')
+          if ($installer.Count -ne 1) { throw 'Esperado exatamente um instalador.' }
+          $checksum = "$($installer[0].FullName).sha256"
+          if (!(Test-Path -LiteralPath $checksum)) { throw 'Checksum ausente.' }
+          gh release upload $env:RELEASE_TAG $installer[0].FullName $checksum docs/BENCHMARK.md tools/benchmark-scenario.mjs tools/benchmark-memory.ps1
