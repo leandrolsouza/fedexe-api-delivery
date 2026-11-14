@@ -78,6 +78,7 @@ import { cancel, native, normalizeError, releaseResponseBodies, send } from './l
 import { cn, download, uid } from './lib/utils';
 import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
+import { UpdateDialog, UpdateSettings, useUpdates } from './components/Updates';
 import { Dropdown } from './components/ui/dropdown';
 import { curlFor, MethodBadge, RequestEditor } from './components/RequestEditor';
 import {
@@ -138,6 +139,7 @@ export function App() {
 }
 
 function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
+  const updates = useUpdates();
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
   const [storageError, setStorageError] = useState(initial.error);
@@ -401,6 +403,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
+      if (updates.progress) return;
       if (event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setCommandOpen((current) => !current);
@@ -425,7 +428,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [save, sendRequest, addRequest, view]);
+  }, [save, sendRequest, addRequest, view, updates.progress]);
 
   function askName(
     title: string,
@@ -1512,6 +1515,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onChange={setWorkspace}
               onImport={() => setImportOpen(true)}
               onHelp={() => setHelpOpen(true)}
+              updates={<UpdateSettings updates={updates} />}
             />
           )}
           <div hidden={view !== 'runner'}>
@@ -1563,6 +1567,20 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
       </footer>
 
+      <UpdateDialog
+        updates={updates}
+        blocked={
+          Object.keys(drafts).length
+            ? 'Salve ou descarte os rascunhos antes de instalar.'
+            : busy
+              ? 'Aguarde a execução atual terminar antes de instalar.'
+              : storageError
+                ? 'Resolva o problema de armazenamento antes de instalar.'
+                : hasPendingStorage
+                  ? 'Aguarde o workspace terminar de salvar.'
+                  : ''
+        }
+      />
       <Dialog
         open={commandOpen}
         onOpenChange={setCommandOpen}

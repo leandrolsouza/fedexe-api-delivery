@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod credentials;
 mod http;
+#[cfg(windows)]
+mod updates;
 mod workspace;
 
 use http::{Collection, Request, Response, Run};
@@ -167,7 +169,10 @@ fn main() {
 
     let builder = tauri::Builder::default();
     #[cfg(windows)]
-    let builder = builder.plugin(tauri_plugin_dialog::init());
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::PendingUpdate::default());
     builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
@@ -204,6 +209,10 @@ fn main() {
             credentials::read_secret,
             #[cfg(windows)]
             credentials::write_secret,
+            #[cfg(windows)]
+            updates::check_update,
+            #[cfg(windows)]
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("Fedexe API");

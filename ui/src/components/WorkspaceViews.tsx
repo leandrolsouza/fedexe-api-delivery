@@ -1026,11 +1026,13 @@ export function SettingsView({
   onChange,
   onImport,
   onHelp,
+  updates,
 }: {
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
   onImport: () => void;
   onHelp: () => void;
+  updates: React.ReactNode;
 }) {
   const settings = workspace.settings;
   const update = (patch: Partial<Workspace['settings']>) =>
@@ -1046,6 +1048,7 @@ export function SettingsView({
         title="Um workspace com a sua cara."
         description="Ajuste os detalhes e deixe o Fedexe trabalhar no seu ritmo."
       />
+      {updates}
       <section className="surface settings-surface">
         <div className="settings-section-heading">
           <Monitor size={20} />

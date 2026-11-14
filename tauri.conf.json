@@ -1,6 +1,6 @@
 {
   "productName": "Fedexe API",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "app.fedexe.api",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -25,6 +25,16 @@
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'",
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/leandrolsouza/fedexe-api-delivery/releases/latest/download/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": { "installMode": "passive" }
     }
   },
   "bundle": {

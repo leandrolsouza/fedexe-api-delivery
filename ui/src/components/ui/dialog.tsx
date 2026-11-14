@@ -10,6 +10,7 @@ export function Dialog({
   description,
   children,
   className,
+  dismissible = true,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -17,9 +18,15 @@ export function Dialog({
   description?: string;
   children: ReactNode;
   className?: string;
+  dismissible?: boolean;
 }) {
   return (
-    <Primitive.Root open={open} onOpenChange={onOpenChange}>
+    <Primitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next || dismissible) onOpenChange(next);
+      }}
+    >
       <Primitive.Portal>
         <Primitive.Overlay className="dialog-overlay" />
         <Primitive.Content className={cn('dialog-content', className)}>
@@ -28,7 +35,11 @@ export function Dialog({
               <Primitive.Title>{title}</Primitive.Title>
               {description && <Primitive.Description>{description}</Primitive.Description>}
             </div>
-            <Primitive.Close className="button button-ghost button-icon" aria-label="Fechar">
+            <Primitive.Close
+              disabled={!dismissible}
+              className="button button-ghost button-icon"
+              aria-label="Fechar"
+            >
               <X size={18} />
             </Primitive.Close>
           </div>

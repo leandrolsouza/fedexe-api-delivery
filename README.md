@@ -2,6 +2,8 @@
 
 Cliente HTTP desktop local sob licença MIT. Rust + Tauri 2, com interface React, TypeScript, Tailwind CSS e componentes no padrão shadcn/ui. Sem conta e sem serviços de nuvem obrigatórios.
 
+**Vindo da 1.0.x?** Baixe o instalador da [versão 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) quando ela estiver disponível e execute-o sobre a instalação existente. A série 1.0.x não tem atualizador. A partir da 1.1, o Fedexe verifica versões estáveis na abertura e em **Configurações → Atualizações**.
+
 ## Executar
 
 Instale Node.js 22.17+, Rust com o toolchain MSVC, as ferramentas de build C++ da Microsoft e o WebView2.
@@ -32,7 +34,7 @@ Para gerar o instalador Windows por usuário, execute `.\node_modules\.bin\tauri
 
 Execute manualmente o workflow **Windows installer** no commit da release. Ele confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows.
 
-Após a conclusão do workflow, baixe o artefato `fedexe-windows-nsis` e confira o SHA-256. Crie um rascunho com a tag `v<versão>` apontando para o commit testado e anexe o instalador e seu checksum desse artefato. Inclua também `docs/BENCHMARK.md`, `tools/benchmark-scenario.mjs` e `tools/benchmark-memory.ps1` do mesmo commit. A publicação disponibiliza os arquivos preparados no rascunho.
+Para publicar uma versão estável com o atualizador habilitado, siga o [procedimento de assinatura e publicação](docs/UPDATER.md).
 
 ### Validar a instalação em outro Windows
 
