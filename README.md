@@ -30,7 +30,9 @@ cargo run --release --locked --features custom-protocol
 
 Para gerar o instalador Windows por usuário, execute `.\node_modules\.bin\tauri.cmd build --ci -- --locked` no PowerShell. O pacote NSIS fica em `target/release/bundle/nsis`. A versão do instalador vem de `tauri.conf.json`.
 
-No GitHub, a publicação de uma release com a tag `v<versão>` dispara o workflow **Windows installer**. O workflow confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows. Depois dessas verificações, anexa à release o instalador, o SHA-256, os resultados do benchmark e os scripts usados na medição. A execução manual do workflow também gera e testa o pacote, que fica disponível como artefato da execução.
+Execute manualmente o workflow **Windows installer** no commit da release. Ele confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows.
+
+Após a conclusão do workflow, baixe o artefato `fedexe-windows-nsis` e confira o SHA-256. Crie um rascunho com a tag `v<versão>` apontando para o commit testado e anexe o instalador e seu checksum desse artefato. Inclua também `docs/BENCHMARK.md`, `tools/benchmark-scenario.mjs` e `tools/benchmark-memory.ps1` do mesmo commit. A publicação disponibiliza os arquivos preparados no rascunho.
 
 ### Validar a instalação em outro Windows
 
