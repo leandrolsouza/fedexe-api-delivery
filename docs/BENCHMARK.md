@@ -76,7 +76,13 @@ No mesmo Windows, o Postman 12.36.4 foi iniciado três vezes, fechando todos os 
 | 2 | 723 ms | 37 | 1.123,8 MiB | 1.130,4 MiB |
 | 3 | 732 ms | 37 | 1.159,5 MiB | 1.161,8 MiB |
 
-As amostras correspondem à sessão desktop sem login e sem coleção carregada. A detecção da janela tem um ponto de término diferente da observação de abertura do Fedexe com Playwright. Tempo do runner, pico em carga, retenção e cancelamento no Postman desktop seguem pendentes em uma sessão autenticada.
+As amostras correspondem à sessão desktop sem login e sem coleção carregada. A detecção da janela tem um ponto de término diferente da observação de abertura do Fedexe com Playwright.
+
+No Postman desktop autenticado, o runner funcional local concluiu a coleção em **10.550 ms**, com 100 testes aprovados e zero erros. O log independente confirmou 100 respostas HTTP 200 em ordem, incluindo as três respostas de 10 MiB. A janela HTTP no servidor foi de **10.232 ms**.
+
+O coletor amostrou somente o processo proprietário da janela nesta rodada. Nesse processo, a média no segundo anterior à primeira requisição foi de **640,8 MiB**, o pico durante a janela HTTP foi de **769,4 MiB** e a média entre dois e três segundos após a última resposta foi de **742,5 MiB**.
+
+Na rodada seguinte, o coletor somou os oito processos da árvore em 599 amostras. O Postman concluiu os 100 testes em **10.513 ms**, com zero erros. O servidor verificou novamente as 100 respostas, com uma janela HTTP de **10.120 ms**. A memória privada média no segundo anterior foi de **1.169,0 MiB** (11 amostras). O pico durante a janela HTTP foi de **1.498,2 MiB** (112 amostras), e a média entre dois e três segundos após a última resposta foi de **1.436,9 MiB** (14 amostras). Em duas rodadas de cancelamento, a segunda resposta foi atrasada em 25 segundos. O servidor registrou o fechamento da conexão 126 ms e 86 ms após o início da ação automatizada de clicar em **Stop Run**. Nenhuma etapa posterior chegou ao servidor. Na segunda rodada, a automação observou **Stopped at 2%** em 737 ms, incluindo o tempo de consulta à interface.
 
 ## Abertura e repouso do Fedexe
 
