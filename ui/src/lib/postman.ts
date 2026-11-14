@@ -138,7 +138,9 @@ export function importPostman(value: unknown) {
           );
         const extraction = line
           .trim()
-          .match(/^pm\.collectionVariables\.set\('([\w-]+)', pm\.response\.json\(\)\.([\w$]+)\);$/);
+          .match(
+            /^pm\.(?:collectionVariables|environment)\.set\('([\w-]+)', pm\.response\.json\(\)\.([\w$]+)\);$/,
+          );
         if (status) tests.push({ type: 'status', equals: Number(status[1]) });
         else if (extraction) extract[extraction[1]] = '/' + extraction[2];
         else {

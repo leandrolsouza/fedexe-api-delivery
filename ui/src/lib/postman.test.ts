@@ -16,13 +16,24 @@ describe('migração do Postman', () => {
         name: 'Benchmark',
         schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
       },
-      item: [endpoint('Login', [status, token]), endpoint('Outro', [status, 'custom();'])],
+      item: [
+        endpoint('Login', [status, token]),
+        endpoint('Outro', [status, 'custom();']),
+        endpoint('Login por ambiente', [
+          status,
+          "pm.environment.set('qa_token', pm.response.json().token);",
+        ]),
+      ],
     })!;
     expect(result.collection?.requests[0]).toMatchObject({
       tests: [{ type: 'status', equals: 200 }],
       extract: { token: '/token' },
     });
     expect(result.collection?.requests[1].tests).toEqual([]);
+    expect(result.collection?.requests[2]).toMatchObject({
+      tests: [{ type: 'status', equals: 200 }],
+      extract: { qa_token: '/token' },
+    });
     expect(result.issues).toEqual(['Outro: scripts não importados.']);
   });
   it('preserva ordem, parâmetros, cabeçalhos repetidos e autorização da pasta em um round-trip', () => {
