@@ -1,4 +1,40 @@
 export const messages = {
+  'O snippet não inclui a autenticação OAuth 2.0. Exporte a coleção.':
+    'Export the collection to share the OAuth 2.0 configuration.',
+  'OAuth 2.0': 'OAuth 2.0',
+  'Configure a autorização OAuth 2.0.': 'Configure OAuth 2.0 authorization.',
+  'OAuth 2.0 está disponível no app desktop e na CLI.':
+    'OAuth 2.0 is available in the desktop app and CLI.',
+  'Authorization Code com PKCE': 'Authorization Code with PKCE',
+  'URL de autorização': 'Authorization URL',
+  'URL de token': 'Token URL',
+  'Client ID': 'Client ID',
+  'Client secret': 'Client secret',
+  'Escopo OAuth 2.0': 'OAuth 2.0 scope',
+  'Fluxo OAuth 2.0': 'OAuth 2.0 grant',
+  'Sessão OAuth 2.0 conectada.': 'OAuth 2.0 session connected.',
+  'Sessão OAuth 2.0 desconectada.': 'OAuth 2.0 session disconnected.',
+  'Conectar no navegador': 'Connect in browser',
+  'Desconectar sessão': 'Disconnect session',
+  'Operação OAuth 2.0 em andamento…': 'OAuth 2.0 operation in progress…',
+  'O provedor OAuth 2.0 recusou a autenticação ou retornou uma resposta inválida.':
+    'The OAuth 2.0 provider rejected authentication or returned an invalid response.',
+  'Confira a configuração OAuth 2.0. Use HTTPS ou HTTP em um endereço de loopback.':
+    'Check the OAuth 2.0 settings. Use HTTPS or HTTP on a loopback address.',
+  'Conecte a sessão OAuth 2.0 pelo editor de autorização.':
+    'Connect the OAuth 2.0 session in the authorization editor.',
+  'Authorization Code com PKCE está disponível no app desktop.':
+    'Authorization Code with PKCE is available in the desktop app.',
+  'Já existe uma operação OAuth 2.0 em andamento.':
+    'An OAuth 2.0 operation is already in progress.',
+  'O tempo para concluir a autorização OAuth 2.0 expirou.':
+    'The OAuth 2.0 authorization timed out.',
+  'OAuth 2.0 exige que o header Authorization seja gerado pelo app.':
+    'OAuth 2.0 requires an app-generated Authorization header.',
+  'OAuth 2.0 exige HTTPS para enviar o token fora do loopback.':
+    'OAuth 2.0 requires HTTPS to send tokens outside loopback.',
+  'Não foi possível abrir o navegador para a autorização OAuth 2.0.':
+    'Could not open the browser for OAuth 2.0 authorization.',
   'Importar workspace do Postman': 'Import Postman workspace',
   'A chave de API é armazenada no Gerenciador de Credenciais do Windows.':
     'The API key is stored in Windows Credential Manager.',

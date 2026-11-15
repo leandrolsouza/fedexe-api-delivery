@@ -7,12 +7,31 @@ import { join } from 'node:path';
 
 const secret = 'fixture-login-secret';
 const token = 'fixture-extracted-token';
+const oauthToken = 'fixture-oauth-access-token';
 const calls = [];
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   calls.push(request.url);
+  if (request.url === '/oauth/token') {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const basic = Buffer.from(`fedexe-ci:${secret}`).toString('base64');
+    const authenticated =
+      request.method === 'POST' &&
+      request.headers.authorization === `Basic ${basic}` &&
+      Buffer.concat(chunks).toString() === 'grant_type=client_credentials&scope=read';
+    response.writeHead(authenticated ? 200 : 401, { 'Content-Type': 'application/json' });
+    return response.end(
+      JSON.stringify(
+        authenticated
+          ? { access_token: oauthToken, token_type: 'Bearer', expires_in: 3600 }
+          : { error: 'invalid_client', error_description: secret },
+      ),
+    );
+  }
   const login = request.url === '/login' && request.headers['x-login'] === secret;
   const authorized =
-    request.url === '/private' && request.headers.authorization === `Bearer ${token}`;
+    (request.url === '/private' && request.headers.authorization === `Bearer ${token}`) ||
+    (request.url === '/oauth/private' && request.headers.authorization === `Bearer ${oauthToken}`);
   response.writeHead(login || authorized ? 200 : 401, { 'Content-Type': 'application/json' });
   response.end(JSON.stringify(login ? { token } : { ok: authorized }));
 });
@@ -119,7 +138,7 @@ try {
     const rawReport = await readFile(path, 'utf8');
     for (const output of [result.stdout, result.stderr, rawReport]) {
       assert.equal(
-        output.includes(secret) || output.includes(token),
+        [secret, token, oauthToken].some((value) => output.includes(value)),
         false,
         'Found a secret in CLI output.',
       );
@@ -144,6 +163,24 @@ try {
   const error = await check('execution', ['--stop-on-failure'], 2, []);
   assert.equal(error.steps[0].result, 'execution_error');
   assert.equal((await run(['--collection', collectionPath])).code, 2);
+  const oauthRequest = request('oauth', '/oauth/private', [], [status(200)]);
+  oauthRequest.auth = {
+    ...auth,
+    type: 'oauth2',
+    oauth: {
+      grant: 'client_credentials',
+      authorization_url: '',
+      token_url: '{{base}}/oauth/token',
+      client_id: 'fedexe-ci',
+      client_secret: '{{credential}}',
+      scope: 'read',
+    },
+  };
+  collection.requests = [oauthRequest];
+  await check('oauth-success', [], 0, ['/oauth/token', '/oauth/private']);
+  oauthRequest.auth.oauth.client_id = 'wrong-client';
+  const oauthError = await check('oauth-error', [], 2, ['/oauth/token']);
+  assert.equal(oauthError.steps[0].result, 'execution_error');
   console.log('Fedexe CLI smoke test passed.');
 } finally {
   server.close();

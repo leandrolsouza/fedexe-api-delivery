@@ -30,6 +30,19 @@ fn credential_target(
         .collect())
 }
 
+pub(crate) fn oauth_vault() -> fedexe_api_delivery::http::oauth::Vault {
+    fn target(key: &str) -> Vec<u16> {
+        format!("app.fedexe.api/oauth/{key}")
+            .encode_utf16()
+            .chain([0])
+            .collect()
+    }
+    fedexe_api_delivery::http::oauth::Vault {
+        read: |key| read_target(target(key)),
+        write: |key, value| write_target(target(key), value),
+    }
+}
+
 #[tauri::command]
 pub fn read_secret(
     environment: String,

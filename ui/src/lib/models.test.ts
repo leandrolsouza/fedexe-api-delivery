@@ -470,3 +470,44 @@ describe('requisição efetiva', () => {
     );
   });
 });
+
+describe('OAuth 2.0', () => {
+  it('compila o fluxo herdado e preserva referências sem incluir segredos nas exportações', () => {
+    const workspace = createWorkspace();
+    const collection = workspace.collections[0];
+    const request = { ...newRequest(), url: 'https://example.com/resource' };
+    const oauth = {
+      grant: 'client_credentials' as const,
+      authorization_url: '',
+      token_url: 'https://example.com/token',
+      client_id: 'test-client',
+      client_secret: 'fixture-oauth-secret',
+      scope: 'read',
+    };
+    collection.auth = { ...collection.auth, type: 'oauth2', oauth };
+    collection.requests = [request];
+    expect(validCollection(collection)).toBe(true);
+    expect(compileRequest(request, collection, {}).oauth).toMatchObject({
+      grant: 'client_credentials',
+      client_secret: 'fixture-oauth-secret',
+      resolved: true,
+    });
+    expect(JSON.stringify(exportableCollection(collection))).not.toContain(oauth.client_secret);
+    expect(JSON.stringify(exportableWorkspace(workspace))).not.toContain(oauth.client_secret);
+
+    const environment = workspace.environments[0];
+    environment.variables.push(pair('ci_oauth', 'fixture-env-secret'));
+    collection.auth.oauth = { ...oauth, client_secret: '{{ci_oauth}}' };
+    expect(exportableCollection(collection).auth.oauth?.client_secret).toBe('{{ci_oauth}}');
+    expect(JSON.stringify(exportableWorkspace(workspace))).not.toContain('fixture-env-secret');
+    const template = compileRequest(request, collection, {}, false, true);
+    expect(template.oauth).toMatchObject({ client_secret: '{{ci_oauth}}' });
+    expect(requestVariables(request, collection, environment).variables).toContainEqual({
+      name: 'ci_oauth',
+      source: 'environment',
+    });
+    expect(() => resolveHttpRequest(template, { ci_oauth: 'fixture-env-secret' })).toThrow(
+      'OAuth 2.0 is available in the desktop app and CLI.',
+    );
+  });
+});

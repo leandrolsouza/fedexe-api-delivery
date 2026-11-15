@@ -185,8 +185,50 @@ fn cancel(app: State<'_, App>) {
     }
 }
 
+#[cfg(windows)]
+#[tauri::command]
+async fn oauth_connect(app: State<'_, App>, provider: http::oauth::Provider) -> Result<(), String> {
+    app.client
+        .connect_oauth(provider, |url| {
+            use std::ptr::null;
+            use windows_sys::Win32::UI::{
+                Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL,
+            };
+            let url: Vec<u16> = url.as_str().encode_utf16().chain([0]).collect();
+            let result = unsafe {
+                ShellExecuteW(
+                    std::ptr::null_mut(),
+                    null(),
+                    url.as_ptr(),
+                    null(),
+                    null(),
+                    SW_SHOWNORMAL,
+                )
+            };
+            if result as isize <= 32 {
+                return Err(
+                    "Não foi possível abrir o navegador para a autorização OAuth 2.0.".into(),
+                );
+            }
+            Ok(())
+        })
+        .await
+}
+
+#[cfg(windows)]
+#[tauri::command]
+async fn oauth_disconnect(
+    app: State<'_, App>,
+    provider: http::oauth::Provider,
+) -> Result<(), String> {
+    app.client.disconnect_oauth(provider).await
+}
+
 fn main() {
     let client = http::Clients::new().expect("HTTP clients");
+
+    #[cfg(windows)]
+    let client = client.with_oauth_vault(credentials::oauth_vault());
 
     let builder = tauri::Builder::default();
     #[cfg(windows)]
@@ -230,6 +272,10 @@ fn main() {
             credentials::read_secret,
             #[cfg(windows)]
             credentials::write_secret,
+            #[cfg(windows)]
+            oauth_connect,
+            #[cfg(windows)]
+            oauth_disconnect,
             #[cfg(windows)]
             postman::postman_has_key,
             #[cfg(windows)]

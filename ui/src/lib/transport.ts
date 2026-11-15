@@ -9,6 +9,7 @@ import {
   type HttpRequest,
   type HttpResponse,
   type NativeCollection,
+  type OAuthProvider,
   type RunFailureReason,
   type RunResult,
   type RunRow,
@@ -29,7 +30,19 @@ export async function releaseResponseBodies(ids: string[]) {
   if (ids.length) await invoke('release_response_bodies', { ids });
 }
 
+export async function updateOAuthSession(
+  action: 'connect' | 'disconnect',
+  provider: OAuthProvider,
+) {
+  try {
+    await invoke(action === 'connect' ? 'oauth_connect' : 'oauth_disconnect', { provider });
+  } catch (error) {
+    throw normalizeError(error);
+  }
+}
+
 function checkBrowserRequest(request: HttpRequest) {
+  if (request.oauth) throw new Error(t('OAuth 2.0 está disponível no app desktop e na CLI.'));
   if (request.multipart !== undefined || request.binary_file !== undefined)
     throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
   if (request.redirect_policy === 'same_origin')

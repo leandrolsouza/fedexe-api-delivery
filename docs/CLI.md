@@ -55,3 +55,15 @@ jobs:
           name: fedexe-report
           path: fedexe-report.json
 ```
+
+## OAuth 2.0 Client Credentials
+
+No editor de autorização da coleção ou requisição, selecione **OAuth 2.0 → Client Credentials**. Configure a URL de token, o Client ID e o escopo opcional. Em **Client secret**, use uma referência como `{{oauth_client_secret}}`. Exporte a coleção e configure `OAUTH_CLIENT_SECRET` no ambiente do processo ou nos segredos do CI.
+
+```powershell
+node dist-cli/fedexe.mjs run --collection ./ci/collection.json --environment ./ci/environment.json --secret 'oauth_client_secret=OAUTH_CLIENT_SECRET' --report ./fedexe-report.json
+```
+
+O runner envia o Client ID e o segredo com `client_secret_basic`, usa o token Bearer nas requisições protegidas e mantém em memória os tokens com validade informada pelo provedor. Ele solicita outro token após a expiração. Use HTTPS no provedor e no recurso protegido. Para provedores locais de teste, use HTTP com um IP de loopback. Authorization Code com PKCE é executado no desktop.
+
+Em GitHub Actions, associe `OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}` ao `env` do passo que executa o runner.

@@ -33,8 +33,30 @@ export type Pair = { id: string; key: string; value: string; enabled: boolean; s
 export type MultipartRow = Pair & { kind: 'field' | 'file' };
 type MultipartPart =
   { kind: 'field'; name: string; value: string } | { kind: 'file'; name: string; path: string };
+export type OAuthProvider = {
+  authorization_url: string;
+  token_url: string;
+  client_id: string;
+  scope: string;
+};
+export type OAuthConfig = OAuthProvider & {
+  grant: 'pkce' | 'client_credentials';
+  client_secret: string;
+};
+type OAuthRequest =
+  | { grant: 'pkce'; provider: OAuthProvider }
+  | {
+      grant: 'client_credentials';
+      resolved?: boolean;
+      token_url: string;
+      client_id: string;
+      client_secret: string;
+      scope: string;
+    };
+
 export type Auth = {
-  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'api-key';
+  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'api-key' | 'oauth2';
+  oauth?: OAuthConfig;
   token: string;
   username: string;
   password: string;
@@ -114,6 +136,7 @@ export type HttpRequest = {
   multipart?: MultipartPart[];
   binary_file?: string;
   basic_auth?: [string, string];
+  oauth?: OAuthRequest;
   validate_json?: boolean;
   console_masks?: { values: string[]; headers: string[]; query: string[]; templates: string[] };
 };
@@ -392,11 +415,29 @@ function validPairs(value: unknown): value is Pair[] {
     )
   );
 }
+const oauthFields = [
+  'authorization_url',
+  'token_url',
+  'client_id',
+  'scope',
+  'client_secret',
+] as const;
+
+function validOAuth(config: OAuthConfig | undefined) {
+  return (
+    !!config &&
+    ['pkce', 'client_credentials'].includes(config.grant) &&
+    oauthFields.every((key) => typeof config[key] === 'string') &&
+    Object.keys(config).length === oauthFields.length + 1
+  );
+}
+
 function validAuth(value: unknown): value is Auth {
   const a = value as Auth;
   return (
     !!a &&
-    ['none', 'inherit', 'basic', 'bearer', 'api-key'].includes(a.type) &&
+    ['none', 'inherit', 'basic', 'bearer', 'api-key', 'oauth2'].includes(a.type) &&
+    (a.oauth === undefined ? a.type !== 'oauth2' : validOAuth(a.oauth)) &&
     ['token', 'username', 'password', 'key', 'value'].every(
       (key) => typeof a[key as keyof Auth] === 'string',
     ) &&
@@ -487,6 +528,26 @@ const publicCredential: CredentialValue = (_field, _value, publicValue) => publi
 
 function mapAuth(auth: Auth, credential: CredentialValue, keepReferences = true): Auth {
   const result = { ...auth };
+  if (auth.oauth) {
+    const { client_secret, token_url, authorization_url } = auth.oauth;
+    result.oauth = {
+      ...auth.oauth,
+      client_secret:
+        keepReferences && variableReference.test(client_secret)
+          ? client_secret
+          : credential(['auth', 'oauth', 'client_secret'], client_secret, ''),
+      token_url: credential(
+        ['auth', 'oauth', 'token_url'],
+        token_url,
+        redactUrlCredentials(token_url),
+      ),
+      authorization_url: credential(
+        ['auth', 'oauth', 'authorization_url'],
+        authorization_url,
+        redactUrlCredentials(authorization_url),
+      ),
+    };
+  }
   for (const field of ['token', 'username', 'password', 'value'] as const) {
     if (!keepReferences || !variableReference.test(auth[field]))
       result[field] = credential(['auth', field], auth[field], '');
@@ -619,6 +680,8 @@ export function compileRequestSnippet(
   collection: Collection,
   environment?: Environment,
 ) {
+  if (effectiveAuth(request, collection).type === 'oauth2')
+    throw new Error(t('O snippet não inclui a autenticação OAuth 2.0. Exporte a coleção.'));
   const mask = '<segredo>';
   const references = collectCredentialReferences({ ...collection, requests: [request] }, new Set());
   const maskCredential: CredentialValue = (_field, value) => (value ? mask : '');
@@ -709,6 +772,14 @@ export function requestVariables(
     request.url,
     ...headerEntries(request.headers).map(([, value]) => value),
     ...(request.basic_auth ?? []),
+    ...(request.oauth?.grant === 'client_credentials'
+      ? [
+          request.oauth.token_url,
+          request.oauth.client_id,
+          request.oauth.client_secret,
+          request.oauth.scope,
+        ]
+      : []),
     ...(request.query ?? []).flat(),
     ...(request.path_params ?? []).map(([, value]) => value),
     ...(request.form ?? []).flat(),
@@ -756,12 +827,11 @@ export function effectiveAuth(item: RequestItem, collection: Collection): Auth {
 
 export function authHeaderConflict(item: RequestItem, collection: Collection): string | undefined {
   const auth = effectiveAuth(item, collection);
-  const name =
-    auth.type === 'bearer' || auth.type === 'basic'
-      ? 'Authorization'
-      : auth.type === 'api-key' && auth.placement === 'header'
-        ? auth.key.trim()
-        : '';
+  const name = ['bearer', 'basic', 'oauth2'].includes(auth.type)
+    ? 'Authorization'
+    : auth.type === 'api-key' && auth.placement === 'header'
+      ? auth.key.trim()
+      : '';
   if (
     name &&
     item.headers.some((row) => row.enabled && row.key.trim().toLowerCase() === name.toLowerCase())
@@ -776,7 +846,7 @@ export function headerEntries(headers: HttpRequest['headers']): [string, string]
 export function generatedHeaders(item: RequestItem, collection: Collection) {
   const auth = effectiveAuth(item, collection);
   const headers: { name: string; value: string; secret: boolean; source: string }[] = [];
-  if (auth.type === 'basic' || auth.type === 'bearer')
+  if (['basic', 'bearer', 'oauth2'].includes(auth.type))
     headers.push({ name: 'Authorization', value: '', secret: true, source: t('Autorização') });
   if (auth.type === 'api-key' && auth.placement === 'header' && auth.key.trim())
     headers.push({ name: auth.key.trim(), value: '', secret: true, source: t('Autorização') });
@@ -885,6 +955,22 @@ export function compileRequest(
     .filter((p) => p.enabled && p.key.trim())
     .forEach((p) => addHeader(p.key.trim(), p.value));
   const auth = effectiveAuth(item, collection);
+  let oauth: OAuthRequest | undefined;
+  if (auth.type === 'oauth2') {
+    if (!auth.oauth) throw new Error(t('Configure a autorização OAuth 2.0.'));
+    const { grant, authorization_url, token_url, client_id, client_secret, scope } = auth.oauth;
+    oauth =
+      grant === 'pkce'
+        ? { grant, provider: { authorization_url, token_url, client_id, scope } }
+        : {
+            grant,
+            ...(resolve && { resolved: true }),
+            token_url: expandValue(token_url),
+            client_id: expandValue(client_id),
+            client_secret: expandValue(client_secret),
+            scope: expandValue(scope),
+          };
+  }
   if (auth.type === 'bearer') addHeader('Authorization', `Bearer ${auth.token}`);
   if (auth.type === 'api-key') {
     const key = auth.key.trim();
@@ -955,6 +1041,7 @@ export function compileRequest(
     body,
     ...(item.timeoutMs !== undefined ? { timeout_ms: item.timeoutMs } : {}),
     ...(item.redirectPolicy !== undefined ? { redirect_policy: item.redirectPolicy } : {}),
+    ...(oauth ? { oauth } : {}),
     ...(multipart !== undefined ? { multipart } : {}),
     ...(binaryFile !== undefined ? { binary_file: binaryFile } : {}),
     ...(defer
@@ -981,6 +1068,7 @@ export function resolveHttpRequest(
   template: HttpRequest,
   variables: Record<string, string>,
 ): HttpRequest {
+  if (template.oauth) throw new Error(t('OAuth 2.0 está disponível no app desktop e na CLI.'));
   if (template.multipart !== undefined || template.binary_file !== undefined)
     throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
   const url = appendQuery(

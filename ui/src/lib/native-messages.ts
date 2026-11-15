@@ -3,6 +3,15 @@ import { t, type Message } from './i18n';
 // Tauri returns application errors as strings. Keep the accepted templates explicit so
 // system diagnostics and text supplied by the user pass through untouched.
 const templates = [
+  'O provedor OAuth 2.0 recusou a autenticação ou retornou uma resposta inválida.',
+  'Confira a configuração OAuth 2.0. Use HTTPS ou HTTP em um endereço de loopback.',
+  'Conecte a sessão OAuth 2.0 pelo editor de autorização.',
+  'Authorization Code com PKCE está disponível no app desktop.',
+  'Já existe uma operação OAuth 2.0 em andamento.',
+  'O tempo para concluir a autorização OAuth 2.0 expirou.',
+  'OAuth 2.0 exige que o header Authorization seja gerado pelo app.',
+  'OAuth 2.0 exige HTTPS para enviar o token fora do loopback.',
+  'Não foi possível abrir o navegador para a autorização OAuth 2.0.',
   'Limite de 10 redirecionamentos excedido.',
   'Arquivo do corpo indisponível. Selecione o arquivo novamente.',
   'Não foi possível abrir o arquivo do corpo.',

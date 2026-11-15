@@ -70,3 +70,14 @@ No executável de produção 1.0.0-rc.1, a API Windows UI Automation identificou
 4. Importe os itens selecionados e revise o relatório. A importação acrescenta cópias ao workspace local. Configure nele os valores secretos e os valores que não foram compartilhados no Postman, selecione um ambiente e execute a coleção.
 
 O relatório aponta itens que falharam no download, recursos sem suporte que o Postman retornou e ajustes detectados durante a conversão, como anexos, exemplos de resposta ou scripts incompatíveis. A importação de OpenAPI está prevista para a 1.7.
+
+## OAuth 2.0
+
+Em **Autorização**, escolha OAuth 2.0 em uma requisição ou na configuração da coleção. Uma requisição configurada para herdar usa a autorização da coleção.
+
+- **Authorization Code com PKCE**. Registre o Fedexe como cliente público nativo no provedor e permita o retorno para `http://127.0.0.1:<porta>/oauth/callback`, com porta dinâmica. Preencha a URL de autorização, a URL de token, o Client ID e o escopo opcional. Use valores fixos nesses campos. Selecione **Conectar no navegador** e conclua a autorização no navegador padrão do Windows.
+- **Client Credentials**. Informe a URL de token, o Client ID, o Client secret e o escopo opcional. Esses campos aceitam variáveis. O Fedexe usa `client_secret_basic` para autenticar no provedor e adquire o token ao enviar ou rodar a requisição. Consulte as instruções da [CLI](CLI.md) para usar esse fluxo em CI.
+
+A sessão PKCE é compartilhada entre configurações com a mesma URL de autorização, URL de token, Client ID e escopo. O Fedexe armazena a sessão no Gerenciador de Credenciais do Windows e tenta renová-la na primeira requisição após a expiração, se houver refresh token. Se o provedor recusá-lo, conecte novamente. Use **Desconectar sessão** com a configuração original para apagar a sessão local. Para revogar a autorização no servidor, use o painel do provedor.
+
+Use HTTPS para o provedor e para as requisições protegidas. Para testes locais, HTTP é aceito em endereços IP de loopback. As exportações preservam a configuração e as referências a variáveis. Sessões e valores de Client secret ficam fora dos arquivos exportados.

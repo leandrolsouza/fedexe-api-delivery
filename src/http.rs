@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, time::Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub mod console;
+pub mod oauth;
 
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const VALIDATION_LIMIT: usize = 16 * 1024 * 1024;
@@ -24,6 +25,7 @@ pub struct Request {
     multipart: Option<Vec<MultipartPart>>,
     binary_file: Option<std::path::PathBuf>,
     basic_auth: Option<(String, String)>,
+    oauth: Option<oauth::Authorization>,
     #[serde(default)]
     validate_json: bool,
     timeout_ms: Option<u64>,
@@ -43,12 +45,14 @@ enum RedirectPolicy {
 
 pub struct Clients {
     direct: Client,
+    oauth: oauth::OAuth,
     same_origin: Client,
 }
 
 impl Clients {
     pub fn new() -> Result<Self, reqwest::Error> {
         Ok(Self {
+            oauth: oauth::OAuth::default(),
             direct: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
@@ -57,6 +61,25 @@ impl Clients {
                 .redirect(same_origin_redirects())
                 .build()?,
         })
+    }
+
+    pub fn with_oauth_vault(mut self, vault: oauth::Vault) -> Self {
+        self.oauth.vault = Some(vault);
+        self
+    }
+
+    pub async fn connect_oauth(
+        &self,
+        provider: oauth::Provider,
+        open_browser: impl FnOnce(&Url) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.oauth
+            .connect(&self.direct, provider, open_browser)
+            .await
+    }
+
+    pub async fn disconnect_oauth(&self, provider: oauth::Provider) -> Result<(), String> {
+        self.oauth.disconnect(provider).await
     }
 
     fn for_request(&self, request: &Request) -> &Client {
@@ -321,16 +344,17 @@ fn expand_value(input: &str, variables: &BTreeMap<String, String>) -> Result<Str
 }
 
 async fn perform(
-    client: &Client,
+    clients: &Clients,
     request: Request,
     variables: &BTreeMap<String, String>,
 ) -> Result<reqwest::Response, String> {
-    let request = prepare_request(client, request, variables).await?;
+    let client = clients.for_request(&request);
+    let request = prepare_request(clients, request, variables).await?;
     execute_request(client, request).await
 }
 
 async fn prepare_request(
-    client: &Client,
+    clients: &Clients,
     mut request: Request,
     variables: &BTreeMap<String, String>,
 ) -> Result<reqwest::Request, String> {
@@ -342,6 +366,7 @@ async fn prepare_request(
         }
         console::masks(std::mem::take(&mut request.console_masks));
     }
+    let client = clients.for_request(&request);
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut url = Url::parse(&resolve_path(&request.url, request.path_params, variables)?)
         .map_err(|e| e.to_string())?;
@@ -445,7 +470,24 @@ async fn prepare_request(
         }
         builder = builder.body(body);
     }
-    builder.build().map_err(http_error)
+    let mut prepared = builder.build().map_err(http_error)?;
+    if let Some(auth) = request.oauth {
+        if prepared
+            .headers()
+            .contains_key(reqwest::header::AUTHORIZATION)
+        {
+            return Err("OAuth 2.0 exige que o header Authorization seja gerado pelo app.".into());
+        }
+        oauth::validate_resource(prepared.url())?;
+        let token = clients
+            .oauth
+            .authorize(&clients.direct, auth, |value| expand(value, variables))
+            .await?;
+        prepared
+            .headers_mut()
+            .insert(reqwest::header::AUTHORIZATION, token);
+    }
+    Ok(prepared)
 }
 
 async fn execute_request(
@@ -546,7 +588,7 @@ async fn read_limited(
 
 pub async fn send(clients: &Clients, request: Request) -> Result<Response, String> {
     let start = Instant::now();
-    let mut response = perform(clients.for_request(&request), request, &BTreeMap::new()).await?;
+    let mut response = perform(clients, request, &BTreeMap::new()).await?;
     let mut file = tokio::fs::File::from_std(tempfile::tempfile().map_err(|e| e.to_string())?);
     let mut preview = Vec::new();
     let mut size_bytes = 0;
@@ -606,7 +648,7 @@ async fn run_step(
         )
     })?;
     let client = clients.for_request(&request);
-    let request = prepare_request(client, request, variables)
+    let request = prepare_request(clients, request, variables)
         .await
         .map_err(|error| (Preparation, error))?;
     let mut response = execute_request(client, request)
@@ -805,6 +847,7 @@ mod tests {
 
     fn test_clients() -> Clients {
         Clients {
+            oauth: oauth::OAuth::default(),
             direct: Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -1280,7 +1323,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 perform(
-                    &clients.direct,
+                    &clients,
                     multipart,
                     &BTreeMap::from([("message".into(), "Olá".into())])
                 )
