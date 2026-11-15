@@ -46,14 +46,28 @@ impl App {
 }
 
 #[tauri::command]
-async fn send(app: State<'_, App>, request: Request) -> Result<Response, String> {
+async fn send(
+    app: State<'_, App>,
+    request: Request,
+    console: tauri::ipc::Channel<http::console::Entry>,
+) -> Result<Response, String> {
     let mut response = app
-        .execute(|receiver| async {
-            tokio::select! {
-                biased;
-                _ = receiver => Err("Execução cancelada.".into()),
-                result = http::send(&app.client, request) => result,
-            }
+        .execute(|receiver| {
+            http::console::observe(
+                move |entry| {
+                    let _ = console.send(entry);
+                },
+                async {
+                    http::console::start(None);
+                    let result = tokio::select! {
+                        biased;
+                        _ = receiver => Err("Execução cancelada.".into()),
+                        result = http::send(&app.client, request) => result,
+                    };
+                    http::console::finish(result.as_ref().err().map(String::as_str), false);
+                    result
+                },
+            )
         })
         .await?;
     #[cfg(windows)]
@@ -143,13 +157,19 @@ async fn run(
     app: State<'_, App>,
     collection: Collection,
     progress: tauri::ipc::Channel<serde_json::Value>,
+    console: tauri::ipc::Channel<http::console::Entry>,
 ) -> Result<Run, String> {
     app.execute(|receiver| {
-        http::run(&app.client, collection, receiver, move |event| {
-            if let Ok(message) = serde_json::to_value(event) {
-                let _ = progress.send(message);
-            }
-        })
+        http::console::observe(
+            move |entry| {
+                let _ = console.send(entry);
+            },
+            http::run(&app.client, collection, receiver, move |event| {
+                if let Ok(message) = serde_json::to_value(event) {
+                    let _ = progress.send(message);
+                }
+            }),
+        )
     })
     .await
 }

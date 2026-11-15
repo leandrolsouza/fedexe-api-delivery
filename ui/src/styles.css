@@ -3140,6 +3140,73 @@ kbd {
   color: var(--secondary);
   box-shadow: 0 1px 4px #2927400d;
 }
+.request-console {
+  max-width: 1100px;
+  margin-inline: auto;
+  padding: 24px;
+}
+.request-console h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+.console-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-block: 16px;
+}
+.console-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.console-controls select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  color: var(--text);
+}
+.console-entry {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.console-entry summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  overflow-wrap: anywhere;
+}
+.console-entry summary > * {
+  margin-inline-start: 12px;
+}
+.console-details {
+  display: grid;
+  gap: 12px;
+  padding: 0 16px 16px 24px;
+  overflow-wrap: anywhere;
+}
+.console-details h2 {
+  margin-block: 8px;
+  font-weight: 600;
+}
+.console-details ol {
+  list-style: decimal inside;
+}
+.console-details pre,
+.console-headers {
+  background: var(--canvas);
+  padding: 8px 12px;
+  white-space: pre-wrap;
+}
+.console-headers div {
+  display: grid;
+  grid-template-columns: minmax(90px, 25%) 1fr;
+  gap: 10px;
+}
+.console-headers dt {
+  color: var(--muted);
+}
 .history-table {
   padding: 0 23px 10px;
 }

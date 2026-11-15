@@ -2,6 +2,7 @@ import { localizeNativeMessage } from './native-messages';
 import { t } from './i18n';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { checkResponse, isJsonPointer, jsonPointer, responseJson } from './response-tests';
+import { recordRequestTrace, type ConsoleTrace } from './request-console';
 import {
   resolveHttpRequest,
   DEFAULT_TIMEOUT_MS,
@@ -90,7 +91,12 @@ export async function pickBodyFile() {
 export async function send(request: HttpRequest) {
   controller = new AbortController();
   try {
-    return native ? await invoke<HttpResponse>('send', { request }) : await browserSend(request);
+    return native
+      ? await invoke<HttpResponse>('send', {
+          request,
+          console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('editor', trace)),
+        })
+      : await browserSend(request);
   } catch (error) {
     throw normalizeError(error);
   } finally {
@@ -118,7 +124,11 @@ export async function runCollection(
       onProgress(event.type === 'finished' ? { ...event, row: localizeRow(event.row) } : event),
     );
     try {
-      const result = await invoke<RunResult>('run', { collection, progress });
+      const result = await invoke<RunResult>('run', {
+        collection,
+        progress,
+        console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('runner', trace)),
+      });
       return { ...result, results: result.results.map(localizeRow) };
     } finally {
       progress.onmessage = () => {};

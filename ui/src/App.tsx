@@ -51,6 +51,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { loadSecrets, saveSecrets, secretSnapshot } from './lib/credentials';
 import {
   createWorkspace,
+  addConsoleMasks,
   compileRequest,
   emptyAuth,
   importCollection,
@@ -58,6 +59,7 @@ import {
   isEnvironment,
   loadWorkspace,
   newRequest,
+  RequestResolutionError,
   redactSecrets,
   safeWorkspace,
   exportableCollection,
@@ -76,6 +78,8 @@ import {
   type Workspace,
 } from './lib/models';
 import { cancel, native, normalizeError, releaseResponseBodies, send } from './lib/transport';
+import { recordEditorPreparationFailure } from './lib/request-console';
+import { RequestConsole } from './components/RequestConsole';
 import { cn, download, uid } from './lib/utils';
 import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
@@ -108,6 +112,7 @@ const navigationItems = [
   { id: 'environments', label: 'Ambientes', icon: Globe2 },
   { id: 'runner', label: 'Runner de coleções', icon: Play },
   { id: 'history', label: 'Histórico', icon: History },
+  { id: 'console', label: 'Console de requisições', icon: Terminal },
 ] as const;
 
 async function initialState() {
@@ -145,7 +150,9 @@ export function App() {
 
 function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
   const updates = useUpdates();
-  const navigation = navigationItems.map((item) => ({ ...item, label: t(item.label) }));
+  const navigation = navigationItems
+    .filter((item) => native || item.id !== 'console')
+    .map((item) => ({ ...item, label: t(item.label) }));
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
   const [storageError, setStorageError] = useState(initial.error);
@@ -343,9 +350,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     let status: number | null = null;
     let duration = 0;
     let errorText: string | undefined;
+    let prepared = false;
     const start = performance.now();
     try {
-      const compiled = compileRequest(item, collection, variablesFor(collection, environment));
+      const variables = variablesFor(collection, environment);
+      let compiled = compileRequest(item, collection, variables);
+      if (native) compiled = addConsoleMasks(compiled, item, collection, environment, variables);
+      prepared = true;
       const response = await send(compiled);
       status = response.status;
       duration = response.duration_ms;
@@ -353,6 +364,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     } catch (error) {
       errorText = redactSecrets(normalizeError(error).message, environment);
       duration = Math.round(performance.now() - start);
+      if (native && !prepared)
+        recordEditorPreparationFailure(duration, error instanceof RequestResolutionError);
       setErrors((current) => ({ ...current, [item.id]: errorText! }));
     } finally {
       setWorkspace((current) => ({
@@ -1316,7 +1329,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 ? t('Coleções')
                 : view === 'environments'
                   ? 'Workspace'
-                  : view === 'runner'
+                  : view === 'runner' || view === 'console'
                     ? t('Ferramentas')
                     : view === 'history'
                       ? 'Workspace'
@@ -1332,7 +1345,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                     ? t('Runner de coleções')
                     : view === 'history'
                       ? t('Histórico')
-                      : t('Configurações')}
+                      : view === 'console'
+                        ? t('Console de requisições')
+                        : t('Configurações')}
             </span>
             {view === 'collections' && request?.folder && (
               <>
@@ -1544,6 +1559,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onOpen={openHistory}
               onClear={() => setWorkspace((current) => ({ ...current, history: [] }))}
             />
+          ) : view === 'console' ? (
+            <RequestConsole />
           ) : (
             <SettingsView
               workspace={workspace}

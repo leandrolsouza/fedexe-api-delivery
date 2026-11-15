@@ -2,7 +2,7 @@ import { t } from './i18n';
 import { uid } from './utils';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
-export type View = 'collections' | 'environments' | 'runner' | 'history' | 'settings';
+export type View = 'collections' | 'environments' | 'runner' | 'history' | 'console' | 'settings';
 export type RunScope = 'collection' | 'folder' | 'selection';
 
 export function requestsForRun(
@@ -109,6 +109,7 @@ export type HttpRequest = {
   binary_file?: string;
   basic_auth?: [string, string];
   validate_json?: boolean;
+  console_masks?: { values: string[]; headers: string[]; query: string[]; templates: string[] };
 };
 export type HttpResponse = {
   status: number;
@@ -512,16 +513,20 @@ export function requestVariables(
     variables: [...names].map((name) => ({ name, source: resolved.get(name)?.source })),
   };
 }
+export class RequestResolutionError extends Error {}
+
 export function expand(value: string, vars: Record<string, string>) {
   let result = '';
   let rest = value;
   while (rest.includes('{{')) {
     const start = rest.indexOf('{{');
     const end = rest.indexOf('}}', start + 2);
-    if (end < 0) throw new Error(t('Variável sem fechamento. Use {{nome}}.'));
+    if (end < 0) throw new RequestResolutionError(t('Variável sem fechamento. Use {{nome}}.'));
     const key = rest.slice(start + 2, end).trim();
     if (!Object.hasOwn(vars, key))
-      throw new Error(t('Variável ausente: {0}. Configure o valor no ambiente ativo.', key));
+      throw new RequestResolutionError(
+        t('Variável ausente: {0}. Configure o valor no ambiente ativo.', key),
+      );
     result += rest.slice(0, start) + vars[key];
     rest = rest.slice(end + 2);
   }
@@ -588,6 +593,56 @@ export function isSecretHeader(row: Pair, collection: Collection, environment?: 
   return [...row.value.matchAll(/\{\{([\s\S]*?)\}\}/g)].some(
     ([, name]) => variables.get(name.trim())?.secret,
   );
+}
+
+export function addConsoleMasks(
+  request: HttpRequest,
+  item: RequestItem,
+  collection: Collection,
+  environment: Environment | undefined,
+  variables: Record<string, string>,
+  deferred = false,
+): HttpRequest {
+  const headers: string[] = [];
+  const query: string[] = [];
+  const credentials: string[] = [];
+  for (const header of item.headers) {
+    if (header.enabled && isSecretHeader(header, collection, environment)) {
+      headers.push(header.key.trim());
+      credentials.push(header.value);
+    }
+  }
+  for (const row of [
+    ...item.params,
+    ...(item.pathParams ?? []),
+    ...item.form,
+    ...(item.multipart ?? []),
+  ]) {
+    if (row.enabled && row.secret) credentials.push(row.value);
+  }
+  const auth = effectiveAuth(item, collection);
+  if (auth.type === 'basic') credentials.push(auth.username, auth.password);
+  if (auth.type === 'bearer') credentials.push(auth.token);
+  if (auth.type === 'api-key') {
+    (auth.placement === 'header' ? headers : query).push(auth.key.trim());
+    credentials.push(auth.value);
+  }
+  const values = [...collection.variables, ...(environment?.variables ?? [])]
+    .filter((row) => row.enabled && row.secret)
+    .map((row) => row.value);
+  if (!deferred) {
+    for (const template of credentials) {
+      try {
+        values.push(expand(template, variables));
+      } catch {
+        // Inactive fields can still refer to variables absent from this environment.
+      }
+    }
+  }
+  return {
+    ...request,
+    console_masks: { values, headers, query, templates: deferred ? credentials : [] },
+  };
 }
 
 export function compileRequest(
@@ -815,12 +870,13 @@ function resolvePath(url: string, rows: [string, string][], variables?: Record<s
   const params = new Map(rows);
   const resolved = path.replace(/\{\{[\s\S]*?\}\}|\{([A-Za-z0-9_-]+)\}/g, (match, key) => {
     if (key === undefined) return match;
-    if (!params.has(key)) throw new Error(t('Parâmetro de caminho ausente: {0}.', key));
+    if (!params.has(key))
+      throw new RequestResolutionError(t('Parâmetro de caminho ausente: {0}.', key));
     const template = params.get(key)!;
     if (!variables && template.includes('{{')) return template;
     const value = expandValue(template);
     if (!value || value === '.' || value === '..')
-      throw new Error(t('Valor inválido para o parâmetro de caminho: {0}.', key));
+      throw new RequestResolutionError(t('Valor inválido para o parâmetro de caminho: {0}.', key));
     return encodeURIComponent(value).replace(
       /[!'()*]/g,
       (char) => '%' + char.charCodeAt(0).toString(16).toUpperCase(),

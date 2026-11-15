@@ -14,6 +14,7 @@ Visual: superfícies claras, acentos violeta, cores semânticas por método HTTP
 - **Ambientes:** criação, duplicação, renomeação, seleção, exclusão e variáveis. Segredos ficam mascarados e são recuperados do Gerenciador de Credenciais no Windows. No navegador ficam na sessão. Ambiente substitui variáveis da coleção; extrações do runner têm prioridade durante uma rodada.
 - **Runner:** coleção inteira, pasta ou requisições selecionadas. Exige a escolha do ambiente e executa na ordem salva. Os testes verificam status, presença ou valor exato de header e campos JSON. No desktop, um valor igual em qualquer ocorrência de um header repetido satisfaz a regra. A extração por JSON Pointer disponibiliza strings, números e booleanos às etapas seguintes da rodada.
 - **Histórico:** até 300 metadados de envios avulsos, busca, filtros e reabertura da requisição original. Não persiste corpos de resposta nem headers de autorização.
+- **Console de requisições:** no desktop, reúne em memória os últimos 100 envios do editor e etapas do runner. Filtre pela origem ou por erro e abra um registro para conferir a requisição resolvida, os redirecionamentos e a resposta. A prévia tem até 8 KiB. JSON que não pode ser mascarado com segurança aparece como indisponível. O motor mascara credenciais, valores marcados como secretos e valores extraídos pelo runner antes de enviar os registros ao painel.
 - **Configurações:** tema, densidade, quebra de linha, nome do workspace, backup e restauração.
 - **Produtividade:** busca global (`Ctrl+K`), envio (`Ctrl+Enter`), nova requisição (`Ctrl+N`), alternância do painel (`Ctrl+\`), geração de cURL com placeholders e guia rápido dentro do app.
 
@@ -50,6 +51,8 @@ Na versão 1.0.0-rc.2, conferimos o SHA-256 do instalador baixado publicamente e
 Em um perfil isolado no mesmo Windows, atualizamos da rc.1 para a rc.2 com instaladores NSIS de teste. O SHA-256 do workspace permaneceu igual durante a atualização. Ao abrir a rc.2, a interface carregou a coleção e os dois ambientes gravados antes da atualização.
 
 `npm test` cobre modelos, importação, precedência, persistência segura, montagem de requisições, equivalência editor/runner, HTTP real, extração, isolamento, truncamento e cancelamento. `cargo test --locked --features custom-protocol` mantém o cenário existente de 100 requisições e respostas de 10 MiB.
+
+O teste `console_records_editor_and_runner_requests_without_exposing_credentials` usa um servidor local para verificar sucesso, redirecionamento, timeout, variável ausente e o mascaramento das credenciais e dos valores extraídos nos registros enviados ao console.
 
 Uma execução desktop com duas etapas e servidor local confirmou que a região `role="status"` com `aria-atomic="true"` exibe a segunda etapa em andamento e o resultado e a duração da primeira. Ao cancelar durante a segunda etapa, a região exibiu o cancelamento, uma etapa concluída de duas e o mesmo resultado parcial.
 

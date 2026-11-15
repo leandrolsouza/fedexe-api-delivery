@@ -1,4 +1,4 @@
-import { compileRequest, variablesFor } from './models';
+import { addConsoleMasks, compileRequest, variablesFor } from './models';
 import type { Collection, Environment, NativeCollection, RequestItem } from './models';
 
 export function prepareCollection(
@@ -6,6 +6,7 @@ export function prepareCollection(
   environment: Environment,
   requests: RequestItem[],
   stopOnFailure: boolean,
+  captureConsole = false,
 ): NativeCollection {
   const variables = variablesFor(collection, environment);
   return {
@@ -14,7 +15,13 @@ export function prepareCollection(
     requests: requests.map((item) => {
       const step = { name: item.name, tests: item.tests, extract: item.extract };
       try {
-        return { ...step, request: compileRequest(item, collection, variables, false, true) };
+        const request = compileRequest(item, collection, variables, false, true);
+        return {
+          ...step,
+          request: captureConsole
+            ? addConsoleMasks(request, item, collection, environment, variables, true)
+            : request,
+        };
       } catch (error) {
         return {
           ...step,

@@ -482,6 +482,7 @@ export function RunnerView({
         snapshot.environment,
         snapshot.requests,
         stopOnFailure,
+        native,
       );
       const redactRows = (rows: RunRow[]) =>
         rows.map((row) => ({

@@ -80,21 +80,21 @@ A referência inicial é a tag `v1.0.0`. As tags `v1.1.0`, `v1.2.0` e `v1.3.0` r
 
 **Pronto quando** um perfil novo abrir em inglês, os fluxos principais funcionarem nos dois idiomas e a escolha de português persistir após reabrir o app.
 
-### 1.3 — Runner por CLI para CI
+### 1.3.0 — Runner por CLI para CI (entregue)
 
-- Rodar uma coleção exportada, ou uma pasta, no Windows sem abrir a interface. Exigir ambiente explícito e manter ordem sequencial, testes declarativos, extrações e opção de parar na primeira falha.
-- Compartilhar a lógica de execução do desktop. Aceitar segredos via variáveis de ambiente do processo, documentar a precedência e mascarar valores nas mensagens e nos relatórios.
-- Entregar saída legível, relatório JSON e códigos de saída distintos para sucesso, falha de teste e erro de configuração ou execução. Documentar um exemplo de GitHub Actions.
+- A CLI executa uma coleção exportada inteira ou apenas uma pasta no Windows, com ambiente explícito, ordem sequencial e opção de parar na primeira falha. Reutiliza a lógica de execução do desktop, incluindo testes declarativos e extração de variáveis.
+- Aceita segredos por variáveis de ambiente do processo e omite valores sensíveis das saídas. Gera saída no terminal e relatório JSON, com códigos `0` para sucesso, `1` para falha de validação ou extração e `2` para erro de configuração ou execução.
+- O workflow [Windows collection runner](.github/workflows/cli.yml) gera o artefato `fedexe-cli-windows-x64`. O [guia da CLI](docs/CLI.md) explica como compilar, configurar segredos e executar no GitHub Actions.
 
-**Pronto quando** uma pipeline Windows executar a mesma coleção que o desktop, reutilizar o token extraído do login e falhar com o código esperado quando uma validação for quebrada de propósito, sem expor os valores secretos nas saídas do cenário.
+O teste de integração do workflow cobre a reutilização do token extraído no login, a falha intencional de uma validação, os códigos de saída e a ausência de credenciais e tokens nas saídas do cenário.
 
-### 1.4 — Console de requisições
+### 1.4.0 — Console de requisições (implementado)
 
 - Adicionar um painel no desktop com os envios do editor e do runner em ordem cronológica. Permitir filtrar por origem e por erro, abrir os detalhes de cada envio e limpar o console.
 - Mostrar método, URL e headers da requisição efetivamente enviada, além do status, duração, headers e prévia da resposta. Exibir redirecionamentos e indicar onde a falha ocorreu, por exemplo na resolução de variáveis, na conexão ou por timeout.
 - Mascarar credenciais e valores marcados como secretos antes de registrar ou exibir os detalhes. Manter um limite de entradas e de tamanho das prévias em memória.
 
-**Pronto quando** um cenário local reproduzir um envio bem-sucedido, um redirecionamento e um timeout. O console deve permitir identificar o que foi enviado pelo editor e pelo runner e diagnosticar a falha sem expor os segredos usados no cenário.
+Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e timeout, com registros do editor e do runner. A verificação também cobriu filtros, limpeza do console e mascaramento dos segredos do cenário.
 
 ### 1.5 — Testes de carga
 

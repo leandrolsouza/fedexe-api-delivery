@@ -4,6 +4,8 @@ use serde_json::Value;
 use std::{collections::BTreeMap, time::Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+pub mod console;
+
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const VALIDATION_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -27,6 +29,8 @@ pub struct Request {
     timeout_ms: Option<u64>,
     #[serde(default)]
     redirect_policy: RedirectPolicy,
+    #[serde(default)]
+    console_masks: console::Masks,
 }
 
 #[derive(Default, Deserialize)]
@@ -76,8 +80,10 @@ fn same_origin_redirects() -> reqwest::redirect::Policy {
             return attempt.stop();
         }
         if attempt.previous().len() > 10 {
+            console::redirect(attempt.status(), target, false);
             return attempt.error("Limite de 10 redirecionamentos excedido.");
         }
+        console::redirect(attempt.status(), target, true);
         attempt.follow()
     })
 }
@@ -273,6 +279,10 @@ fn http_error(error: reqwest::Error) -> String {
 }
 
 fn expand(input: &str, variables: &BTreeMap<String, String>) -> Result<String, String> {
+    expand_value(input, variables).inspect_err(|_| console::resolution_error())
+}
+
+fn expand_value(input: &str, variables: &BTreeMap<String, String>) -> Result<String, String> {
     let mut output = String::new();
     let mut rest = input;
     while let Some((literal, variable)) = rest.split_once("{{") {
@@ -293,9 +303,17 @@ fn expand(input: &str, variables: &BTreeMap<String, String>) -> Result<String, S
 
 async fn perform(
     client: &Client,
-    request: Request,
+    mut request: Request,
     variables: &BTreeMap<String, String>,
 ) -> Result<reqwest::Response, String> {
+    if console::active() {
+        for template in std::mem::take(&mut request.console_masks.templates) {
+            if let Ok(value) = expand_value(&template, variables) {
+                request.console_masks.values.push(value);
+            }
+        }
+        console::masks(std::mem::take(&mut request.console_masks));
+    }
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut url = Url::parse(&resolve_path(&request.url, request.path_params, variables)?)
         .map_err(|e| e.to_string())?;
@@ -345,10 +363,11 @@ async fn perform(
         builder = builder.header(name, value);
     }
     if let Some((username, password)) = request.basic_auth {
-        builder = builder.basic_auth(
-            expand(&username, variables)?,
-            Some(expand(&password, variables)?),
-        );
+        let username = expand(&username, variables)?;
+        let password = expand(&password, variables)?;
+        console::secret(&username);
+        console::secret(&password);
+        builder = builder.basic_auth(username, Some(password));
     }
     if let Some(parts) = request.multipart {
         let mut form = reqwest::multipart::Form::new();
@@ -391,7 +410,14 @@ async fn perform(
         }
         builder = builder.body(body);
     }
-    builder.send().await.map_err(|e| http_error(e))
+    let request = builder.build().map_err(http_error)?;
+    console::request(&request);
+    let response = client.execute(request).await.map_err(|error| {
+        console::transport_error(&error);
+        http_error(error)
+    })?;
+    console::response(&response);
+    Ok(response)
 }
 
 fn part_name(name: &str, variables: &BTreeMap<String, String>) -> Result<String, String> {
@@ -432,11 +458,13 @@ fn resolve_path(
         resolved.push_str(&path[cursor..placeholder.start()]);
         if let Some(key) = capture.get(1) {
             let key = key.as_str();
-            let template = params
-                .get(key)
-                .ok_or_else(|| format!("Parâmetro de caminho ausente: {key}."))?;
+            let template = params.get(key).ok_or_else(|| {
+                console::resolution_error();
+                format!("Parâmetro de caminho ausente: {key}.")
+            })?;
             let value = expand(template, variables)?;
             if matches!(value.as_str(), "" | "." | "..") {
+                console::resolution_error();
                 return Err(format!(
                     "Valor inválido para o parâmetro de caminho: {key}."
                 ));
@@ -465,6 +493,7 @@ async fn read_limited(
 ) -> Result<(Vec<u8>, bool), String> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| http_error(e))? {
+        console::chunk(&chunk);
         let remaining = limit - bytes.len();
         bytes.extend_from_slice(&chunk[..remaining.min(chunk.len())]);
         if chunk.len() > remaining {
@@ -481,6 +510,7 @@ pub async fn send(clients: &Clients, request: Request) -> Result<Response, Strin
     let mut preview = Vec::new();
     let mut size_bytes = 0;
     while let Some(chunk) = response.chunk().await.map_err(http_error)? {
+        console::chunk(&chunk);
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         let remaining = PREVIEW_LIMIT - preview.len();
         preview.extend_from_slice(&chunk[..remaining.min(chunk.len())]);
@@ -541,7 +571,9 @@ async fn run_step(
     let body = if needs_json {
         Some(read_limited(&mut response, VALIDATION_LIMIT).await?)
     } else {
-        while response.chunk().await.map_err(|e| http_error(e))?.is_some() {}
+        while let Some(chunk) = response.chunk().await.map_err(http_error)? {
+            console::chunk(&chunk);
+        }
         None
     };
     row.http_ms = start.elapsed().as_millis();
@@ -605,10 +637,13 @@ async fn run_step(
         match &json {
             Ok(Some(value)) => match value.pointer(&pointer) {
                 Some(Value::String(value)) => {
+                    console::extracted(&name, value);
                     variables.insert(name, value.clone());
                 }
                 Some(value) if value.is_number() || value.is_boolean() => {
-                    variables.insert(name, value.to_string());
+                    let value = value.to_string();
+                    console::extracted(&name, &value);
+                    variables.insert(name, value);
                 }
                 _ => row
                     .failures
@@ -658,15 +693,21 @@ pub async fn run(
             execution_error: false,
         };
         let step_start = Instant::now();
+        console::start(Some(index + 1));
         let validation = tokio::select! {
             biased;
             signal = &mut cancel => {
                 debug_assert!(signal.is_ok(), "active execution must retain its sender");
                 outcome = RunOutcome::Cancelled;
+                console::finish(Some("Execução cancelada."), false);
                 break;
             }
             result = run_step(clients, step, &mut collection.variables, &mut row) => result,
         };
+        console::finish(
+            validation.as_ref().err().map(String::as_str),
+            !row.failures.is_empty(),
+        );
         if let Err(error) = validation {
             row.execution_error = true;
             row.http_ms = step_start.elapsed().as_millis();
@@ -892,6 +933,132 @@ mod tests {
             }
         });
         server.join().unwrap();
+    }
+
+    #[test]
+    fn console_records_editor_and_runner_requests_without_exposing_credentials() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let long_preview = "x".repeat(8 * 1024 - "runner".len()) + "runner-secret";
+            for expected in [
+                "/redirect?passcode=a%26b",
+                "/done?token=redirect-secret",
+                "/login",
+                "/use/runner-secret",
+                "/slow",
+            ] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.split_whitespace().nth(1), Some(expected));
+                let mut headers = String::new();
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    headers.push_str(&line);
+                }
+                let (status, extra, body) = match expected {
+                    "/redirect?passcode=a%26b" => {
+                        assert!(headers.contains("x-private: editor-secret"));
+                        ("302 Found", "Location: /done?token=redirect-secret\r\n", "")
+                    }
+                    "/done?token=redirect-secret" => (
+                        "200 OK",
+                        "Set-Cookie: sid=cookie-secret\r\n",
+                        r#"{"ok":true,"reflected":["a&b","editor-secret","redirect-secret","cookie-secret"],"access_token":"response-secret","copy":"response-secret"}"#,
+                    ),
+                    "/login" => ("200 OK", "", r#"{"ticket":"runner-secret"}"#),
+                    "/use/runner-secret" => {
+                        assert!(headers.contains("x-observation: runner-secret"));
+                        ("200 OK", "", long_preview.as_str())
+                    }
+                    _ => {
+                        thread::sleep(Duration::from_millis(250));
+                        ("200 OK", "", "")
+                    }
+                };
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        let entries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        tauri::async_runtime::block_on(async {
+            let clients = test_clients();
+            let recorded = entries.clone();
+            console::observe(move |entry| recorded.lock().unwrap().push(entry), async {
+                console::start(None);
+                let request = serde_json::from_value(json!({
+                    "method": "GET",
+                    "url": format!("{base}/redirect?passcode=a%26b"),
+                    "headers": [["X-Private", "editor-secret"]],
+                    "console_masks": {"values": [], "templates": [], "headers": ["x-private"], "query": ["passcode"]},
+                    "redirect_policy": "same_origin"
+                })).unwrap();
+                let response = send(&clients, request).await.unwrap();
+                assert_eq!(response.status, 200);
+                assert!(response.preview.contains("editor-secret"));
+                console::finish(None, false);
+            }).await;
+            let recorded = entries.clone();
+            let collection = serde_json::from_value(json!({
+                "requests": [
+                    {"name": "login", "request": {"method": "GET", "url": format!("{base}/login")}, "extract": {"ticket": "/ticket"}},
+                    {"name": "use", "request": {"method": "GET", "url": format!("{base}/use/{{{{ticket}}}}"), "headers": [["X-Observation", "{{ticket}}"]]}},
+                    {"name": "slow", "request": {"method": "GET", "url": format!("{base}/slow"), "timeout_ms": 100}},
+                    {"name": "missing", "request": {"method": "GET", "url": format!("{base}/{{{{missing}}}}")}}
+                ]
+            })).unwrap();
+            let (_sender, receiver) = tokio::sync::oneshot::channel();
+            console::observe(
+                move |entry| recorded.lock().unwrap().push(entry),
+                run(&clients, collection, receiver, |_| {}),
+            )
+            .await
+            .unwrap();
+        });
+        server.join().unwrap();
+        let entries = serde_json::to_value(&*entries.lock().unwrap()).unwrap();
+        let text = entries.to_string();
+        for secret in [
+            "a&b",
+            "a%26b",
+            "editor-secret",
+            "redirect-secret",
+            "cookie-secret",
+            "response-secret",
+            "runner-secret",
+        ] {
+            assert!(!text.contains(secret), "{text}");
+        }
+        assert_eq!(entries.as_array().unwrap().len(), 5);
+        assert_eq!(entries[0]["request"]["method"], "GET");
+        assert_eq!(entries[0]["response"]["status"], 200);
+        assert!(
+            entries[0]["response"]["preview"]
+                .as_str()
+                .unwrap()
+                .contains("\"ok\": true")
+        );
+        assert_eq!(entries[0]["redirects"][0]["status"], 302);
+        assert_eq!(entries[0]["redirects"][0]["followed"], true);
+        assert_eq!(entries[2]["response"]["status"], 200);
+        assert_eq!(entries[2]["response"]["truncated"], true);
+        let preview = entries[2]["response"]["preview"].as_str().unwrap();
+        assert!(preview.ends_with("[***]"));
+        assert!(preview.len() <= 8 * 1024);
+        assert_eq!(entries[3]["failure"], "timeout");
+        assert_eq!(entries[4]["failure"], "resolution");
+        assert_eq!(entries[4]["step"], 4);
     }
 
     #[test]
