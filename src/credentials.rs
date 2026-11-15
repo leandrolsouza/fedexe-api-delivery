@@ -36,7 +36,14 @@ pub fn read_secret(
     variable: String,
     scope: Option<String>,
 ) -> Result<Option<String>, String> {
-    let target = credential_target(&environment, &variable, scope.as_deref())?;
+    read_target(credential_target(
+        &environment,
+        &variable,
+        scope.as_deref(),
+    )?)
+}
+
+pub(crate) fn read_target(target: Vec<u16>) -> Result<Option<String>, String> {
     let mut credential = ptr::null_mut();
     // Windows owns the returned allocation until CredFree.
     if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) } == 0 {
@@ -65,7 +72,13 @@ pub fn write_secret(
     value: Option<String>,
     scope: Option<String>,
 ) -> Result<(), String> {
-    let mut target = credential_target(&environment, &variable, scope.as_deref())?;
+    write_target(
+        credential_target(&environment, &variable, scope.as_deref())?,
+        value,
+    )
+}
+
+pub(crate) fn write_target(mut target: Vec<u16>, value: Option<String>) -> Result<(), String> {
     let Some(value) = value else {
         if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0 {
             return Ok(());

@@ -61,3 +61,12 @@ O teste `console_records_editor_and_runner_requests_without_exposing_credentials
 Uma execução desktop com duas etapas e servidor local confirmou que a região `role="status"` com `aria-atomic="true"` exibe a segunda etapa em andamento e o resultado e a duração da primeira. Ao cancelar durante a segunda etapa, a região exibiu o cancelamento, uma etapa concluída de duas e o mesmo resultado parcial.
 
 No executável de produção 1.0.0-rc.1, a API Windows UI Automation identificou o botão “Runner de coleções”, informou suporte a foco de teclado e permitiu acioná-lo. A mesma API identificou as caixas de seleção “Coleção”, “Ambiente de execução”, “Escopo da execução” e “Ao encontrar uma falha” como focáveis. No WebView2 de produção, o Playwright confirmou essa sequência com Tab a partir do seletor “Coleção” e verificou `:focus-visible` nos quatro seletores. A tentativa pelo foco global do Windows foi inconclusiva porque outro aplicativo manteve o foco. A leitura falada e o anúncio de atualizações do runner ainda precisam de verificação com o Narrador.
+
+### Importar um workspace do Postman no Windows
+
+1. Abra **Importar → Importar workspace do Postman**.
+2. Informe uma chave da API do Postman e selecione **Listar workspaces**. O app valida a chave e a guarda no Gerenciador de Credenciais do Windows. Nas próximas importações, use a chave salva ou informe outra. Use **Remover chave salva** para desconectar.
+3. Escolha um workspace. Todas as coleções e ambientes disponíveis ficam selecionados por padrão. Desmarque os itens que deseja deixar no Postman ou use **Desmarcar todos** para montar a sua seleção.
+4. Importe os itens selecionados e revise o relatório. A importação acrescenta cópias ao workspace local. Configure nele os valores secretos e os valores que não foram compartilhados no Postman, selecione um ambiente e execute a coleção.
+
+O relatório aponta itens que falharam no download, recursos sem suporte que o Postman retornou e ajustes detectados durante a conversão, como anexos, exemplos de resposta ou scripts incompatíveis. A importação de OpenAPI está prevista para a 1.7.

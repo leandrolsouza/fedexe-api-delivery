@@ -1,0 +1,5 @@
+• Atualizações: o aviso agora mostra o que mudou na versão disponível quando o manifesto traz as notas.
+• Credenciais: o Fedexe guarda valores reconhecidos como segredos no Gerenciador de Credenciais do Windows e permite tentar salvar novamente se uma gravação falhar.
+• Editor: escolha entre focar na requisição, focar na resposta ou dividir a tela. Expanda ou recolha todas as pastas de uma vez.
+• Console: inspecione os detalhes do envio e abra a requisição original pelo registro.
+• Runner: consulte os resultados por etapa, com detalhes das falhas e melhorias nos relatórios.

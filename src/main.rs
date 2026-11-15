@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod credentials;
 #[cfg(windows)]
+mod postman;
+#[cfg(windows)]
 mod updates;
 mod workspace;
 
@@ -228,6 +230,14 @@ fn main() {
             credentials::read_secret,
             #[cfg(windows)]
             credentials::write_secret,
+            #[cfg(windows)]
+            postman::postman_has_key,
+            #[cfg(windows)]
+            postman::postman_remove_key,
+            #[cfg(windows)]
+            postman::postman_connect,
+            #[cfg(windows)]
+            postman::postman_get,
             #[cfg(windows)]
             updates::check_update,
             #[cfg(windows)]
