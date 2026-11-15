@@ -4,3 +4,4 @@
 *.tsbuildinfo
 /.playwright-cli/
 /test-results/
+/dist-cli/

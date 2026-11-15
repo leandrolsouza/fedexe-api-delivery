@@ -38,6 +38,10 @@ Execute manualmente o workflow **Windows installer** no commit da release. Ele c
 
 Para publicar uma versão estável com o atualizador habilitado, siga o [procedimento de assinatura e publicação](docs/UPDATER.md).
 
+### Runner por CLI
+
+O Fedexe 1.3 executa coleções ou pastas exportadas a partir de um terminal no Windows. Veja o [guia do runner para CI](docs/CLI.md) para compilar, configurar segredos e gerar relatórios.
+
 ### Validar a instalação em outro Windows
 
 1. Copie o instalador x64 e o arquivo `.sha256` para a máquina de teste. Compare a primeira coluna do arquivo com o resultado de `Get-FileHash -LiteralPath "<instalador.exe>" -Algorithm SHA256`.
