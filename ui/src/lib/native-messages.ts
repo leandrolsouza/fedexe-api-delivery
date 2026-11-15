@@ -3,6 +3,11 @@ import { t, type Message } from './i18n';
 // Tauri returns application errors as strings. Keep the accepted templates explicit so
 // system diagnostics and text supplied by the user pass through untouched.
 const templates = [
+  'Não foi possível concluir a operação no Google Drive.',
+  'O backup excede o limite de 5 MB.',
+  'Reconecte a conta Google para acessar os backups.',
+  'Conecte uma conta Google para acessar os backups.',
+  'Informe as credenciais OAuth de um cliente desktop do Google.',
   'O provedor OAuth 2.0 recusou a autenticação ou retornou uma resposta inválida.',
   'Confira a configuração OAuth 2.0. Use HTTPS ou HTTP em um endereço de loopback.',
   'Conecte a sessão OAuth 2.0 pelo editor de autorização.',

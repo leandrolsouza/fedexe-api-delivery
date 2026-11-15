@@ -89,3 +89,14 @@ Em **Autorização**, escolha OAuth 2.0 em uma requisição ou na configuração
 A sessão PKCE é compartilhada entre configurações com a mesma URL de autorização, URL de token, Client ID e escopo. O Fedexe armazena a sessão no Gerenciador de Credenciais do Windows e tenta renová-la na primeira requisição após a expiração, se houver refresh token. Se o provedor recusá-lo, conecte novamente. Use **Desconectar sessão** com a configuração original para apagar a sessão local. Para revogar a autorização no servidor, use o painel do provedor.
 
 Use HTTPS para o provedor e para as requisições protegidas. Para testes locais, HTTP é aceito em endereços IP de loopback. As exportações preservam a configuração e as referências a variáveis. Sessões e valores de Client secret ficam fora dos arquivos exportados.
+
+## Backup e restauração pelo Google Drive
+
+No desktop, abra **Backups no Google Drive** no menu lateral ou em **Configurações**. Ative a API Google Drive em um projeto do Google Cloud, configure a tela de consentimento e crie um cliente OAuth do tipo **App para computador**. Se o projeto estiver em teste, inclua sua conta entre os usuários de teste. Informe o Client ID e o Client secret do cliente desktop no Fedexe e selecione **Conectar no navegador**.
+
+- **Criar backup no Drive** mostra as coleções, pastas, requisições e ambientes que compõem o arquivo antes de enviá-lo. O arquivo inclui as configurações do workspace e tem limite de 5 MB. O histórico de execução, os valores secretos e as referências ao cofre ficam fora do arquivo. Se o corpo de uma requisição usa um arquivo local, selecione o arquivo novamente na instalação de destino.
+- Cada envio cria uma cópia distinta na área de dados privados do app no Drive. Conecte a mesma conta Google com credenciais do mesmo projeto para listar os arquivos em outra instalação.
+- **Restaurar backup** baixa e valida a cópia selecionada. A confirmação substitui as coleções, os ambientes e as configurações locais. Exporte os dados atuais antes de confirmar. Preencha novamente as credenciais necessárias às requisições após restaurar.
+- O Gerenciador de Credenciais do Windows armazena as credenciais do cliente desktop e os tokens OAuth. **Desconectar sessão** remove essa sessão do cofre local e preserva os arquivos no Drive.
+
+Abra **Notificações** pelo sino no cabeçalho. O indicador mostra quando há avisos não lidos. A aba mantém os resultados recentes de importação, backup e restauração e os avisos de atualização. Os relatórios detalhados de importação podem ser reabertos durante a sessão.

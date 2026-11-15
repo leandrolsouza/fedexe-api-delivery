@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod credentials;
 #[cfg(windows)]
+mod drive;
+#[cfg(windows)]
 mod postman;
 #[cfg(windows)]
 mod updates;
@@ -188,31 +190,28 @@ fn cancel(app: State<'_, App>) {
 #[cfg(windows)]
 #[tauri::command]
 async fn oauth_connect(app: State<'_, App>, provider: http::oauth::Provider) -> Result<(), String> {
-    app.client
-        .connect_oauth(provider, |url| {
-            use std::ptr::null;
-            use windows_sys::Win32::UI::{
-                Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL,
-            };
-            let url: Vec<u16> = url.as_str().encode_utf16().chain([0]).collect();
-            let result = unsafe {
-                ShellExecuteW(
-                    std::ptr::null_mut(),
-                    null(),
-                    url.as_ptr(),
-                    null(),
-                    null(),
-                    SW_SHOWNORMAL,
-                )
-            };
-            if result as isize <= 32 {
-                return Err(
-                    "Não foi possível abrir o navegador para a autorização OAuth 2.0.".into(),
-                );
-            }
-            Ok(())
-        })
-        .await
+    app.client.connect_oauth(provider, open_oauth_browser).await
+}
+
+#[cfg(windows)]
+fn open_oauth_browser(url: &url::Url) -> Result<(), String> {
+    use std::ptr::null;
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    let url: Vec<u16> = url.as_str().encode_utf16().chain([0]).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            null(),
+            url.as_ptr(),
+            null(),
+            null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err("Não foi possível abrir o navegador para a autorização OAuth 2.0.".into());
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -276,6 +275,12 @@ fn main() {
             oauth_connect,
             #[cfg(windows)]
             oauth_disconnect,
+            drive::drive_status,
+            drive::drive_connect,
+            drive::drive_disconnect,
+            drive::drive_list,
+            drive::drive_upload,
+            drive::drive_download,
             #[cfg(windows)]
             postman::postman_has_key,
             #[cfg(windows)]

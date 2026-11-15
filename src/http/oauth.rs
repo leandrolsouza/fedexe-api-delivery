@@ -175,14 +175,15 @@ pub(crate) struct OAuth {
 }
 
 impl Provider {
-    fn key(&self) -> Result<String, String> {
+    fn key(&self, google: bool) -> Result<String, String> {
         endpoint(&self.authorization_url)?;
         endpoint(&self.token_url)?;
         if self.client_id.trim().is_empty() {
             return Err(CONFIG.into());
         }
         Ok(format!(
-            "{:x}",
+            "{}{:x}",
+            if google { "google-drive-" } else { "" },
             Sha256::digest(serde_json::to_vec(self).map_err(|_| CONFIG)?,)
         ))
     }
@@ -246,27 +247,7 @@ impl OAuth {
                 }
                 return Ok(header);
             }
-            Authorization::Pkce { provider } => {
-                let vault = self.vault.as_ref().ok_or(DESKTOP)?;
-                let key = provider.key()?;
-                let _guard = self.interactive.try_lock().map_err(|_| BUSY)?;
-                let data = (vault.read)(&key)?.ok_or(RECONNECT)?;
-                let mut session: Session = serde_json::from_str(&data).map_err(|_| RECONNECT)?;
-                if !session.valid() {
-                    let refresh = session.refresh_token.as_deref().ok_or(RECONNECT)?;
-                    let form = [
-                        ("grant_type", "refresh_token"),
-                        ("refresh_token", refresh),
-                        ("client_id", &provider.client_id),
-                    ];
-                    let mut updated =
-                        exchange(client, endpoint(&provider.token_url)?, &form, None).await?;
-                    updated.refresh_token = updated.refresh_token.or(session.refresh_token);
-                    save(vault, &key, &updated)?;
-                    session = updated;
-                }
-                session
-            }
+            Authorization::Pkce { provider } => self.pkce_session(client, &provider, None).await?,
         };
         super::console::secret(&session.access_token);
         if let Some(refresh) = &session.refresh_token {
@@ -275,14 +256,69 @@ impl OAuth {
         bearer(&session.access_token)
     }
 
+    async fn pkce_session(
+        &self,
+        client: &Client,
+        provider: &Provider,
+        client_secret: Option<&str>,
+    ) -> Result<Session, String> {
+        let vault = self.vault.as_ref().ok_or(DESKTOP)?;
+        let key = provider.key(client_secret.is_some())?;
+        let _guard = self.interactive.try_lock().map_err(|_| BUSY)?;
+        let data = (vault.read)(&key)?.ok_or(RECONNECT)?;
+        let session: Session = serde_json::from_str(&data).map_err(|_| RECONNECT)?;
+        if session.valid() {
+            return Ok(session);
+        }
+        let refresh = session.refresh_token.as_deref().ok_or(RECONNECT)?;
+        let mut form = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+            ("client_id", &provider.client_id),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+        let mut updated = exchange(client, endpoint(&provider.token_url)?, &form, None).await?;
+        updated.refresh_token = updated.refresh_token.or(session.refresh_token);
+        save(vault, &key, &updated)?;
+        Ok(updated)
+    }
+
+    #[cfg(any(windows, test))]
+    pub(crate) async fn google_bearer(
+        &self,
+        client: &Client,
+        provider: &Provider,
+        client_secret: &str,
+    ) -> Result<HeaderValue, String> {
+        bearer(
+            &self
+                .pkce_session(client, provider, Some(client_secret))
+                .await?
+                .access_token,
+        )
+    }
+
     pub(crate) async fn connect(
         &self,
         client: &Client,
         provider: Provider,
         open_browser: impl FnOnce(&Url) -> Result<(), String>,
     ) -> Result<(), String> {
+        self.connect_pkce(client, provider, None, open_browser)
+            .await
+    }
+
+    pub(crate) async fn connect_pkce(
+        &self,
+        client: &Client,
+        provider: Provider,
+        client_secret: Option<&str>,
+        open_browser: impl FnOnce(&Url) -> Result<(), String>,
+    ) -> Result<(), String> {
         let vault = self.vault.as_ref().ok_or(DESKTOP)?;
-        let key = provider.key()?;
+        let key = provider.key(client_secret.is_some())?;
         let _guard = self.interactive.try_lock().map_err(|_| BUSY)?;
         let mut authorize = endpoint(&provider.authorization_url)?;
         let mut random = [0; 64];
@@ -317,6 +353,12 @@ impl OAuth {
                 .query_pairs_mut()
                 .append_pair("scope", &provider.scope);
         }
+        if client_secret.is_some() {
+            authorize
+                .query_pairs_mut()
+                .append_pair("access_type", "offline")
+                .append_pair("prompt", "consent");
+        }
         open_browser(&authorize)?;
         let code = tokio::time::timeout(
             Duration::from_secs(180),
@@ -324,26 +366,35 @@ impl OAuth {
         )
         .await
         .map_err(|_| "O tempo para concluir a autorização OAuth 2.0 expirou.")??;
-        let session = exchange(
-            client,
-            endpoint(&provider.token_url)?,
-            &[
-                ("grant_type", "authorization_code"),
-                ("client_id", &provider.client_id),
-                ("code", &code),
-                ("redirect_uri", &redirect),
-                ("code_verifier", &verifier),
-            ],
-            None,
-        )
-        .await?;
+        let mut form = vec![
+            ("grant_type", "authorization_code"),
+            ("client_id", &provider.client_id),
+            ("code", &code),
+            ("redirect_uri", &redirect),
+            ("code_verifier", &verifier),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+        let session = exchange(client, endpoint(&provider.token_url)?, &form, None).await?;
+        if client_secret.is_some() && session.refresh_token.is_none() {
+            return Err(FAILED.into());
+        }
         save(vault, &key, &session)
     }
 
     pub(crate) async fn disconnect(&self, provider: Provider) -> Result<(), String> {
+        self.disconnect_pkce(provider, false).await
+    }
+
+    pub(crate) async fn disconnect_pkce(
+        &self,
+        provider: Provider,
+        google: bool,
+    ) -> Result<(), String> {
         let vault = self.vault.as_ref().ok_or(DESKTOP)?;
         let _guard = self.interactive.try_lock().map_err(|_| BUSY)?;
-        (vault.write)(&provider.key()?, None)
+        (vault.write)(&provider.key(google)?, None)
     }
 }
 
@@ -530,13 +581,19 @@ mod tests {
         });
     }
 
-    static VAULT: SyncMutex<Option<String>> = SyncMutex::new(None);
+    static VAULT: std::sync::LazyLock<SyncMutex<HashMap<String, String>>> =
+        std::sync::LazyLock::new(|| SyncMutex::new(HashMap::new()));
 
     fn test_vault() -> Vault {
         Vault {
-            read: |_| Ok(VAULT.lock().unwrap().clone()),
-            write: |_, value| {
-                *VAULT.lock().unwrap() = value;
+            read: |key| Ok(VAULT.lock().unwrap().get(key).cloned()),
+            write: |key, value| {
+                let mut vault = VAULT.lock().unwrap();
+                if let Some(value) = value {
+                    vault.insert(key.to_owned(), value);
+                } else {
+                    vault.remove(key);
+                }
                 Ok(())
             },
         }
@@ -544,6 +601,12 @@ mod tests {
 
     #[test]
     fn pkce_checks_state_and_challenge_renews_and_disconnects() {
+        for client_secret in [None, Some("desktop-client-secret")] {
+            check_pkce(client_secret);
+        }
+    }
+
+    fn check_pkce(client_secret: Option<&'static str>) {
         tauri::async_runtime::block_on(async {
             let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", server.local_addr().unwrap());
@@ -560,6 +623,17 @@ mod tests {
                 let params: BTreeMap<_, _> = authorize.query_pairs().collect();
                 assert_eq!(params["response_type"], "code");
                 assert_eq!(params["code_challenge_method"], "S256");
+                assert_eq!(
+                    params.get("access_type").map(|v| v.as_ref()),
+                    client_secret.map(|_| "offline")
+                );
+                assert_eq!(
+                    params.get("prompt").map(|v| v.as_ref()),
+                    client_secret.map(|_| "consent")
+                );
+                if let Some(secret) = client_secret {
+                    assert!(!authorize.as_str().contains(secret));
+                }
                 let mut callback = Url::parse(&params["redirect_uri"]).unwrap();
                 callback
                     .query_pairs_mut()
@@ -584,6 +658,7 @@ mod tests {
                 assert_eq!(form["grant_type"], "authorization_code");
                 assert_eq!(form["client_id"], "desktop-fixture");
                 assert_eq!(form["code"], "fixture-code");
+                assert_eq!(form.get("client_secret").map(|v| v.as_ref()), client_secret);
                 assert_eq!(form["redirect_uri"], params["redirect_uri"]);
                 assert_eq!(
                     URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes())),
@@ -601,10 +676,11 @@ mod tests {
 
                 let (mut stream, _) = server.accept().await.unwrap();
                 let (_, _, body) = read_request(&mut stream).await;
-                assert_eq!(
-                    body,
-                    "grant_type=refresh_token&refresh_token=fixture-refresh&client_id=desktop-fixture"
-                );
+                let form: BTreeMap<_, _> = url::form_urlencoded::parse(body.as_bytes()).collect();
+                assert_eq!(form["grant_type"], "refresh_token");
+                assert_eq!(form["refresh_token"], "fixture-refresh");
+                assert_eq!(form["client_id"], "desktop-fixture");
+                assert_eq!(form.get("client_secret").map(|v| v.as_ref()), client_secret);
                 reply(
                     &mut stream,
                     "200 OK",
@@ -622,7 +698,7 @@ mod tests {
             };
             tokio::time::timeout(
                 Duration::from_secs(10),
-                oauth.connect(&client, provider(), |url| {
+                oauth.connect_pkce(&client, provider(), client_secret, |url| {
                     browser.send(url.clone()).unwrap();
                     Ok(())
                 }),
@@ -639,14 +715,29 @@ mod tests {
             let auth = || Authorization::Pkce {
                 provider: provider(),
             };
+            if client_secret.is_some() {
+                assert_eq!(
+                    restarted
+                        .authorize(&client, auth(), |value| Ok(value.into()))
+                        .await
+                        .unwrap_err(),
+                    RECONNECT
+                );
+            }
+            let get_header = || async {
+                if let Some(secret) = client_secret {
+                    restarted.google_bearer(&client, &provider(), secret).await
+                } else {
+                    restarted
+                        .authorize(&client, auth(), |value| Ok(value.into()))
+                        .await
+                }
+            };
             for _ in 0..2 {
-                let header = tokio::time::timeout(
-                    Duration::from_secs(10),
-                    restarted.authorize(&client, auth(), |value| Ok(value.into())),
-                )
-                .await
-                .unwrap()
-                .unwrap();
+                let header = tokio::time::timeout(Duration::from_secs(10), get_header())
+                    .await
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(header, "Bearer fixture-renewed");
                 assert!(header.is_sensitive());
             }
@@ -655,19 +746,16 @@ mod tests {
                 VAULT
                     .lock()
                     .unwrap()
-                    .as_ref()
+                    .get(&provider().key(client_secret.is_some()).unwrap())
                     .unwrap()
                     .contains("fixture-rotated")
             );
-            restarted.disconnect(provider()).await.unwrap();
-            assert!(VAULT.lock().unwrap().is_none());
-            assert_eq!(
-                restarted
-                    .authorize(&client, auth(), |value| Ok(value.into()))
-                    .await
-                    .unwrap_err(),
-                RECONNECT
-            );
+            restarted
+                .disconnect_pkce(provider(), client_secret.is_some())
+                .await
+                .unwrap();
+            assert!(VAULT.lock().unwrap().is_empty());
+            assert_eq!(get_header().await.unwrap_err(), RECONNECT);
         });
     }
 }

@@ -1,4 +1,48 @@
 export const messages = {
+  'Backups no Google Drive': 'Google Drive backups',
+  'Transfira um workspace entre instalações usando a mesma conta e o mesmo projeto Google Cloud.':
+    'Transfer a workspace between installations using the same account and Google Cloud project.',
+  'Ative a API Google Drive em um projeto Google Cloud e crie um cliente OAuth do tipo App para computador.':
+    'Enable the Google Drive API in a Google Cloud project and create a Desktop app OAuth client.',
+  'Criar backup no Drive': 'Back up to Drive',
+  'Recarregar backups': 'Refresh backups',
+  'Conclua a execução e salve ou descarte os rascunhos antes de usar o backup.':
+    'Finish the current run and save or discard drafts before using backups.',
+  'Nenhum backup encontrado.': 'No backups found.',
+  'Carregar mais backups': 'Load more backups',
+  'Operação do Google Drive em andamento…': 'Google Drive operation in progress…',
+  'O arquivo inclui as configurações do workspace e omite credenciais e valores secretos.':
+    'The file includes workspace settings and excludes credentials and secret values.',
+  '{0} coleção(ões)': '{0} collection(s)',
+  '{0} pasta(s)': '{0} folder(s)',
+  '{0} requisição(ões)': '{0} request(s)',
+  '{0} ambiente(s)': '{0} environment(s)',
+  'Enviar backup': 'Upload backup',
+  Notificações: 'Notifications',
+  'Notificações ({0} não lidas)': 'Notifications ({0} unread)',
+  'Consulte atualizações e resultados das operações do workspace.':
+    'View updates and workspace operation results.',
+  'Marcar todas como lidas': 'Mark all as read',
+  'Marcar como lida': 'Mark as read',
+  'Não lida': 'Unread',
+  Abrir: 'Open',
+  'Nenhuma notificação.': 'No notifications.',
+  'Atualização {0} disponível': 'Update {0} available',
+  'Importação concluída': 'Import complete',
+  'Falha na importação': 'Import failed',
+  'Backup local exportado': 'Local backup exported',
+  'Backup enviado ao Google Drive': 'Backup uploaded to Google Drive',
+  'Falha no backup do Google Drive': 'Google Drive backup failed',
+  'Falha na restauração do backup': 'Backup restore failed',
+  'Não foi possível concluir a operação no Google Drive.':
+    'Could not complete the Google Drive operation.',
+  'O backup excede o limite de 5 MB.': 'The backup exceeds the 5 MB limit.',
+  'Reconecte a conta Google para acessar os backups.':
+    'Reconnect the Google account to access backups.',
+  'Conecte uma conta Google para acessar os backups.':
+    'Connect a Google account to access backups.',
+  'Informe as credenciais OAuth de um cliente desktop do Google.':
+    'Enter the OAuth credentials for a Google desktop client.',
   'O snippet não inclui a autenticação OAuth 2.0. Exporte a coleção.':
     'Export the collection to share the OAuth 2.0 configuration.',
   'OAuth 2.0': 'OAuth 2.0',

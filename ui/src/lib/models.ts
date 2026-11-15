@@ -2,7 +2,15 @@ import { t } from './i18n';
 import { uid } from './utils';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
-export type View = 'collections' | 'environments' | 'runner' | 'history' | 'console' | 'settings';
+export type View =
+  | 'collections'
+  | 'environments'
+  | 'runner'
+  | 'history'
+  | 'console'
+  | 'settings'
+  | 'drive'
+  | 'notifications';
 export type RunScope = 'collection' | 'folder' | 'selection';
 
 export function requestsForRun(
@@ -720,6 +728,27 @@ export function exportableWorkspace(workspace: Workspace): Workspace {
     workspace,
     (_scope, _owner, _field, _value, publicValue) => publicValue,
   );
+}
+
+export function driveBackupSnapshot(workspace: Workspace): Workspace {
+  const { collections, environments, activeEnvironment, settings } = exportableWorkspace(workspace);
+  return {
+    version: 1,
+    collections: collections.map((collection) => ({
+      ...collection,
+      requests: collection.requests.map((request) => ({
+        ...request,
+        binaryFile: undefined,
+        multipart: request.multipart?.map((row) =>
+          row.kind === 'file' ? { ...row, value: '' } : row,
+        ),
+      })),
+    })),
+    environments,
+    activeEnvironment,
+    settings,
+    history: [],
+  };
 }
 
 export function redactSecrets(message: string, environment?: Environment): string {

@@ -5,6 +5,8 @@ use std::{collections::BTreeMap, time::Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub mod console;
+#[cfg(windows)]
+pub mod drive;
 pub mod oauth;
 
 const PREVIEW_LIMIT: usize = 256 * 1024;

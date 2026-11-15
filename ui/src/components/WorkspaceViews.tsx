@@ -74,7 +74,7 @@ export function PageHeading({
   description,
   action,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   action?: React.ReactNode;
@@ -82,7 +82,7 @@ export function PageHeading({
   return (
     <div className="page-heading">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -1417,12 +1417,16 @@ export function SettingsView({
   onChange,
   onImport,
   onHelp,
+  onBackup,
+  onDrive,
   updates,
 }: {
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
   onImport: () => void;
   onHelp: () => void;
+  onBackup: () => void;
+  onDrive?: () => void;
   updates: React.ReactNode;
 }) {
   const settings = workspace.settings;
@@ -1541,12 +1545,13 @@ export function SettingsView({
         <div className="settings-backup-actions">
           <Button
             variant="outline"
-            onClick={() =>
+            onClick={() => {
               download(
                 `fedexe-backup-${new Date().toISOString().slice(0, 10)}.json`,
                 JSON.stringify(exportableWorkspace(workspace), null, 2),
-              )
-            }
+              );
+              onBackup();
+            }}
           >
             <ArrowDownToLine size={15} />
             {' ' + t('Exportar backup')}
@@ -1555,6 +1560,11 @@ export function SettingsView({
             <FileJson2 size={15} />
             {' ' + t('Importar dados')}
           </Button>
+          {onDrive && (
+            <Button variant="outline" onClick={onDrive}>
+              {t('Backups no Google Drive')}
+            </Button>
+          )}
         </div>
         <p className="field-hint">
           {native

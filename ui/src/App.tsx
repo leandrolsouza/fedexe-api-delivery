@@ -1,3 +1,5 @@
+import { DriveBackups } from './components/DriveBackups';
+import { Notifications, useNotifications, type Notice } from './components/Notifications';
 import { PostmanWorkspaceDialog } from './components/PostmanWorkspaceDialog';
 import type { PostmanImport } from './lib/postman-workspace';
 import { formatNumber, t, useLocale } from './lib/i18n';
@@ -122,6 +124,7 @@ const navigationItems = [
   { id: 'runner', label: 'Runner de coleções', icon: Play },
   { id: 'history', label: 'Histórico', icon: History },
   { id: 'console', label: 'Console de requisições', icon: Terminal },
+  { id: 'drive', label: 'Backups no Google Drive', icon: HardDrive },
 ] as const;
 
 async function initialState() {
@@ -163,8 +166,13 @@ export function App() {
 
 function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
   const updates = useUpdates();
+  const { items: notices, markRead, add: addNotice } = useNotifications();
+  const unread = notices.filter((notice) => !notice.read).length;
+  useEffect(() => {
+    if (updates.version) addNotice('update', updates.version);
+  }, [updates.version, addNotice]);
   const navigation = navigationItems
-    .filter((item) => native || item.id !== 'console')
+    .filter((item) => native || (item.id !== 'console' && item.id !== 'drive'))
     .map((item) => ({ ...item, label: t(item.label) }));
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
@@ -213,7 +221,18 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [postmanOpen, setPostmanOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
-  const [importReport, setImportReport] = useState<{ name: string; issues: string[] }>();
+  type ImportReport = { name: string; issues: string[] };
+  const [importReport, setImportReport] = useState<ImportReport>();
+  const [importReports, setImportReports] = useState<Record<string, ImportReport>>({});
+  const restoring = useRef(false);
+
+  function showImportReport(report: ImportReport) {
+    const id = addNotice('imported');
+    setImportReports((current) =>
+      Object.fromEntries([[id, report], ...Object.entries(current).slice(0, 99)]),
+    );
+    setImportReport(report);
+  }
   const [snippetOpen, setSnippetOpen] = useState(false);
   const [editDialog, setEditDialog] = useState<EditDialog>();
   const [editName, setEditName] = useState('');
@@ -231,6 +250,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const dirty = !!request && JSON.stringify(request) !== JSON.stringify(savedRequest);
   const environment = workspace.environments.find((env) => env.id === workspace.activeEnvironment);
   const totalRequests = workspace.collections.reduce((sum, c) => sum + c.requests.length, 0);
+  const backupBlocked = busy || Object.keys(drafts).length > 0;
+  const restoreBlocked = useRef(backupBlocked);
+  useEffect(() => {
+    restoreBlocked.current = backupBlocked;
+  }, [backupBlocked]);
   const saving = !storageBlocked && workspace !== persisted && !storageError;
   const hasPendingStorage =
     workspace !== persisted && (!storageBlocked || workspace !== initial.workspace);
@@ -244,6 +268,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       (saved) => {
         if (superseded || !saved) return;
         setPersisted(workspace);
+        if (restoring.current) {
+          restoring.current = false;
+          addNotice('restored');
+          toast.success(t('Backup restaurado'));
+        }
         if (saved.cleanupError)
           setStorageError(
             t(
@@ -253,17 +282,21 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           );
       },
       (error) => {
-        if (!superseded)
-          setStorageError(
-            t('Não foi possível salvar o workspace. {0}', normalizeError(error).message),
-          );
+        if (superseded) return;
+        if (restoring.current) {
+          restoring.current = false;
+          addNotice('restoreFailed');
+        }
+        setStorageError(
+          t('Não foi possível salvar o workspace. {0}', normalizeError(error).message),
+        );
       },
     );
     return () => {
       superseded = true;
       cancel();
     };
-  }, [workspace, storageBlocked, autosave, saveAttempt]);
+  }, [workspace, storageBlocked, autosave, saveAttempt, addNotice]);
 
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
@@ -878,6 +911,60 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     );
   }
 
+  function confirmRestore(snapshot: Workspace) {
+    setConfirmDialog({
+      title: t('Restaurar backup?'),
+      description: t(
+        'Este backup substituirá as coleções, ambientes e configurações atuais. Exporte seus dados antes de continuar.',
+      ),
+      label: t('Restaurar backup'),
+      action: () => {
+        if (restoreBlocked.current) {
+          toast.error(
+            t('Conclua a execução e salve ou descarte os rascunhos antes de usar o backup.'),
+          );
+          return;
+        }
+        restoring.current = true;
+        setWorkspace(snapshot);
+        setStorageBlocked(false);
+        setDrafts({});
+        setResponses({});
+        setErrors({});
+        setLastRun(undefined);
+        setTabs([]);
+        setActive({ collectionId: snapshot.collections[0]?.id || '', requestId: '' });
+        setImportOpen(false);
+        setImportText('');
+        setImportError('');
+      },
+    });
+  }
+
+  function noticeAction(notice: Notice) {
+    switch (notice.kind) {
+      case 'update':
+        return () => {
+          setView('settings');
+          if (updates.version === notice.version) updates.setOpen(true);
+        };
+      case 'backup':
+      case 'backupFailed':
+        return native ? () => setView('drive') : undefined;
+      case 'restored':
+        return () => setView('collections');
+      case 'restoreFailed':
+      case 'localBackup':
+        return () => setView('settings');
+      case 'imported':
+        return importReports[notice.id]
+          ? () => setImportReport(importReports[notice.id])
+          : undefined;
+      case 'importFailed':
+        return () => setImportOpen(true);
+    }
+  }
+
   async function importData(text: string) {
     try {
       if (isCurl(text)) {
@@ -904,7 +991,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               ],
         }));
         openRequest(id, request.id);
-        setImportReport({ name: request.name, issues });
+        showImportReport({ name: request.name, issues });
         setImportOpen(false);
         setImportText('');
         setImportError('');
@@ -921,30 +1008,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           activeEnvironment: environment.id,
         }));
         openRequest(imported.id, imported.requests[0].id);
-        setImportReport({ name: imported.name, issues });
+        showImportReport({ name: imported.name, issues });
         setImportOpen(false);
         setImportText('');
         setImportError('');
         return;
       }
       if (isWorkspace(parsed)) {
-        setConfirmDialog({
-          title: t('Restaurar backup?'),
-          description: t(
-            'Este backup substituirá as coleções, ambientes e configurações atuais. Exporte seus dados antes de continuar.',
-          ),
-          label: t('Restaurar backup'),
-          action: () => {
-            setWorkspace(parsed);
-            setStorageBlocked(false);
-            setDrafts({});
-            setResponses({});
-            setTabs([]);
-            setActive({ collectionId: parsed.collections[0]?.id || '', requestId: '' });
-            setImportOpen(false);
-            toast.success(t('Backup restaurado'));
-          },
-        });
+        confirmRestore(parsed);
         return;
       }
       const postman = importPostman(parsed);
@@ -955,7 +1026,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           ...current,
           environments: [...current.environments, environment],
         }));
-        setImportReport({ name: environment.name, issues: postman?.issues ?? [] });
+        showImportReport({ name: environment.name, issues: postman?.issues ?? [] });
         setImportOpen(false);
         setImportText('');
         setImportError('');
@@ -963,7 +1034,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         return;
       }
       const c = postman?.collection ?? importCollection(parsed);
-      if (postman) setImportReport({ name: c.name, issues: postman.issues });
+      if (postman) showImportReport({ name: c.name, issues: postman.issues });
+      else addNotice('imported');
       setWorkspace((current) => ({ ...current, collections: [...current.collections, c] }));
       setImportOpen(false);
       setImportText('');
@@ -972,6 +1044,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       else setActive({ collectionId: c.id, requestId: '' });
       toast.success(t('{0}: {1} requisições importadas', c.name, c.requests.length));
     } catch (error) {
+      addNotice('importFailed');
       setImportError(normalizeError(error).message);
     }
   }
@@ -992,7 +1065,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       } else setView('environments');
     }
     setPostmanOpen(false);
-    setImportReport({
+    showImportReport({
       name: t(
         '{0} · {1} coleção(ões) e {2} ambiente(s) importados',
         name,
@@ -1127,12 +1200,15 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span className="header-divider" />
           <button
             className="header-help"
-            aria-label={t('Novidades do projeto')}
-            title={t('Novidades do projeto')}
-            onClick={() => setHelpOpen(true)}
+            aria-label={
+              unread ? t('Notificações ({0} não lidas)', formatNumber(unread)) : t('Notificações')
+            }
+            aria-current={view === 'notifications' ? 'page' : undefined}
+            title={t('Notificações')}
+            onClick={() => setView('notifications')}
           >
             <Bell size={17} />
-            <span />
+            {unread > 0 && <span />}
           </button>
           <button
             className="profile-avatar"
@@ -1442,7 +1518,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                       ? t('Histórico')
                       : view === 'console'
                         ? t('Console de requisições')
-                        : t('Configurações')}
+                        : view === 'notifications'
+                          ? t('Notificações')
+                          : view === 'drive'
+                            ? t('Backups no Google Drive')
+                            : t('Configurações')}
             </span>
             {view === 'collections' && request?.folder && (
               <>
@@ -1668,14 +1748,33 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             />
           ) : view === 'console' ? (
             <RequestConsole collections={workspace.collections} onOpenRequest={openRequest} />
-          ) : (
+          ) : view === 'notifications' ? (
+            <Notifications items={notices} markRead={markRead} actionFor={noticeAction} />
+          ) : view === 'drive' ? null : (
             <SettingsView
               workspace={workspace}
               onChange={setWorkspace}
               onImport={() => setImportOpen(true)}
               onHelp={() => setHelpOpen(true)}
+              onBackup={() => addNotice('localBackup')}
+              onDrive={native ? () => setView('drive') : undefined}
               updates={<UpdateSettings updates={updates} />}
             />
+          )}
+          {native && (
+            <div hidden={view !== 'drive'}>
+              <DriveBackups
+                active={view === 'drive'}
+                workspace={workspace}
+                blocked={backupBlocked}
+                backupUnavailable={storageBlocked}
+                onRestore={confirmRestore}
+                onBackup={() => addNotice('backup')}
+                onFailure={(operation) =>
+                  addNotice(operation === 'backup' ? 'backupFailed' : 'restoreFailed')
+                }
+              />
+            </div>
           )}
           <div hidden={view !== 'runner'}>
             <RunnerView
@@ -1984,6 +2083,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <PostmanWorkspaceDialog
           onClose={() => setPostmanOpen(false)}
           onImport={applyPostmanWorkspace}
+          onFailure={() => addNotice('importFailed')}
         />
       )}
       <Dialog

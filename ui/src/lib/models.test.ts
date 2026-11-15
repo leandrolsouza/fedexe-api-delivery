@@ -17,6 +17,7 @@ import {
   requestsForRun,
   resolveHttpRequest,
   exportableWorkspace,
+  driveBackupSnapshot,
   exportableCollection,
   syncUrl,
   urlWithQuery,
@@ -79,6 +80,47 @@ describe('workspace e coleções', () => {
       'X-Custom',
       'chave-literal',
     ]);
+  });
+  it('transfere o workspace pelo Drive e preserva a estrutura sem segredos, cofre ou histórico', () => {
+    const source = createWorkspace();
+    const environment = source.environments[0];
+    const collection = source.collections[0];
+    environment.variables.push({ ...pair('PROD_TOKEN', 'segredo-do-ambiente'), secret: true });
+    collection.auth = { ...collection.auth, type: 'bearer', token: 'segredo-da-colecao' };
+    const request = collection.requests[0];
+    request.binaryFile = 'C:/caminho-binario-privado';
+    request.multipart = [{ ...pair('file', 'C:/caminho-multipart-privado'), kind: 'file' }];
+    source.settings.workspaceName = 'Workspace transferido';
+    source.credentialSlots = ['slot-privado'];
+    source.credentialRevisions = { 'slot-privado': 'revisao-privada' };
+    source.history = [
+      {
+        id: 'history',
+        date: new Date(0).toISOString(),
+        url: 'https://example.com/history-private',
+        name: 'Private',
+        method: 'GET',
+        duration: 0,
+        status: 200,
+        collectionId: collection.id,
+        requestId: collection.requests[0].id,
+      },
+    ];
+    const json = JSON.stringify(driveBackupSnapshot(source));
+    expect(json).not.toMatch(/segredo-|slot-privado|revisao-privada|history-private|caminho-/);
+    const restored = loadWorkspace(json);
+    expect(restored.collections[0].folders).toEqual(collection.folders);
+    expect(restored.collections[0].requests.map((item) => item.id)).toEqual(
+      collection.requests.map((item) => item.id),
+    );
+    expect(restored.environments[0].variables.at(-1)).toMatchObject({
+      key: 'PROD_TOKEN',
+      secret: true,
+      value: '',
+    });
+    expect(restored.settings).toEqual(source.settings);
+    expect(restored.activeEnvironment).toBe(source.activeEnvironment);
+    expect(restored.history).toEqual([]);
   });
   it('executa coleção, pasta ou seleção na ordem salva, mesmo com seleção invertida', () => {
     const collection = createWorkspace().collections[0];

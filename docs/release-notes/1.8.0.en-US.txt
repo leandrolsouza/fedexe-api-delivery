@@ -1,0 +1,3 @@
+• Create and restore manual Google Drive backups on desktop. Review the contents before uploading and restore on another installation using the same account and Google Cloud project.
+• Drive backups include collections, folders, requests, environments, and settings. The backup file excludes credentials and secret values.
+• View updates and the results of imports, backups, and restores in the new Notifications tab.

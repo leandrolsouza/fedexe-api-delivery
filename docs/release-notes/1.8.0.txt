@@ -1,0 +1,3 @@
+• Crie e restaure backups manuais pelo Google Drive no desktop. Confira o conteúdo antes de enviar e restaure em outra instalação com a mesma conta e o mesmo projeto Google Cloud.
+• Backups do Drive incluem coleções, pastas, requisições, ambientes e configurações. Credenciais e valores secretos ficam fora do arquivo.
+• Consulte atualizações e resultados de importação, backup e restauração na nova aba de notificações.

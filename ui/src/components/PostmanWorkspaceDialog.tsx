@@ -20,8 +20,10 @@ const get: PostmanGet = (resource) => invoke('postman_get', { resource });
 export function PostmanWorkspaceDialog({
   onClose,
   onImport,
+  onFailure,
 }: {
   onClose: () => void;
+  onFailure: () => void;
   onImport: (name: string, result: PostmanImport) => void;
 }) {
   const [hasKey, setHasKey] = useState(false);
@@ -59,6 +61,7 @@ export function PostmanWorkspaceDialog({
       await action();
     } catch (failure) {
       setError(postmanError(failure));
+      onFailure();
     } finally {
       setBusy(false);
     }

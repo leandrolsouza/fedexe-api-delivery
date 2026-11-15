@@ -5958,3 +5958,33 @@ button.history-row:hover {
 .import-report li {
   margin-block: 8px;
 }
+
+.drive-controls,
+.drive-list {
+  display: grid;
+  gap: 12px;
+}
+
+.drive-controls {
+  justify-items: start;
+}
+
+.drive-controls .field,
+.drive-list {
+  width: 100%;
+}
+
+.drive-list {
+  padding: 0;
+  margin: 12px 0 0;
+  list-style: none;
+}
+
+.drive-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+}
