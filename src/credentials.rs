@@ -22,7 +22,10 @@ fn credential_target(environment: &str, variable: &str) -> Result<Vec<u16>, Stri
 
 #[tauri::command]
 pub fn read_secret(environment: String, variable: String) -> Result<Option<String>, String> {
-    let target = credential_target(&environment, &variable)?;
+    read_target(credential_target(&environment, &variable)?)
+}
+
+pub(crate) fn read_target(target: Vec<u16>) -> Result<Option<String>, String> {
     let mut credential = ptr::null_mut();
     // Windows owns the returned allocation until CredFree.
     if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) } == 0 {
@@ -50,7 +53,10 @@ pub fn write_secret(
     variable: String,
     value: Option<String>,
 ) -> Result<(), String> {
-    let mut target = credential_target(&environment, &variable)?;
+    write_target(credential_target(&environment, &variable)?, value)
+}
+
+pub(crate) fn write_target(mut target: Vec<u16>, value: Option<String>) -> Result<(), String> {
     let Some(value) = value else {
         if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0 {
             return Ok(());

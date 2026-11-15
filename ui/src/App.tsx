@@ -1,3 +1,5 @@
+import { PostmanWorkspaceDialog } from './components/PostmanWorkspaceDialog';
+import type { PostmanImport } from './lib/postman-workspace';
 import { formatNumber, t, useLocale } from './lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -196,6 +198,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [helpOpen, setHelpOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [postmanOpen, setPostmanOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
   const [importReport, setImportReport] = useState<{ name: string; issues: string[] }>();
@@ -928,6 +931,33 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     } catch (error) {
       setImportError(normalizeError(error).message);
     }
+  }
+
+  function applyPostmanWorkspace(name: string, result: PostmanImport) {
+    const { collections, environments, issues } = result;
+    if (collections.length || environments.length) {
+      setWorkspace((current) => ({
+        ...current,
+        collections: [...current.collections, ...collections],
+        environments: [...current.environments, ...environments],
+      }));
+      const first = collections[0];
+      if (first) {
+        setView('collections');
+        if (first.requests[0]) openRequest(first.id, first.requests[0].id);
+        else setActive({ collectionId: first.id, requestId: '' });
+      } else setView('environments');
+    }
+    setPostmanOpen(false);
+    setImportReport({
+      name: t(
+        '{0} · {1} coleção(ões) e {2} ambiente(s) importados',
+        name,
+        collections.length,
+        environments.length,
+      ),
+      issues,
+    });
   }
 
   function openHistory(row: HistoryItem) {
@@ -1848,6 +1878,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           }
           spellCheck={false}
         />
+        {native && (
+          <Button
+            variant="outline"
+            onClick={() => {
+              setImportOpen(false);
+              setPostmanOpen(true);
+            }}
+          >
+            {t('Importar workspace do Postman')}
+          </Button>
+        )}
         {importError && <div className="inline-error">{importError}</div>}
         <div className="import-formats">
           <span>
@@ -1864,6 +1905,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </Button>
         </div>
       </Dialog>
+      {postmanOpen && (
+        <PostmanWorkspaceDialog
+          onClose={() => setPostmanOpen(false)}
+          onImport={applyPostmanWorkspace}
+        />
+      )}
       <Dialog
         open={!!importReport}
         onOpenChange={(open) => {

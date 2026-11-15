@@ -1,4 +1,46 @@
 export const messages = {
+  'Importar workspace do Postman': 'Import Postman workspace',
+  'A chave de API é armazenada no Gerenciador de Credenciais do Windows.':
+    'The API key is stored in Windows Credential Manager.',
+  'Nova chave de API do Postman': 'New Postman API key',
+  'Chave de API do Postman': 'Postman API key',
+  'Remover chave salva': 'Remove saved key',
+  'Carregar mais workspaces': 'Load more workspaces',
+  'Listar workspaces': 'List workspaces',
+  'Workspace do Postman': 'Postman workspace',
+  'Selecione um workspace': 'Select a workspace',
+  'Nenhum workspace encontrado.': 'No workspaces found.',
+  'Itens para importar': 'Items to import',
+  'Selecionar todos': 'Select all',
+  'Desmarcar todos': 'Clear selection',
+  Ambiente: 'Environment',
+  'O workspace não contém coleções nem ambientes disponíveis.':
+    'The workspace has no available collections or environments.',
+  'Consultando o Postman…': 'Contacting Postman…',
+  'Importar {0} item(ns)': 'Import {0} item(s)',
+  '{0} · {1} coleção(ões) e {2} ambiente(s) importados':
+    '{0} · Imported {1} collection(s) and {2} environment(s)',
+  '{0}: {1}': '{0}: {1}',
+  APIs: 'APIs',
+  OpenAPI: 'OpenAPI',
+  Mocks: 'Mocks',
+  Monitores: 'Monitors',
+  Flows: 'Flows',
+  '{0}: {1} item(ns) sem suporte à importação.': '{0}: {1} unsupported item(s).',
+  'A chave do Postman é inválida ou expirou.': 'The Postman API key is invalid or expired.',
+  'A chave do Postman não dá acesso a este recurso.':
+    'The Postman API key does not have access to this resource.',
+  'O recurso não está mais disponível no Postman.':
+    'The resource is no longer available in Postman.',
+  'O Postman limitou as chamadas. Aguarde e tente novamente.':
+    'Postman rate limited the request. Wait and try again.',
+  'Informe uma chave de API do Postman.': 'Enter a Postman API key.',
+  'Não foi possível acessar a chave no cofre do Windows.':
+    'Could not access the key in Windows Credential Manager.',
+  'Não foi possível conectar à API do Postman.': 'Could not connect to the Postman API.',
+  'A resposta do Postman excede o limite de 10 MB.':
+    'The Postman response exceeds the 10 MB limit.',
+  'Não foi possível ler o recurso do Postman.': 'Could not read the Postman resource.',
   aprovada: 'passed',
   aprovadas: 'passed',
   etapa: 'step',

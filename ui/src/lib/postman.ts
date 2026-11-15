@@ -32,7 +32,7 @@ export function importPostman(value: unknown) {
         issues.push(t('{0}: variável sem nome ignorada.', label));
         return [];
       }
-      const secret = item.type === 'secret';
+      const secret = item.type === 'secret' || item.secret === true;
       if (secret) issues.push(t('{0}: configure o segredo {1} no Fedexe.', label, key));
       if (
         !secret &&
