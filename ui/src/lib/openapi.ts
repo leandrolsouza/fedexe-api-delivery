@@ -56,7 +56,7 @@ export function importOpenApi(value: unknown) {
   const environment: Environment = { id: uid(), name, color: 'purple', variables: [] };
   const issues = new Set<string>();
   const serverKeys = new Map<string, string>();
-  const secretKeys = new Map<string, string>();
+  const credentialKeys = new Map<string, string>();
 
   function resolve(raw: unknown, label: string) {
     const seen = new Set<string>();
@@ -115,22 +115,42 @@ export function importOpenApi(value: unknown) {
     return '{{' + key + '}}';
   }
 
-  function secret(scheme: string, field: string) {
+  function credential(scheme: string, field: string, secret = true) {
     const id = scheme + ':' + field;
-    let key = secretKeys.get(id);
+    let key = credentialKeys.get(id);
     if (!key) {
       key = 'openapi_' + scheme.replace(/[^a-zA-Z0-9_-]/g, '_') + '_' + field;
       while (environment.variables.some((row) => row.key === key)) key += '_';
-      secretKeys.set(id, key);
-      environment.variables.push({ ...pair(key, ''), secret: true });
+      credentialKeys.set(id, key);
+      environment.variables.push({ ...pair(key, ''), ...(secret ? { secret: true } : {}) });
     }
     return '{{' + key + '}}';
+  }
+
+  function oauthEndpoint(value: unknown) {
+    const url = str(value);
+    try {
+      const parsed = new URL(url);
+      const loopback = /^127(?:\.\d{1,3}){3}$/.test(parsed.hostname) || parsed.hostname === '[::1]';
+      if (
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.hash &&
+        !/[{}]/.test(url) &&
+        (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && loopback))
+      )
+        return parsed.href;
+    } catch {
+      // Provider URLs that depend on a server or external discovery need manual setup.
+    }
+    return '';
   }
 
   const schemes = object(object(document.components).securitySchemes);
   function auth(security: unknown, label: string) {
     const alternatives = list(security);
-    const first = Object.keys(object(alternatives[0]));
+    const requirement = object(alternatives[0]);
+    const first = Object.keys(requirement);
     const scheme = first[0];
     const config = scheme && first.length === 1 ? resolve(schemes[scheme], label) : {};
     const http = str(config.scheme).toLowerCase();
@@ -139,13 +159,13 @@ export function importOpenApi(value: unknown) {
     if (!scheme) return emptyAuth();
     issues.add(t('{0}: configure a autenticação no Fedexe antes de enviar.', label));
     if (config.type === 'http' && http === 'bearer')
-      return { ...emptyAuth(), type: 'bearer' as const, token: secret(scheme, 'token') };
+      return { ...emptyAuth(), type: 'bearer' as const, token: credential(scheme, 'token') };
     if (config.type === 'http' && http === 'basic')
       return {
         ...emptyAuth(),
         type: 'basic' as const,
-        username: secret(scheme, 'username'),
-        password: secret(scheme, 'password'),
+        username: credential(scheme, 'username'),
+        password: credential(scheme, 'password'),
       };
     if (
       config.type === 'apiKey' &&
@@ -157,8 +177,44 @@ export function importOpenApi(value: unknown) {
         type: 'api-key' as const,
         key: str(config.name),
         placement: config.in as 'header' | 'query',
-        value: secret(scheme, 'key'),
+        value: credential(scheme, 'key'),
       };
+    if (config.type === 'oauth2') {
+      const flows = object(config.flows);
+      const client = object(flows.clientCredentials);
+      const code = object(flows.authorizationCode);
+      const clientTokenUrl = oauthEndpoint(client.tokenUrl);
+      const codeTokenUrl = oauthEndpoint(code.tokenUrl);
+      const authorizationUrl = oauthEndpoint(code.authorizationUrl);
+      const scopes = list(requirement[scheme])
+        .filter((entry): entry is string => typeof entry === 'string')
+        .join(' ');
+      if (clientTokenUrl || (codeTokenUrl && authorizationUrl)) {
+        if (Object.keys(flows).length > 1)
+          issues.add(t('{0}: foi importado apenas um fluxo OAuth 2.0.', label));
+        return {
+          ...emptyAuth(),
+          type: 'oauth2' as const,
+          oauth: clientTokenUrl
+            ? {
+                grant: 'client_credentials' as const,
+                token_url: clientTokenUrl,
+                authorization_url: '',
+                client_id: credential(scheme, 'client_id', false),
+                client_secret: credential(scheme, 'client_secret'),
+                scope: scopes,
+              }
+            : {
+                grant: 'pkce' as const,
+                token_url: codeTokenUrl,
+                authorization_url: authorizationUrl,
+                client_id: '',
+                client_secret: '',
+                scope: scopes,
+              },
+        };
+      }
+    }
     issues.add(t('{0}: o esquema de autenticação exige configuração manual.', label));
     return emptyAuth();
   }

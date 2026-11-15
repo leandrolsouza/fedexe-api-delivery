@@ -117,3 +117,49 @@ it('reports unsupported input and handles OpenAPI 3.0', () => {
   expect(() => importOpenApi({ ...spec, openapi: '3.2.0' })).toThrow(/3\.0 or 3\.1/);
   expect(() => parseImport('openapi: [')).toThrow(/valid OpenAPI/);
 });
+
+it('maps supported OAuth grants and carries scopes without importing credentials', () => {
+  const imported = importOpenApi({
+    ...spec,
+    security: [{ oauth: ['orders:read', 'orders:write'] }],
+    components: {
+      securitySchemes: {
+        oauth: {
+          type: 'oauth2',
+          flows: {
+            clientCredentials: { tokenUrl: 'https://auth.example.test/token' },
+          },
+        },
+        pkce: {
+          type: 'oauth2',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: 'https://auth.example.test/authorize',
+              tokenUrl: 'https://auth.example.test/token',
+            },
+          },
+        },
+      },
+    },
+    paths: { '/orders': { post: {}, get: { security: [{ pkce: ['orders:read'] }] } } },
+  })!;
+  expect(imported.collection.auth.oauth).toEqual({
+    grant: 'client_credentials',
+    token_url: 'https://auth.example.test/token',
+    authorization_url: '',
+    client_id: '{{openapi_oauth_client_id}}',
+    client_secret: '{{openapi_oauth_client_secret}}',
+    scope: 'orders:read orders:write',
+  });
+  expect(imported.environment.variables.find((row) => row.secret)).toMatchObject({
+    key: 'openapi_oauth_client_secret',
+    value: '',
+  });
+  expect(imported.collection.requests[1].auth.oauth).toMatchObject({
+    grant: 'pkce',
+    authorization_url: 'https://auth.example.test/authorize',
+    token_url: 'https://auth.example.test/token',
+    client_id: '',
+    scope: 'orders:read',
+  });
+});

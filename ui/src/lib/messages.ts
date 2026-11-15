@@ -299,6 +299,7 @@ export const messages = {
   'Informe um JSON válido ou uma especificação OpenAPI em YAML válida.':
     'Enter valid JSON or a valid OpenAPI specification in YAML.',
   'OpenAPI: {0}': 'OpenAPI: {0}',
+  '{0}: foi importado apenas um fluxo OAuth 2.0.': '{0}: only one OAuth 2.0 flow was imported.',
   'A importação requer OpenAPI 3.0 ou 3.1.': 'Import requires OpenAPI 3.0 or 3.1.',
   '{0}: referência OpenAPI não resolvida ({1}).': '{0}: unresolved OpenAPI reference ({1}).',
   '{0}: foi importado apenas o primeiro servidor.': '{0}: only the first server was imported.',

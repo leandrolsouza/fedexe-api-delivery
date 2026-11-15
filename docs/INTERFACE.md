@@ -75,6 +75,8 @@ O relatório aponta itens que falharam no download, recursos sem suporte que o P
 
 Em **Importar**, escolha um arquivo OpenAPI 3.0 ou 3.1 em JSON ou YAML, ou cole a especificação. O Fedexe cria uma coleção editável, agrupa as requisições pela primeira tag e cria um ambiente com as URLs dos servidores. Revise as variáveis e preencha os segredos da autenticação antes de enviar as requisições ou executar o runner.
 
+Para OAuth 2.0, configure as credenciais do fluxo importado. Quando uma especificação oferece Client Credentials e Authorization Code, o Fedexe usa Client Credentials se a URL de token for compatível. Authorization Code é configurado para PKCE.
+
 A importação resolve referências internas e converte exemplos de corpo JSON, texto e formulário URL-encoded. O relatório aponta referências externas, URLs relativas, opções adicionais de servidor e recursos que precisam de configuração manual. Ao importar pelo Postman, selecione o ambiente criado para a especificação que deseja executar.
 
 ## OAuth 2.0
