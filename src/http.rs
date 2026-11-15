@@ -189,6 +189,8 @@ pub struct ResultRow {
     validation_ms: u128,
     checks_passed: usize,
     failures: Vec<String>,
+    #[serde(skip)]
+    execution_error: bool,
 }
 
 #[derive(Serialize)]
@@ -196,6 +198,47 @@ pub struct Run {
     duration_ms: u128,
     results: Vec<ResultRow>,
     outcome: RunOutcome,
+}
+
+#[cfg(feature = "cli")]
+impl Run {
+    pub fn cli_report(&self) -> (u8, Value) {
+        let mut exit_code = 0;
+        let steps: Vec<_> = self
+            .results
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let (code, result) = if row.execution_error {
+                    (2, "execution_error")
+                } else if !row.failures.is_empty() {
+                    (1, "validation_failed")
+                } else {
+                    (0, "passed")
+                };
+                exit_code = exit_code.max(code);
+                serde_json::json!({
+                    "step": index + 1,
+                    "result": result,
+                    "status": row.status,
+                    "http_ms": row.http_ms,
+                    "validation_ms": row.validation_ms,
+                    "checks_passed": row.checks_passed,
+                    "failures": row.failures.len(),
+                })
+            })
+            .collect();
+        (
+            exit_code,
+            serde_json::json!({
+                "schema_version": 1,
+                "exit_code": exit_code,
+                "outcome": self.outcome,
+                "duration_ms": self.duration_ms,
+                "steps": steps,
+            }),
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -612,6 +655,7 @@ pub async fn run(
             validation_ms: 0,
             checks_passed: 0,
             failures: Vec::new(),
+            execution_error: false,
         };
         let step_start = Instant::now();
         let validation = tokio::select! {
@@ -624,6 +668,7 @@ pub async fn run(
             result = run_step(clients, step, &mut collection.variables, &mut row) => result,
         };
         if let Err(error) = validation {
+            row.execution_error = true;
             row.http_ms = step_start.elapsed().as_millis();
             row.failures.push(error);
         }

@@ -2,12 +2,11 @@
 
 #[cfg(windows)]
 mod credentials;
-mod http;
 #[cfg(windows)]
 mod updates;
 mod workspace;
 
-use http::{Collection, Request, Response, Run};
+use fedexe_api_delivery::http::{self, Collection, Request, Response, Run};
 use std::{
     collections::HashMap,
     fs::File,

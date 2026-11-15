@@ -54,7 +54,7 @@ O protótipo já envia requisições HTTP e executa coleções JSON em sequênci
 
 ## Depois da 1.0.0
 
-A referência inicial é a tag `v1.0.0`. As tags `v1.1.0` e `v1.2.0` registram as entregas do atualizador e do inglês como idioma padrão. Os próximos marcos seguem sem datas fixas. A série 1.x melhora o diagnóstico e a execução de coleções HTTP no Windows. A 2.0 acrescenta scripts para estender as validações e extrações. O Fedexe mantém os dados locais, o uso sem conta e a licença MIT.
+A referência inicial é a tag `v1.0.0`. As tags `v1.1.0`, `v1.2.0` e `v1.3.0` registram as entregas do atualizador, do inglês como idioma padrão e do runner funcional por CLI. Os próximos marcos seguem sem datas fixas. A série 1.x melhora o diagnóstico e a execução de coleções HTTP no Windows. A 2.0 acrescenta scripts para estender as validações e extrações. O Fedexe mantém os dados locais, o uso sem conta e a licença MIT.
 
 ### 1.0.x — Estabilidade e atualização
 
@@ -80,7 +80,15 @@ A referência inicial é a tag `v1.0.0`. As tags `v1.1.0` e `v1.2.0` registram a
 
 **Pronto quando** um perfil novo abrir em inglês, os fluxos principais funcionarem nos dois idiomas e a escolha de português persistir após reabrir o app.
 
-### 1.3 — Console de requisições
+### 1.3 — Runner por CLI para CI
+
+- Rodar uma coleção exportada, ou uma pasta, no Windows sem abrir a interface. Exigir ambiente explícito e manter ordem sequencial, testes declarativos, extrações e opção de parar na primeira falha.
+- Compartilhar a lógica de execução do desktop. Aceitar segredos via variáveis de ambiente do processo, documentar a precedência e mascarar valores nas mensagens e nos relatórios.
+- Entregar saída legível, relatório JSON e códigos de saída distintos para sucesso, falha de teste e erro de configuração ou execução. Documentar um exemplo de GitHub Actions.
+
+**Pronto quando** uma pipeline Windows executar a mesma coleção que o desktop, reutilizar o token extraído do login e falhar com o código esperado quando uma validação for quebrada de propósito, sem expor os valores secretos nas saídas do cenário.
+
+### 1.4 — Console de requisições
 
 - Adicionar um painel no desktop com os envios do editor e do runner em ordem cronológica. Permitir filtrar por origem e por erro, abrir os detalhes de cada envio e limpar o console.
 - Mostrar método, URL e headers da requisição efetivamente enviada, além do status, duração, headers e prévia da resposta. Exibir redirecionamentos e indicar onde a falha ocorreu, por exemplo na resolução de variáveis, na conexão ou por timeout.
@@ -88,22 +96,15 @@ A referência inicial é a tag `v1.0.0`. As tags `v1.1.0` e `v1.2.0` registram a
 
 **Pronto quando** um cenário local reproduzir um envio bem-sucedido, um redirecionamento e um timeout. O console deve permitir identificar o que foi enviado pelo editor e pelo runner e diagnosticar a falha sem expor os segredos usados no cenário.
 
-### 1.4 — Testes de carga no desktop
+### 1.5 — Testes de carga
 
 - Criar um modo de carga para repetir uma coleção ou pasta em ambientes de teste. Permitir configurar usuários virtuais, duração, subida gradual e um limite global de requisições por segundo. Mostrar o ambiente e os destinos antes de iniciar e oferecer cancelamento durante a rodada.
 - Executar os passos da coleção em ordem para cada usuário virtual, com tokens e variáveis extraídos isolados entre usuários. Reaproveitar as validações do runner e agregar as métricas sem guardar todos os corpos de resposta.
 - Mostrar volume de requisições por segundo, taxa de erros e latências p50, p95 e p99 por endpoint, com contagem de amostras. Exportar o resumo em JSON e indicar se a rodada respeitou os limites de aprovação para p95 e taxa de erros.
 
+- Executar cenários de carga pela CLI com os mesmos limites e formato de relatório do desktop. Retornar código de falha quando o p95 ou a taxa de erros ultrapassar o limite configurado.
+
 **Pronto quando** um cenário local com login, respostas lentas e falhas intencionais confirmar a ordem dos passos e o isolamento dos tokens por usuário. O relatório deve refletir os resultados observados no servidor, mostrar os limites excedidos e preservar o resumo parcial ao cancelar.
-
-### 1.5 — Runner por CLI para CI
-
-- Rodar uma coleção exportada, ou uma pasta, no Windows sem abrir a interface. Exigir ambiente explícito e manter ordem sequencial, testes declarativos, extrações e opção de parar na primeira falha.
-- Compartilhar a lógica de execução do desktop. Aceitar segredos via variáveis de ambiente do processo, documentar a precedência e mascarar valores nas mensagens e nos relatórios.
-- Entregar saída legível, relatório JSON e códigos de saída distintos para sucesso, falha de teste e erro de configuração ou execução. Documentar um exemplo de GitHub Actions.
-- Executar também os cenários de carga da 1.4 com os mesmos limites e formato de relatório do desktop. Retornar código de falha quando o p95 ou a taxa de erros ultrapassar o limite configurado.
-
-**Pronto quando** uma pipeline Windows executar a mesma coleção que o desktop, reutilizar o token extraído do login e sinalizar tanto uma validação funcional quebrada quanto um limite de carga excedido. As saídas do cenário devem omitir os valores secretos.
 
 ### 1.6 — OAuth 2.0
 

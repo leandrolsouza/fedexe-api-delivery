@@ -37,13 +37,11 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  compileRequest,
   pair,
   redactSecrets,
   requestsForRun,
   safeEnvironment,
   exportableWorkspace,
-  variablesFor,
   type Environment,
   type HistoryItem,
   type RunResult,
@@ -51,6 +49,7 @@ import {
   type RunScope,
   type Workspace,
 } from '../lib/models';
+import { prepareCollection } from '../lib/collection-runner';
 import { cn, download, uid } from '../lib/utils';
 import { native, normalizeError, runCollection } from '../lib/transport';
 import { PairEditor } from './PairEditor';
@@ -478,22 +477,12 @@ export function RunnerView({
         environment,
         requests: chosen,
       });
-      const variables = variablesFor(snapshot.collection, snapshot.environment);
-      const nativeCollection = {
-        stop_on_failure: stopOnFailure,
-        variables,
-        requests: snapshot.requests.map((item) => {
-          const step = { name: item.name, tests: item.tests, extract: item.extract };
-          try {
-            return {
-              ...step,
-              request: compileRequest(item, snapshot.collection, variables, false, true),
-            };
-          } catch (error) {
-            return { ...step, preparation_error: normalizeError(error).message };
-          }
-        }),
-      };
+      const nativeCollection = prepareCollection(
+        snapshot.collection,
+        snapshot.environment,
+        snapshot.requests,
+        stopOnFailure,
+      );
       const redactRows = (rows: RunRow[]) =>
         rows.map((row) => ({
           ...row,

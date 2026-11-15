@@ -4,7 +4,7 @@ Cliente HTTP desktop local sob licença MIT. Rust + Tauri 2, com interface React
 
 A partir da 1.2, a interface abre em inglês quando o perfil ainda não tem preferência de idioma. Para mudar para português do Brasil, abra **Settings → Interface language** e selecione **Português (Brasil)**. A escolha fica salva no perfil local.
 
-**Vindo da 1.0.x?** Baixe o instalador da [versão 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) quando ela estiver disponível e execute-o sobre a instalação existente. A série 1.0.x não tem atualizador. A partir da 1.1, o Fedexe verifica versões estáveis na abertura e em **Configurações → Atualizações**.
+**Vindo da 1.0.x?** Baixe o instalador da [versão 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) e execute-o sobre a instalação existente. A série 1.0.x não tem atualizador. A partir da 1.1, o Fedexe verifica versões estáveis na abertura e em **Settings → Updates** (ou **Configurações → Atualizações** em português).
 
 ## Executar
 
@@ -37,6 +37,10 @@ Para gerar o instalador Windows por usuário, execute `.\node_modules\.bin\tauri
 Execute manualmente o workflow **Windows installer** no commit da release. Ele confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows.
 
 Para publicar uma versão estável com o atualizador habilitado, siga o [procedimento de assinatura e publicação](docs/UPDATER.md).
+
+### Runner por CLI
+
+O Fedexe 1.3 executa coleções ou pastas exportadas a partir de um terminal no Windows. Veja o [guia do runner para CI](docs/CLI.md) para compilar, configurar segredos e gerar relatórios.
 
 ### Validar a instalação em outro Windows
 
