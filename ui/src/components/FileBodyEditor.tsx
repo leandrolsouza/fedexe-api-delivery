@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { File, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { pair, type MultipartRow, type RequestItem } from '../lib/models';
@@ -16,14 +17,15 @@ function FilePicker({ path, onChange }: { path: string; onChange: (path: string)
   return (
     <div className="body-file-picker">
       <Button variant="outline" size="sm" onClick={choose}>
-        <File size={14} /> Selecionar arquivo
+        <File size={14} />
+        {' ' + t('Selecionar arquivo')}
       </Button>
-      <span title={path}>{path.split(/[/\\]/).at(-1) || 'Nenhum arquivo selecionado'}</span>
+      <span title={path}>{path.split(/[/\\]/).at(-1) || t('Nenhum arquivo selecionado')}</span>
       {path && (
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Remover arquivo"
+          aria-label={t('Remover arquivo')}
           onClick={() => onChange('')}
         >
           <Trash2 size={14} />
@@ -42,7 +44,9 @@ export function FileBodyEditor({
 }) {
   if (!native)
     return (
-      <p className="field-hint">Multipart e arquivos binários estão disponíveis no app desktop.</p>
+      <p className="field-hint">
+        {t('Multipart e arquivos binários estão disponíveis no app desktop.')}
+      </p>
     );
   if (request.bodyType === 'binary')
     return (
@@ -61,35 +65,35 @@ export function FileBodyEditor({
         <div className="multipart-row" key={row.id}>
           <input
             type="checkbox"
-            aria-label={`Ativar ${row.key || 'parte'}`}
+            aria-label={t('Ativar {0}', row.key || 'parte')}
             checked={row.enabled}
             onChange={(event) => update(row.id, { enabled: event.target.checked })}
           />
           <input
             className="input mono"
-            aria-label="Nome da parte"
-            placeholder="Nome"
+            aria-label={t('Nome da parte')}
+            placeholder={t('Nome')}
             value={row.key}
             onChange={(event) => update(row.id, { key: event.target.value })}
           />
           <select
             className="input"
-            aria-label="Tipo da parte"
+            aria-label={t('Tipo da parte')}
             value={row.kind}
             onChange={(event) =>
               update(row.id, { kind: event.target.value as MultipartRow['kind'], value: '' })
             }
           >
-            <option value="field">Campo</option>
-            <option value="file">Arquivo</option>
+            <option value="field">{t('Campo')}</option>
+            <option value="file">{t('Arquivo')}</option>
           </select>
           {row.kind === 'file' ? (
             <FilePicker path={row.value} onChange={(value) => update(row.id, { value })} />
           ) : (
             <input
               className="input mono"
-              aria-label="Valor do campo"
-              placeholder="Valor"
+              aria-label={t('Valor do campo')}
+              placeholder={t('Valor')}
               value={row.value}
               onChange={(event) => update(row.id, { value: event.target.value })}
             />
@@ -97,7 +101,7 @@ export function FileBodyEditor({
           <Button
             variant="ghost"
             size="icon"
-            aria-label={`Remover ${row.key || 'parte'}`}
+            aria-label={t('Remover {0}', row.key || 'parte')}
             onClick={() => onChange({ multipart: rows.filter(({ id }) => id !== row.id) })}
           >
             <Trash2 size={14} />
@@ -109,7 +113,8 @@ export function FileBodyEditor({
         size="sm"
         onClick={() => onChange({ multipart: [...rows, { ...pair(), kind: 'field' }] })}
       >
-        <Plus size={14} /> Adicionar parte
+        <Plus size={14} />
+        {' ' + t('Adicionar parte')}
       </Button>
     </div>
   );

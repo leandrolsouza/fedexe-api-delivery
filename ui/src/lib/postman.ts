@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import {
   emptyAuth,
   newRequest,
@@ -28,17 +29,17 @@ export function importPostman(value: unknown) {
       const item = object(raw);
       const key = str(item.key);
       if (!key) {
-        issues.push(`${label}: variável sem nome ignorada.`);
+        issues.push(t('{0}: variável sem nome ignorada.', label));
         return [];
       }
       const secret = item.type === 'secret';
-      if (secret) issues.push(`${label}: configure o segredo ${key} no Fedexe.`);
+      if (secret) issues.push(t('{0}: configure o segredo {1} no Fedexe.', label, key));
       if (
         !secret &&
         item.value != null &&
         !['string', 'number', 'boolean'].includes(typeof item.value)
       ) {
-        issues.push(`${label}: o valor de ${key} precisa ser configurado.`);
+        issues.push(t('{0}: o valor de {1} precisa ser configurado.', label, key));
       }
       const text = ['string', 'number', 'boolean'].includes(typeof item.value)
         ? String(item.value)
@@ -53,8 +54,8 @@ export function importPostman(value: unknown) {
   }
   if (data._postman_variable_scope === 'environment') {
     if (!Array.isArray(data.values))
-      throw new Error('O ambiente Postman não contém uma lista de variáveis.');
-    const name = str(data.name) || 'Ambiente Postman';
+      throw new Error(t('O ambiente Postman não contém uma lista de variáveis.'));
+    const name = str(data.name) || t('Ambiente Postman');
     const environment: Environment = {
       id: uid(),
       name,
@@ -66,8 +67,8 @@ export function importPostman(value: unknown) {
   const info = object(data.info);
   if (!str(info.schema).includes('schema.getpostman.com/json/collection/')) return;
   if (!Array.isArray(data.item))
-    throw new Error('A coleção Postman não contém uma lista de itens.');
-  const name = str(info.name) || 'Coleção Postman';
+    throw new Error(t('A coleção Postman não contém uma lista de itens.'));
+  const name = str(info.name) || t('Coleção Postman');
   const collection: Collection = {
     id: uid(),
     name,
@@ -105,7 +106,9 @@ export function importPostman(value: unknown) {
         value: settings.get('value') ?? '',
         placement: settings.get('in') === 'query' ? ('query' as const) : ('header' as const),
       };
-    issues.push(`${label}: autorização ${type || 'desconhecida'} precisa ser configurada.`);
+    issues.push(
+      t('{0}: autorização {1} precisa ser configurada.', label, type || t('desconhecida')),
+    );
     return emptyAuth();
   }
   function report(
@@ -153,8 +156,9 @@ export function importPostman(value: unknown) {
         endpoint.extract = { ...endpoint.extract, ...extract };
       } else unsupported = true;
     }
-    if (unsupported) issues.push(`${label}: scripts não importados.`);
-    if (list(value.response).length) issues.push(`${label}: exemplos de resposta não importados.`);
+    if (unsupported) issues.push(t('{0}: scripts não importados.', label));
+    if (list(value.response).length)
+      issues.push(t('{0}: exemplos de resposta não importados.', label));
   }
   report(data, name);
   collection.auth = auth(data.auth, name);
@@ -165,7 +169,7 @@ export function importPostman(value: unknown) {
   ) {
     for (const raw of items) {
       const item = object(raw);
-      const label = str(item.name) || 'Item Postman';
+      const label = str(item.name) || t('Item Postman');
       if (Array.isArray(item.item)) {
         report(item, label);
         const base = folder ? `${folder} / ${label}` : label;
@@ -173,7 +177,7 @@ export function importPostman(value: unknown) {
         for (let suffix = 2; collection.folders.includes(path); suffix++)
           path = `${base} (${suffix})`;
         collection.folders.push(path);
-        if (folder) issues.push(`${path}: pasta aninhada representada como pasta plana.`);
+        if (folder) issues.push(t('{0}: pasta aninhada representada como pasta plana.', path));
         visit(item.item, path, auth(item.auth, path, parentAuth));
         continue;
       }
@@ -183,7 +187,7 @@ export function importPostman(value: unknown) {
       const url = object(request.url);
       const rawUrl = typeof request.url === 'string' ? request.url : str(url.raw);
       if (!methods.has(method) || !rawUrl) {
-        issues.push(`${label}: método ou URL sem suporte. Requisição ignorada.`);
+        issues.push(t('{0}: método ou URL sem suporte. Requisição ignorada.', label));
         continue;
       }
       const endpoint = syncUrl({
@@ -218,7 +222,8 @@ export function importPostman(value: unknown) {
           const field = object(raw);
           const key = str(field.key);
           if (!key) return [];
-          if (field.type === 'file') issues.push(`${label}: selecione o arquivo da parte ${key}.`);
+          if (field.type === 'file')
+            issues.push(t('{0}: selecione o arquivo da parte {1}.', label, key));
           return [
             {
               ...pair(key, field.type === 'file' ? '' : str(field.value), field.disabled !== true),
@@ -228,9 +233,9 @@ export function importPostman(value: unknown) {
         });
       } else if (body.disabled !== true && body.mode === 'file') {
         endpoint.bodyType = 'binary';
-        issues.push(`${label}: selecione o arquivo binário.`);
+        issues.push(t('{0}: selecione o arquivo binário.', label));
       } else if (body.disabled !== true && body.mode) {
-        issues.push(`${label}: corpo ${str(body.mode)} precisa ser configurado.`);
+        issues.push(t('{0}: corpo {1} precisa ser configurado.', label, str(body.mode)));
       }
       collection.requests.push(endpoint);
     }

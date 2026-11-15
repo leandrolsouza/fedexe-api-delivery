@@ -1,12 +1,13 @@
+import { t } from '../lib/i18n';
 import type { Auth } from '../lib/models';
 
-export const authLabels: Record<Auth['type'], string> = {
+const authLabels = {
   inherit: 'Herdar da coleção',
   none: 'Sem autorização',
   bearer: 'Bearer token',
   basic: 'Basic',
   'api-key': 'API key',
-};
+} as const;
 
 const fieldLabels = {
   token: 'Token',
@@ -14,7 +15,11 @@ const fieldLabels = {
   password: 'Senha',
   key: 'Nome da chave',
   value: 'Valor da chave',
-};
+} as const;
+
+export function authLabel(type: Auth['type']) {
+  return t(authLabels[type]);
+}
 
 const fieldsByType: Record<Auth['type'], (keyof typeof fieldLabels)[]> = {
   inherit: [],
@@ -22,7 +27,7 @@ const fieldsByType: Record<Auth['type'], (keyof typeof fieldLabels)[]> = {
   bearer: ['token'],
   basic: ['username', 'password'],
   'api-key': ['key', 'value'],
-};
+} as const;
 
 export function AuthType({
   auth,
@@ -35,7 +40,7 @@ export function AuthType({
 }) {
   return (
     <label className="field-label">
-      Tipo de autorização
+      {t('Tipo de autorização')}
       <select
         className="input"
         value={!inheritance && auth.type === 'inherit' ? 'none' : auth.type}
@@ -45,7 +50,7 @@ export function AuthType({
           .filter((type) => inheritance || type !== 'inherit')
           .map((type) => (
             <option key={type} value={type}>
-              {authLabels[type]}
+              {authLabel(type)}
             </option>
           ))}
       </select>
@@ -58,7 +63,7 @@ export function AuthFields({ auth, onChange }: { auth: Auth; onChange: (auth: Au
     <>
       {fieldsByType[auth.type].map((key) => (
         <label className="field-label" key={key}>
-          {fieldLabels[key]}
+          {t(fieldLabels[key])}
           <input
             className="input mono"
             autoComplete="off"
@@ -71,7 +76,7 @@ export function AuthFields({ auth, onChange }: { auth: Auth; onChange: (auth: Au
       ))}
       {auth.type === 'api-key' && (
         <label className="field-label">
-          Adicionar em
+          {t('Adicionar em')}
           <select
             className="input"
             value={auth.placement}

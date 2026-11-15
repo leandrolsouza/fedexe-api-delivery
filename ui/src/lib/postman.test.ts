@@ -34,7 +34,7 @@ describe('migração do Postman', () => {
       tests: [{ type: 'status', equals: 200 }],
       extract: { qa_token: '/token' },
     });
-    expect(result.issues).toEqual(['Outro: scripts não importados.']);
+    expect(result.issues).toEqual(['Outro: scripts were skipped.']);
   });
   it('preserva ordem, parâmetros, cabeçalhos repetidos e autorização da pasta em um round-trip', () => {
     const result = importPostman({
@@ -90,8 +90,8 @@ describe('migração do Postman', () => {
     expect(request.headers.map(({ value }) => value)).toEqual(['a', 'b']);
     expect(request.auth.token).toBe('{{token}}');
     expect(result.issues).toEqual([
-      'API: scripts não importados.',
-      'Upload: selecione o arquivo da parte upload.',
+      'API: scripts were skipped.',
+      'Upload: select the file for part upload.',
     ]);
     const imported = importCollection(JSON.parse(JSON.stringify(collection)));
     expect(imported.requests.map(({ id, ...request }) => request)).toEqual(

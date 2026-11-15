@@ -177,7 +177,7 @@ describe('workspace e coleções', () => {
     ).toBe(true);
   });
   it('rejeita formatos inválidos no importador Fedexe', () => {
-    expect(() => importCollection({ info: {}, item: [] })).toThrow('Formato não suportado');
+    expect(() => importCollection({ info: {}, item: [] })).toThrow('Unsupported format');
     expect(() =>
       importCollection({ requests: [{ name: 123, request: { url: 'x', method: 'INVALID' } }] }),
     ).toThrow();
@@ -190,9 +190,9 @@ describe('requisição efetiva', () => {
     expect(expand('{{ base_url }}/users', { base_url: 'http://localhost' })).toBe(
       'http://localhost/users',
     );
-    expect(() => expand('{{token}}', {})).toThrow('Variável ausente: token');
-    expect(() => expand('{{token', {})).toThrow('sem fechamento');
-    expect(() => expand('{{toString}}', {})).toThrow('Variável ausente');
+    expect(() => expand('{{token}}', {})).toThrow('Missing variable: token');
+    expect(() => expand('{{token', {})).toThrow('Unclosed variable');
+    expect(() => expand('{{toString}}', {})).toThrow('Missing variable');
     expect(expand('a{{empty}}b', { empty: '' })).toBe('ab');
   });
   it('codifica query parameters, preserva chaves repetidas e desativa linhas', () => {
@@ -242,10 +242,10 @@ describe('requisição efetiva', () => {
       expected,
     );
     expect(() => compileRequest({ ...request, pathParams: [] }, collection, vars)).toThrow(
-      'Parâmetro de caminho ausente',
+      'Missing path parameter',
     );
     expect(() => compileRequest(request, collection, { ...vars, id: '..' })).toThrow(
-      'Valor inválido',
+      'Invalid value for path parameter',
     );
   });
   it('valida o JSON após resolver variáveis', () => {
@@ -261,7 +261,9 @@ describe('requisição efetiva', () => {
       'Content-Type',
       'application/json',
     ]);
-    expect(() => compileRequest(request, collection, { count: 'inválido' })).toThrow('JSON válido');
+    expect(() => compileRequest(request, collection, { count: 'inválido' })).toThrow(
+      'invalid JSON',
+    );
   });
   it('detecta colisões entre autorização e headers manuais', () => {
     const request = {
@@ -270,7 +272,7 @@ describe('requisição efetiva', () => {
       auth: { ...newRequest().auth, type: 'bearer' as const, token: 'token' },
       headers: [pair('authorization', 'manual')],
     };
-    expect(() => compileRequest(request, collection, {})).toThrow('Header em conflito');
+    expect(() => compileRequest(request, collection, {})).toThrow('Conflicting header');
   });
   it('aplica a autorização herdada e permite desativá-la ou sobrescrevê-la por endpoint', () => {
     const request = {
@@ -283,7 +285,7 @@ describe('requisição efetiva', () => {
       auth: { ...collection.auth, type: 'api-key' as const, key: 'X-API-Key', value: '{{secret}}' },
     };
     expect(authHeaderConflict(request, c)).toContain('X-API-Key');
-    expect(() => compileRequest(request, c, {}, false, true)).toThrow('Header em conflito');
+    expect(() => compileRequest(request, c, {}, false, true)).toThrow('Conflicting header');
     const noAuth = { ...request, auth: { ...request.auth, type: 'none' as const } };
     expect(compileRequest(noAuth, c, {}).headers).toEqual([['x-api-KEY', 'manual']]);
     const query = { ...c, auth: { ...c.auth, placement: 'query' as const } };
@@ -343,8 +345,8 @@ describe('requisição efetiva', () => {
     expect(isSecretHeader(request.headers[1], collection, environment)).toBe(true);
     expect(isSecretHeader({ ...request.headers[0], secret: true }, collection)).toBe(true);
     expect(generatedHeaders(request, collection)).toEqual([
-      { name: 'Authorization', value: '', secret: true, source: 'Autorização' },
-      { name: 'Content-Type', value: 'application/json', secret: false, source: 'Corpo' },
+      { name: 'Authorization', value: '', secret: true, source: 'Authorization' },
+      { name: 'Content-Type', value: 'application/json', secret: false, source: 'Body' },
     ]);
     const vars = { secret: 'valor' };
     const effective = compileRequest(request, collection, vars);
@@ -382,7 +384,7 @@ describe('requisição efetiva', () => {
     ).toThrow('HTTP(S)');
     expect(() =>
       compileRequest({ ...newRequest(), url: 'https://user:password@example.com' }, collection, {}),
-    ).toThrow('sem credenciais');
+    ).toThrow('without credentials');
   });
 
   it('usa a mesma requisição efetiva no editor e no runner com Basic auth e query codificada', () => {

@@ -1,3 +1,4 @@
+import { formatNumber, t } from '../lib/i18n';
 import { useState } from 'react';
 import { Button } from './ui/button';
 
@@ -37,7 +38,7 @@ export function CodeViewer({
     <div
       className={`code-viewer ${wrap ? 'code-wrap' : ''}`}
       tabIndex={0}
-      aria-label="Corpo da resposta"
+      aria-label={t('Corpo da resposta')}
     >
       <pre>
         {lines.slice(0, limit).map((line, index) => (
@@ -51,7 +52,9 @@ export function CodeViewer({
       </pre>
       {lines.length > limit && (
         <Button size="sm" variant="secondary" onClick={() => setLimit((v) => v + 500)}>
-          Exibir mais linhas ({lines.length - limit} restantes)
+          {t('Exibir mais linhas (')}
+          {formatNumber(lines.length - limit)}
+          {' ' + t('restantes)')}
         </Button>
       )}
     </div>

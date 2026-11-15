@@ -33,11 +33,11 @@ describe('importação cURL', () => {
       { key: 'name', value: 'Fedexe', kind: 'field' },
       { key: 'upload', value: '', kind: 'file' },
     ]);
-    expect(issues).toEqual(['Selecione o arquivo da parte upload.']);
+    expect(issues).toEqual(['Select the file for part upload.']);
   });
 
-  it('recusa opções desconhecidas e comandos com mais de uma URL', () => {
-    expect(() => importCurl('curl --unknown https://example.test')).toThrow('sem suporte');
-    expect(() => importCurl('curl https://example.test https://other.test')).toThrow('uma URL');
+  it('recusa opções desconhecidas e comandos com mais de one URL', () => {
+    expect(() => importCurl('curl --unknown https://example.test')).toThrow('unsupported');
+    expect(() => importCurl('curl https://example.test https://other.test')).toThrow('one URL');
   });
 });

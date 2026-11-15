@@ -1,3 +1,4 @@
+import { formatDate, formatNumber, setLocale, t, useLocale, type Locale } from '../lib/i18n';
 import { useMemo, useState } from 'react';
 import {
   Activity,
@@ -114,17 +115,18 @@ export function EnvironmentsView({
     setSelected(env.id);
     setCreating(false);
     setName('');
-    toast.success('Ambiente criado');
+    toast.success(t('Ambiente criado'));
   }
   return (
     <div className="workspace-page">
       <PageHeading
-        eyebrow="CADA CONTEXTO, UM AMBIENTE"
-        title="Mude o ambiente. Não o seu fluxo."
-        description="As mesmas requisições, prontas para qualquer etapa do seu projeto."
+        eyebrow={t('CADA CONTEXTO, UM AMBIENTE')}
+        title={t('Mude o ambiente. Não o seu fluxo.')}
+        description={t('As mesmas requisições, prontas para qualquer etapa do seu projeto.')}
         action={
           <Button onClick={() => setCreating(true)}>
-            <Plus size={16} /> Novo ambiente
+            <Plus size={16} />
+            {' ' + t('Novo ambiente')}
           </Button>
         }
       />
@@ -134,10 +136,10 @@ export function EnvironmentsView({
             <Globe2 size={20} />
           </span>
           <div>
-            <span>Ambientes</span>
+            <span>{t('Ambientes')}</span>
             <strong>
-              {workspace.environments.length}
-              <small>configurados</small>
+              {formatNumber(workspace.environments.length)}
+              <small>{t('configurados')}</small>
             </strong>
           </div>
         </div>
@@ -146,10 +148,10 @@ export function EnvironmentsView({
             <Activity size={20} />
           </span>
           <div>
-            <span>Ambiente ativo</span>
+            <span>{t('Ambiente ativo')}</span>
             <strong className="stat-word">
               {workspace.environments.find((e) => e.id === workspace.activeEnvironment)?.name ||
-                'Nenhum'}
+                t('Nenhum')}
             </strong>
           </div>
         </div>
@@ -158,7 +160,7 @@ export function EnvironmentsView({
             <LockKeyhole size={20} />
           </span>
           <div>
-            <span>{native ? 'Segredos no cofre' : 'Segredos da sessão'}</span>
+            <span>{native ? t('Segredos no cofre') : t('Segredos da sessão')}</span>
             <strong>
               {workspace.environments.reduce(
                 (count, env) => count + env.variables.filter((v) => v.secret).length,
@@ -171,7 +173,8 @@ export function EnvironmentsView({
       <div className="environment-layout">
         <aside className="environment-list">
           <div className="list-heading">
-            SEUS AMBIENTES <span>{workspace.environments.length}</span>
+            {t('SEUS AMBIENTES') + ' '}
+            <span>{formatNumber(workspace.environments.length)}</span>
           </div>
           {workspace.environments.map((env) => (
             <button
@@ -184,17 +187,21 @@ export function EnvironmentsView({
               </span>
               <span>
                 <strong>{env.name}</strong>
-                <small>{env.variables.length} variáveis</small>
+                <small>
+                  {formatNumber(env.variables.length)}
+                  {' ' + t('variáveis')}
+                </small>
               </span>
               {workspace.activeEnvironment === env.id ? (
-                <span className="active-environment-label">Ativo</span>
+                <span className="active-environment-label">{t('Ativo')}</span>
               ) : (
                 <ChevronRight size={15} />
               )}
             </button>
           ))}
           <Button variant="ghost" className="new-environment" onClick={() => setCreating(true)}>
-            <Plus size={15} /> Adicionar ambiente
+            <Plus size={15} />
+            {' ' + t('Adicionar ambiente')}
           </Button>
         </aside>
         {environment ? (
@@ -204,13 +211,13 @@ export function EnvironmentsView({
                 <div className="title-with-badge">
                   <input
                     className="section-name-input"
-                    aria-label="Nome do ambiente"
+                    aria-label={t('Nome do ambiente')}
                     value={environment.name}
                     onChange={(e) => update({ name: e.target.value })}
                   />
                   <span className={`status-dot dot-${environment.color}`} />
                 </div>
-                <p>Use estas variáveis em URLs, headers, autorização e corpo.</p>
+                <p>{t('Use estas variáveis em URLs, headers, autorização e corpo.')}</p>
               </div>
               <div className="flex-items">
                 {workspace.activeEnvironment !== selected && (
@@ -219,27 +226,28 @@ export function EnvironmentsView({
                     variant="outline"
                     onClick={() => {
                       onChange({ ...workspace, activeEnvironment: selected });
-                      toast.success(`${environment.name} está ativo`);
+                      toast.success(t('{0} está ativo', environment.name));
                     }}
                   >
-                    <Check size={14} /> Ativar ambiente
+                    <Check size={14} />
+                    {' ' + t('Ativar ambiente')}
                   </Button>
                 )}
                 <Dropdown
                   trigger={
-                    <Button variant="ghost" size="icon" aria-label="Ações do ambiente">
+                    <Button variant="ghost" size="icon" aria-label={t('Ações do ambiente')}>
                       <MoreHorizontal size={18} />
                     </Button>
                   }
                   items={[
                     {
-                      label: 'Duplicar ambiente',
+                      label: t('Duplicar ambiente'),
                       icon: <Copy size={14} />,
                       action: () => {
                         const duplicate = {
                           ...environment,
                           id: uid(),
-                          name: `${environment.name} (cópia)`,
+                          name: t('{0} (cópia)', environment.name),
                           variables: environment.variables.map((v) => ({ ...v, id: uid() })),
                         };
                         onChange({
@@ -250,7 +258,7 @@ export function EnvironmentsView({
                       },
                     },
                     {
-                      label: 'Exportar estrutura',
+                      label: t('Exportar estrutura'),
                       icon: <ArrowDownToLine size={14} />,
                       action: () =>
                         download(
@@ -259,7 +267,7 @@ export function EnvironmentsView({
                         ),
                     },
                     {
-                      label: 'Excluir ambiente',
+                      label: t('Excluir ambiente'),
                       icon: <Trash2 size={14} />,
                       danger: true,
                       action: () => setConfirm(true),
@@ -271,7 +279,7 @@ export function EnvironmentsView({
             <div className="environment-editor-body">
               <PairEditor
                 key={environment.id}
-                kind="variável"
+                kind={t('variável')}
                 variables
                 rows={environment.variables}
                 onChange={(variables) => update({ variables })}
@@ -279,33 +287,37 @@ export function EnvironmentsView({
               <div className="secret-notice">
                 <LockKeyhole size={17} />
                 <div>
-                  <strong>Segredos de ambiente</strong>
+                  <strong>{t('Segredos de ambiente')}</strong>
                   <p>
                     {native
-                      ? 'O cadeado guarda o valor no Gerenciador de Credenciais do Windows e o exclui das exportações.'
-                      : 'O cadeado guarda o valor apenas na sessão e o exclui das exportações.'}
+                      ? t(
+                          'O cadeado guarda o valor no Gerenciador de Credenciais do Windows e o exclui das exportações.',
+                        )
+                      : t('O cadeado guarda o valor apenas na sessão e o exclui das exportações.')}
                   </p>
                 </div>
               </div>
               <div className="precedence-note">
                 <Info size={14} />
                 <span>
-                  Precedência no runner: extração temporária <ArrowRight size={11} /> ambiente{' '}
-                  <ArrowRight size={11} /> coleção.
+                  {t('Precedência no runner: extração temporária') + ' '}
+                  <ArrowRight size={11} />
+                  {' ' + t('ambiente')} <ArrowRight size={11} />
+                  {' ' + t('coleção.')}
                 </span>
               </div>
             </div>
             <div className="surface-footer">
-              <span className="status-dot dot-green" /> Alterações salvas automaticamente neste
-              dispositivo
+              <span className="status-dot dot-green" />
+              {' ' + t('Alterações salvas automaticamente neste dispositivo')}
             </div>
           </section>
         ) : (
           <div className="surface center-empty">
             <Globe2 size={32} />
-            <h3>Um ambiente para começar</h3>
-            <p>Separe configurações sem duplicar suas requisições.</p>
-            <Button onClick={() => setCreating(true)}>Criar ambiente</Button>
+            <h3>{t('Um ambiente para começar')}</h3>
+            <p>{t('Separe configurações sem duplicar suas requisições.')}</p>
+            <Button onClick={() => setCreating(true)}>{t('Criar ambiente')}</Button>
           </div>
         )}
       </div>
@@ -314,10 +326,13 @@ export function EnvironmentsView({
           <Terminal size={21} />
         </span>
         <div>
-          <h4>Uma URL, infinitas possibilidades.</h4>
+          <h4>{t('Uma URL, infinitas possibilidades.')}</h4>
           <p>
-            Troque <code>http://localhost:3000</code> por <code>{'{{base_url}}'}</code> e deixe o
-            ambiente cuidar do resto.
+            {t('Troque') + ' '}
+            <code>http://localhost:3000</code>
+            {' ' + t('por') + ' '}
+            <code>{'{{base_url}}'}</code>
+            {' ' + t('e deixe o ambiente cuidar do resto.')}
           </p>
         </div>
         <span className="wide-tip-decoration">{'{{ }}'}</span>
@@ -325,8 +340,8 @@ export function EnvironmentsView({
       <Dialog
         open={creating}
         onOpenChange={setCreating}
-        title="Novo ambiente"
-        description="Dê um nome ao próximo contexto da sua API."
+        title={t('Novo ambiente')}
+        description={t('Dê um nome ao próximo contexto da sua API.')}
       >
         <form
           onSubmit={(e) => {
@@ -335,23 +350,24 @@ export function EnvironmentsView({
           }}
         >
           <label className="field-label">
-            Nome do ambiente
+            {t('Nome do ambiente')}
             <input
               autoFocus
               className="input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Produção"
+              placeholder={t('Ex.: Produção')}
               required
               maxLength={80}
             />
           </label>
           <div className="dialog-footer">
             <Button variant="outline" type="button" onClick={() => setCreating(false)}>
-              Cancelar
+              {t('Cancelar')}
             </Button>
             <Button type="submit">
-              Criar ambiente <ArrowRight size={14} />
+              {t('Criar ambiente') + ' '}
+              <ArrowRight size={14} />
             </Button>
           </div>
         </form>
@@ -359,12 +375,12 @@ export function EnvironmentsView({
       <Dialog
         open={confirm}
         onOpenChange={setConfirm}
-        title="Excluir ambiente?"
-        description={`O ambiente ${environment?.name} será removido deste dispositivo.`}
+        title={t('Excluir ambiente?')}
+        description={t('O ambiente {0} será removido deste dispositivo.', environment?.name ?? '')}
       >
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setConfirm(false)}>
-            Manter ambiente
+            {t('Manter ambiente')}
           </Button>
           <Button
             variant="destructive"
@@ -382,7 +398,7 @@ export function EnvironmentsView({
               setConfirm(false);
             }}
           >
-            Excluir ambiente
+            {t('Excluir ambiente')}
           </Button>
         </div>
       </Dialog>
@@ -427,14 +443,19 @@ export function RunnerView({
   const totalSteps = runRequestIds.length;
   const passed = rows.filter((r) => !r.failures.length).length;
   const failed = rows.filter((r) => r.failures.length).length;
-  const completedLabel = `${rows.length} de ${totalSteps} ${totalSteps === 1 ? 'etapa concluída' : 'etapas concluídas'}`;
-  const approvedLabel = passed === 1 ? 'aprovada' : 'aprovadas';
-  const chosenLabel = `${chosen.length} ${chosen.length === 1 ? 'etapa' : 'etapas'}`;
+  const completedLabel = t(
+    '{0} de {1} {2}',
+    rows.length,
+    totalSteps,
+    totalSteps === 1 ? t('etapa concluída') : t('etapas concluídas'),
+  );
+  const approvedLabel = passed === 1 ? t('aprovada') : t('aprovadas');
+  const chosenLabel = t('{0} {1}', chosen.length, chosen.length === 1 ? t('etapa') : t('etapas'));
   const latest = rows.at(-1);
   const outcomeLabel = {
-    completed: 'Execução concluída',
-    cancelled: 'Execução cancelada',
-    stopped_on_failure: 'Execução interrompida na primeira falha',
+    completed: t('Execução concluída'),
+    cancelled: t('Execução cancelada'),
+    stopped_on_failure: t('Execução interrompida na primeira falha'),
   };
   const maxHttpTime = rows.reduce((max, row) => Math.max(max, row.http_ms), 1);
   function clearRun() {
@@ -493,7 +514,7 @@ export function RunnerView({
       onResults(result);
       if (result.outcome === 'completed')
         toast[result.results.some((r) => r.failures.length) ? 'warning' : 'success'](
-          'Execução concluída',
+          t('Execução concluída'),
         );
     } catch (error) {
       setError(redactSecrets(normalizeError(error).message, environment));
@@ -507,12 +528,15 @@ export function RunnerView({
   return (
     <div className="workspace-page runner-page">
       <PageHeading
-        eyebrow="CONFIANÇA EM CADA ENTREGA"
-        title="Teste o fluxo. Não só o endpoint."
-        description="Execute suas coleções em sequência e encontre os detalhes que fazem a diferença."
+        eyebrow={t('CONFIANÇA EM CADA ENTREGA')}
+        title={t('Teste o fluxo. Não só o endpoint.')}
+        description={t(
+          'Execute suas coleções em sequência e encontre os detalhes que fazem a diferença.',
+        )}
         action={
           <span className="local-pill">
-            <ShieldCheck size={14} /> Execução local
+            <ShieldCheck size={14} />
+            {' ' + t('Execução local')}
           </span>
         }
       />
@@ -520,8 +544,8 @@ export function RunnerView({
         <section className="surface runner-configuration">
           <div className="surface-heading">
             <div>
-              <h3>Configurar execução</h3>
-              <p>Um fluxo, do início ao fim.</p>
+              <h3>{t('Configurar execução')}</h3>
+              <p>{t('Um fluxo, do início ao fim.')}</p>
             </div>
             <span className="section-icon">
               <FlaskConical size={20} />
@@ -529,9 +553,9 @@ export function RunnerView({
           </div>
           <div className="runner-fields">
             <label className="field-label">
-              Coleção
+              {t('Coleção')}
               <select
-                aria-label="Coleção"
+                aria-label={t('Coleção')}
                 disabled={busy}
                 className="input"
                 value={collection?.id ?? ''}
@@ -543,7 +567,7 @@ export function RunnerView({
                 }}
               >
                 <option value="" disabled>
-                  Selecione uma coleção
+                  {t('Selecione uma coleção')}
                 </option>
                 {workspace.collections.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -553,7 +577,7 @@ export function RunnerView({
               </select>
             </label>
             <label className="field-label">
-              Ambiente de execução
+              {t('Ambiente de execução')}
               <select
                 disabled={busy}
                 className="input"
@@ -563,7 +587,7 @@ export function RunnerView({
                   clearRun();
                 }}
               >
-                <option value="">Selecione um ambiente</option>
+                <option value="">{t('Selecione um ambiente')}</option>
                 {workspace.environments.map((env) => (
                   <option key={env.id} value={env.id}>
                     {env.name}
@@ -572,7 +596,7 @@ export function RunnerView({
               </select>
             </label>
             <label className="field-label">
-              Escopo da execução
+              {t('Escopo da execução')}
               <select
                 className="input"
                 value={scope}
@@ -582,14 +606,14 @@ export function RunnerView({
                   clearRun();
                 }}
               >
-                <option value="collection">Coleção inteira</option>
-                <option value="folder">Pasta</option>
-                <option value="selection">Requisições selecionadas</option>
+                <option value="collection">{t('Coleção inteira')}</option>
+                <option value="folder">{t('Pasta')}</option>
+                <option value="selection">{t('Requisições selecionadas')}</option>
               </select>
             </label>
             {scope === 'folder' && (
               <label className="field-label">
-                Pasta da coleção
+                {t('Pasta da coleção')}
                 <select
                   className="input"
                   disabled={busy}
@@ -599,7 +623,7 @@ export function RunnerView({
                     clearRun();
                   }}
                 >
-                  <option value="">Selecione uma pasta</option>
+                  <option value="">{t('Selecione uma pasta')}</option>
                   {collection?.folders.map((name) => (
                     <option key={name}>{name}</option>
                   ))}
@@ -608,23 +632,25 @@ export function RunnerView({
             )}
             <div className="runner-mode">
               <span className="status-dot dot-purple" />
-              <strong>Sequencial</strong>
-              <span>Uma requisição por vez</span>
+              <strong>{t('Sequencial')}</strong>
+              <span>{t('Uma requisição por vez')}</span>
             </div>
             <label className="field-label">
-              Ao encontrar uma falha
+              {t('Ao encontrar uma falha')}
               <select
                 className="input"
                 disabled={busy}
                 value={stopOnFailure ? 'stop' : 'continue'}
                 onChange={(event) => setStopOnFailure(event.target.value === 'stop')}
               >
-                <option value="continue">Continuar até o fim</option>
-                <option value="stop">Parar na primeira falha</option>
+                <option value="continue">{t('Continuar até o fim')}</option>
+                <option value="stop">{t('Parar na primeira falha')}</option>
               </select>
             </label>
             <p className="field-hint">
-              O runner usa as requisições salvas. Salve suas alterações no editor antes de executar.
+              {t(
+                'O runner usa as requisições salvas. Salve suas alterações no editor antes de executar.',
+              )}
             </p>
           </div>
           <div className="runner-start">
@@ -637,16 +663,19 @@ export function RunnerView({
                   onCancel();
                 }}
               >
-                <Square size={14} /> {cancelling ? 'Cancelando…' : 'Cancelar execução'}
+                <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
               </Button>
             ) : (
               <Button onClick={run} disabled={busy || !chosen.length || !environment}>
-                <Play size={15} fill="currentColor" /> Executar {chosen.length}{' '}
-                {chosen.length === 1 ? 'requisição' : 'requisições'}
+                <Play size={15} fill="currentColor" />
+                {' ' + t('Executar') + ' '}
+                {formatNumber(chosen.length)}{' '}
+                {chosen.length === 1 ? t('requisição') : t('requisições')}
               </Button>
             )}
             <span>
-              <LockKeyhole size={11} /> Variáveis isoladas por rodada
+              <LockKeyhole size={11} />
+              {' ' + t('Variáveis isoladas por rodada')}
             </span>
           </div>
         </section>
@@ -655,21 +684,33 @@ export function RunnerView({
             <div>
               <h3>
                 {running
-                  ? 'Execução em andamento'
+                  ? t('Execução em andamento')
                   : result
                     ? outcomeLabel[result.outcome]
-                    : 'Requisições da coleção'}
+                    : t('Requisições da coleção')}
               </h3>
               <p role="status" aria-atomic="true">
                 {running
                   ? activeStep !== undefined && activeRequest
-                    ? `Etapa ${activeStep + 1} de ${totalSteps} · ${activeRequest.name}`
+                    ? t('Etapa {0} de {1} · {2}', activeStep + 1, totalSteps, activeRequest.name)
                     : completedLabel
                   : result
-                    ? `${outcomeLabel[result.outcome]} · ${completedLabel} · ${passed} ${approvedLabel} · ${failed} com falha`
-                    : `${chosenLabel} · na ordem definida na coleção`}
+                    ? t(
+                        '{0} · {1} · {2} {3} · {4} com falha',
+                        outcomeLabel[result.outcome],
+                        completedLabel,
+                        passed,
+                        approvedLabel,
+                        failed,
+                      )
+                    : t('{0} · na ordem definida na coleção', chosenLabel)}
                 {latest &&
-                  ` · Última etapa: ${latest.name} · ${latest.failures.length ? 'Falhou' : 'Aprovada'} · ${latest.http_ms + latest.validation_ms} ms`}
+                  t(
+                    ' · Última etapa: {0} · {1} · {2} ms',
+                    latest.name,
+                    latest.failures.length ? t('Falhou') : t('Aprovada'),
+                    latest.http_ms + latest.validation_ms,
+                  )}
               </p>
             </div>
             {running ? (
@@ -677,7 +718,11 @@ export function RunnerView({
             ) : (
               <span className="subtle-badge">
                 {result
-                  ? `${rows.length} ${rows.length === 1 ? 'etapa concluída' : 'etapas concluídas'}`
+                  ? t(
+                      '{0} {1}',
+                      rows.length,
+                      rows.length === 1 ? t('etapa concluída') : t('etapas concluídas'),
+                    )
                   : chosenLabel}
               </span>
             )}
@@ -686,17 +731,20 @@ export function RunnerView({
             <div className="run-summary">
               <span>
                 <CircleCheck size={15} className="green-text" />
-                <strong>{passed}</strong> {approvedLabel}
+                <strong>{formatNumber(passed)}</strong> {approvedLabel}
               </span>
               <span>
                 <TriangleAlert size={15} className={failed ? 'red-text' : ''} />
-                <strong>{failed}</strong> com falha
+                <strong>{formatNumber(failed)}</strong>
+                {' ' + t('com falha')}
               </span>
               <span>
                 <Clock3 size={15} />
                 <strong>
-                  {result?.duration_ms ??
-                    rows.reduce((sum, row) => sum + row.http_ms + row.validation_ms, 0)}
+                  {formatNumber(
+                    result?.duration_ms ??
+                      rows.reduce((sum, row) => sum + row.http_ms + row.validation_ms, 0),
+                  )}
                 </strong>{' '}
                 ms
               </span>
@@ -721,7 +769,7 @@ export function RunnerView({
                 >
                   <input
                     type="checkbox"
-                    aria-label={`Executar ${request.name}`}
+                    aria-label={t('Executar {0}', request.name)}
                     disabled={busy || scope !== 'selection'}
                     checked={included}
                     onChange={(e) => {
@@ -734,7 +782,9 @@ export function RunnerView({
                       clearRun();
                     }}
                   />
-                  <span className="step-number">{String(index + 1).padStart(2, '0')}</span>
+                  <span className="step-number">
+                    {formatNumber(index + 1, { minimumIntegerDigits: 2 })}
+                  </span>
                   <MethodBadge method={request.method} small />
                   <div className="runner-request-name">
                     <strong>{request.name}</strong>
@@ -749,22 +799,22 @@ export function RunnerView({
                     <div className="run-row-result">
                       <span className={row.failures.length ? 'red-text' : 'green-text'}>
                         {row.failures.length ? <X size={14} /> : <Check size={14} />}
-                        {row.failures.length ? 'Falhou' : 'Aprovada'}
+                        {row.failures.length ? t('Falhou') : t('Aprovada')}
                         {row.status !== null && ` · ${row.status}`}
                       </span>
-                      <small>{row.http_ms + row.validation_ms} ms</small>
+                      <small>{formatNumber(row.http_ms + row.validation_ms)} ms</small>
                     </div>
                   ) : (
                     <span className={cn('pending-label', active && 'purple-text')}>
                       {!included
-                        ? 'Ignorada'
+                        ? t('Ignorada')
                         : active
-                          ? 'Em execução'
+                          ? t('Em execução')
                           : running
-                            ? 'Pendente'
+                            ? t('Pendente')
                             : result
-                              ? 'Não executada'
-                              : `${request.tests.length} testes`}
+                              ? t('Não executada')
+                              : t('{0} testes', request.tests.length)}
                     </span>
                   )}
                 </div>
@@ -773,8 +823,8 @@ export function RunnerView({
             {!collection?.requests.length && (
               <div className="center-empty">
                 <Layers3 size={30} />
-                <h3>Nenhuma requisição por aqui</h3>
-                <p>Adicione endpoints à sua coleção para começar.</p>
+                <h3>{t('Nenhuma requisição por aqui')}</h3>
+                <p>{t('Adicione endpoints à sua coleção para começar.')}</p>
               </div>
             )}
           </div>
@@ -782,7 +832,7 @@ export function RunnerView({
             <div
               className="run-progress"
               role="progressbar"
-              aria-label="Etapas concluídas"
+              aria-label={t('Etapas concluídas')}
               aria-valuenow={rows.length}
               aria-valuemax={totalSteps || 1}
             >
@@ -796,11 +846,12 @@ export function RunnerView({
           {rows.length > 0 && (
             <div className="run-timing">
               <h4>
-                <Activity size={14} /> Tempo por etapa
+                <Activity size={14} />
+                {' ' + t('Tempo por etapa')}
               </h4>
               <div className="timing-bars">
                 {rows.map((row, i) => (
-                  <div key={i} title={`${row.name}: ${row.http_ms} ms`}>
+                  <div key={i} title={t('{0}: {1} ms', row.name, row.http_ms)}>
                     <span
                       style={{
                         height: `${Math.max(8, (row.http_ms / maxHttpTime) * 100)}%`,
@@ -811,7 +862,7 @@ export function RunnerView({
                   </div>
                 ))}
               </div>
-              <div className="timing-caption">Duração HTTP relativa por requisição</div>
+              <div className="timing-caption">{t('Duração HTTP relativa por requisição')}</div>
               {result && (
                 <Button
                   variant="outline"
@@ -823,7 +874,8 @@ export function RunnerView({
                     )
                   }
                 >
-                  <ArrowDownToLine size={14} /> Exportar relatório
+                  <ArrowDownToLine size={14} />
+                  {' ' + t('Exportar relatório')}
                 </Button>
               )}
             </div>
@@ -831,8 +883,9 @@ export function RunnerView({
         </section>
       </div>
       <div className="runner-footnote">
-        <Info size={14} /> O ambiente é capturado no início. Tokens extraídos só existem durante
-        esta execução.
+        <Info size={14} />
+        {' ' +
+          t('O ambiente é capturado no início. Tokens extraídos só existem durante esta execução.')}
       </div>
     </div>
   );
@@ -864,12 +917,13 @@ export function HistoryView({
   return (
     <div className="workspace-page">
       <PageHeading
-        eyebrow="CADA REQUEST CONTA UMA HISTÓRIA"
-        title="Seu caminho até aqui."
-        description="Revisite as requisições que você enviou, sem perder o fio da meada."
+        eyebrow={t('CADA REQUEST CONTA UMA HISTÓRIA')}
+        title={t('Seu caminho até aqui.')}
+        description={t('Revisite as requisições que você enviou, sem perder o fio da meada.')}
         action={
           <Button variant="outline" disabled={!history.length} onClick={() => setConfirm(true)}>
-            <Trash2 size={14} /> Limpar histórico
+            <Trash2 size={14} />
+            {' ' + t('Limpar histórico')}
           </Button>
         }
       />
@@ -879,8 +933,8 @@ export function HistoryView({
             <History size={20} />
           </span>
           <div>
-            <span>Requisições enviadas</span>
-            <strong>{history.length}</strong>
+            <span>{t('Requisições enviadas')}</span>
+            <strong>{formatNumber(history.length)}</strong>
           </div>
         </div>
         <div className="stat-card">
@@ -888,8 +942,10 @@ export function HistoryView({
             <CheckCheck size={20} />
           </span>
           <div>
-            <span>Respostas de sucesso</span>
-            <strong>{history.filter((r) => r.status !== null && r.status < 400).length}</strong>
+            <span>{t('Respostas de sucesso')}</span>
+            <strong>
+              {formatNumber(history.filter((r) => r.status !== null && r.status < 400).length)}
+            </strong>
           </div>
         </div>
         <div className="stat-card">
@@ -897,9 +953,9 @@ export function HistoryView({
             <Clock3 size={20} />
           </span>
           <div>
-            <span>Tempo médio</span>
+            <span>{t('Tempo médio')}</span>
             <strong>
-              {average}
+              {formatNumber(average)}
               <small>ms</small>
             </strong>
           </div>
@@ -910,17 +966,17 @@ export function HistoryView({
           <div className="search-field">
             <Search size={15} />
             <input
-              aria-label="Buscar no histórico"
-              placeholder="Buscar requisições…"
+              aria-label={t('Buscar no histórico')}
+              placeholder={t('Buscar requisições…')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
           <div className="segmented-control">
             {[
-              { id: 'all', label: 'Todas' },
-              { id: 'success', label: 'Sucesso' },
-              { id: 'error', label: 'Erros' },
+              { id: 'all', label: t('Todas') },
+              { id: 'success', label: t('Sucesso') },
+              { id: 'error', label: t('Erros') },
             ].map((tab) => (
               <button
                 className={filter === tab.id ? 'active' : ''}
@@ -931,15 +987,18 @@ export function HistoryView({
               </button>
             ))}
           </div>
-          <span className="muted">{rows.length} resultados</span>
+          <span className="muted">
+            {formatNumber(rows.length)}
+            {' ' + t('resultados')}
+          </span>
         </div>
         {rows.length ? (
           <div className="history-table">
             <div className="history-row history-table-heading">
-              <span>REQUISIÇÃO</span>
+              <span>{t('REQUISIÇÃO')}</span>
               <span>STATUS</span>
-              <span>TEMPO</span>
-              <span>QUANDO</span>
+              <span>{t('TEMPO')}</span>
+              <span>{t('QUANDO')}</span>
               <span />
             </div>
             {rows.map((row) => (
@@ -958,11 +1017,11 @@ export function HistoryView({
                   )}
                 >
                   <span className="status-dot" />
-                  {row.status || 'Erro de rede'}
+                  {row.status || t('Erro de rede')}
                 </span>
-                <span className="mono">{row.duration} ms</span>
+                <span className="mono">{formatNumber(row.duration)} ms</span>
                 <span>
-                  {new Date(row.date).toLocaleString('pt-BR', {
+                  {formatDate(row.date, {
                     day: '2-digit',
                     month: 'short',
                     hour: '2-digit',
@@ -980,17 +1039,17 @@ export function HistoryView({
             </span>
             <h3>
               {search || filter !== 'all'
-                ? 'Nenhum resultado encontrado'
-                : 'Toda jornada tem um primeiro request.'}
+                ? t('Nenhum resultado encontrado')
+                : t('Toda jornada tem um primeiro request.')}
             </h3>
             <p>
               {search || filter !== 'all'
-                ? 'Experimente outros termos ou altere o filtro.'
-                : 'As requisições enviadas pelo editor vão aparecer aqui.'}
+                ? t('Experimente outros termos ou altere o filtro.')
+                : t('As requisições enviadas pelo editor vão aparecer aqui.')}
             </p>
             <span className="privacy-note">
-              <LockKeyhole size={12} /> Apenas metadados. Corpos e credenciais não entram no
-              histórico.
+              <LockKeyhole size={12} />
+              {' ' + t('Apenas metadados. Corpos e credenciais não entram no histórico.')}
             </span>
           </div>
         )}
@@ -998,22 +1057,24 @@ export function HistoryView({
       <Dialog
         open={confirm}
         onOpenChange={setConfirm}
-        title="Limpar o histórico?"
-        description="Os metadados das requisições serão removidos. Suas coleções não serão afetadas."
+        title={t('Limpar o histórico?')}
+        description={t(
+          'Os metadados das requisições serão removidos. Suas coleções não serão afetadas.',
+        )}
       >
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setConfirm(false)}>
-            Cancelar
+            {t('Cancelar')}
           </Button>
           <Button
             variant="destructive"
             onClick={() => {
               onClear();
               setConfirm(false);
-              toast.success('Histórico limpo');
+              toast.success(t('Histórico limpo'));
             }}
           >
-            Limpar histórico
+            {t('Limpar histórico')}
           </Button>
         </div>
       </Dialog>
@@ -1035,6 +1096,7 @@ export function SettingsView({
   updates: React.ReactNode;
 }) {
   const settings = workspace.settings;
+  const locale = useLocale();
   const update = (patch: Partial<Workspace['settings']>) =>
     onChange({ ...workspace, settings: { ...settings, ...patch } });
   const size = useMemo(
@@ -1044,25 +1106,48 @@ export function SettingsView({
   return (
     <div className="workspace-page settings-page">
       <PageHeading
-        eyebrow="DO SEU JEITO"
-        title="Um workspace com a sua cara."
-        description="Ajuste os detalhes e deixe o Fedexe trabalhar no seu ritmo."
+        eyebrow={t('DO SEU JEITO')}
+        title={t('Um workspace com a sua cara.')}
+        description={t('Ajuste os detalhes e deixe o Fedexe trabalhar no seu ritmo.')}
       />
+      <section className="surface settings-surface">
+        <label className="field-label workspace-name-field">
+          {t('Idioma da interface')}
+          <select
+            className="input"
+            value={locale}
+            onChange={(event) => {
+              try {
+                setLocale(event.target.value as Locale);
+              } catch {
+                toast.error(t('Não foi possível salvar a preferência de idioma.'));
+              }
+            }}
+          >
+            <option value="en-US" lang="en-US">
+              English (US)
+            </option>
+            <option value="pt-BR" lang="pt-BR">
+              Português (Brasil)
+            </option>
+          </select>
+        </label>
+      </section>
       {updates}
       <section className="surface settings-surface">
         <div className="settings-section-heading">
           <Monitor size={20} />
           <div>
-            <h3>Aparência</h3>
-            <p>Conforto visual para cada momento do dia.</p>
+            <h3>{t('Aparência')}</h3>
+            <p>{t('Conforto visual para cada momento do dia.')}</p>
           </div>
         </div>
         <div className="theme-options">
           {(
             [
-              { value: 'light', label: 'Claro', icon: Sun },
-              { value: 'dark', label: 'Escuro', icon: Moon },
-              { value: 'system', label: 'Sistema', icon: Monitor },
+              { value: 'light', label: t('Claro'), icon: Sun },
+              { value: 'dark', label: t('Escuro'), icon: Moon },
+              { value: 'system', label: t('Sistema'), icon: Monitor },
             ] as const
           ).map((theme) => (
             <button
@@ -1085,14 +1170,14 @@ export function SettingsView({
           ))}
         </div>
         <SettingToggle
-          title="Interface compacta"
-          description="Reduza os espaçamentos na árvore de coleções."
+          title={t('Interface compacta')}
+          description={t('Reduza os espaçamentos na árvore de coleções.')}
           checked={settings.compact}
           onChange={(compact) => update({ compact })}
         />
         <SettingToggle
-          title="Quebra de linha nas respostas"
-          description="Leia respostas longas sem rolar horizontalmente."
+          title={t('Quebra de linha nas respostas')}
+          description={t('Leia respostas longas sem rolar horizontalmente.')}
           checked={settings.wrap}
           onChange={(wrap) => update({ wrap })}
         />
@@ -1101,12 +1186,12 @@ export function SettingsView({
         <div className="settings-section-heading">
           <HardDrive size={20} />
           <div>
-            <h3>Seu espaço, seus dados</h3>
-            <p>Sem nuvem obrigatória. Sem contas. Sem surpresas.</p>
+            <h3>{t('Seu espaço, seus dados')}</h3>
+            <p>{t('Sem nuvem obrigatória. Sem contas. Sem surpresas.')}</p>
           </div>
         </div>
         <label className="field-label workspace-name-field">
-          Nome do workspace
+          {t('Nome do workspace')}
           <input
             className="input"
             maxLength={60}
@@ -1116,9 +1201,12 @@ export function SettingsView({
         </label>
         <div className="data-information">
           <span>
-            <Database size={16} /> Armazenamento local
+            <Database size={16} />
+            {' ' + t('Armazenamento local')}
           </span>
-          <strong>{(size / 1024).toFixed(1)} KB</strong>
+          <strong>
+            {formatNumber(size / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB
+          </strong>
         </div>
         <div className="settings-backup-actions">
           <Button
@@ -1130,16 +1218,20 @@ export function SettingsView({
               )
             }
           >
-            <ArrowDownToLine size={15} /> Exportar backup
+            <ArrowDownToLine size={15} />
+            {' ' + t('Exportar backup')}
           </Button>
           <Button variant="outline" onClick={onImport}>
-            <FileJson2 size={15} /> Importar dados
+            <FileJson2 size={15} />
+            {' ' + t('Importar dados')}
           </Button>
         </div>
         <p className="field-hint">
           {native
-            ? 'O workspace é salvo em JSON. Segredos marcados ficam no Gerenciador de Credenciais do Windows.'
-            : 'O navegador salva o workspace localmente e mantém os segredos apenas na sessão.'}
+            ? t(
+                'O workspace é salvo em JSON. Segredos marcados ficam no Gerenciador de Credenciais do Windows.',
+              )
+            : t('O navegador salva o workspace localmente e mantém os segredos apenas na sessão.')}
         </p>
       </section>
       <section className="about-card">
@@ -1147,11 +1239,12 @@ export function SettingsView({
           f<span>↗</span>
         </span>
         <div>
-          <h3>Feito para quem constrói.</h3>
-          <p>Fedexe API · Interface 0.2 · MIT · Local-first</p>
+          <h3>{t('Feito para quem constrói.')}</h3>
+          <p>{t('Fedexe API · Interface 0.2 · MIT · Local-first')}</p>
         </div>
         <Button variant="outline" onClick={onHelp}>
-          Conhecer o projeto <ArrowUpRight size={14} />
+          {t('Conhecer o projeto') + ' '}
+          <ArrowUpRight size={14} />
         </Button>
       </section>
     </div>

@@ -87,7 +87,7 @@ describe('adaptador HTTP para prévia no navegador', () => {
       { ...collection, requests: collection.requests.slice(1) },
       () => {},
     );
-    expect(isolated.results[0].failures[0]).toContain('Variável ausente');
+    expect(isolated.results[0].failures[0]).toContain('Missing variable');
   });
   it('continua após falhas e preserva os diagnósticos', async () => {
     const result = await runCollection(
@@ -110,13 +110,13 @@ describe('adaptador HTTP para prévia no navegador', () => {
       },
       () => {},
     );
-    expect(result.results[0].failures[0]).toContain('recebido 404');
+    expect(result.results[0].failures[0]).toContain('received 404');
     expect(result.results[1].failures).toEqual([]);
   });
   it('cancela uma requisição em andamento', async () => {
     const pending = send({ method: 'GET', url: `${base}/slow`, headers: {}, body: null });
     await cancel();
-    await expect(pending).rejects.toThrow('cancelada');
+    await expect(pending).rejects.toThrow('canceled');
   });
   it('diagnostica rede, variável e limite JSON sem interromper as etapas seguintes', async () => {
     const makeStep = (url: string): NativeCollection['requests'][number] => ({
@@ -143,10 +143,10 @@ describe('adaptador HTTP para prévia no navegador', () => {
     expect(outcome).toBe('completed');
     expect(results.map(({ status }) => status)).toEqual([null, null, 200, 200, 200]);
     expect(results[0].failures).toHaveLength(1);
-    expect(results[1].failures[0]).toContain('Variável ausente');
+    expect(results[1].failures[0]).toContain('Missing variable');
     expect(results[2].failures).toEqual([]);
     expect(results[3].checks_passed).toBe(1);
-    expect(results[3].failures[0]).toContain('limite de validação JSON');
+    expect(results[3].failures[0]).toContain('JSON validation limit');
     expect(results[4].failures).toEqual([]);
   });
 });

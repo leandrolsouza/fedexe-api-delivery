@@ -1,3 +1,5 @@
+import { localizeNativeMessage } from '../lib/native-messages';
+import { t } from '../lib/i18n';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -47,8 +49,8 @@ export function useUpdates() {
     if (blocked || operation.current || result?.status !== 'available') return;
     operation.current = true;
     setInstallError('');
-    setProgress('Baixando o instalador…');
-    const channel = new Channel<string>((message) => setProgress(message));
+    setProgress(t('Baixando o instalador…'));
+    const channel = new Channel<string>((message) => setProgress(localizeNativeMessage(message)));
     try {
       await invoke('install_update', { version: result.version, progress: channel });
     } catch (failure) {
@@ -62,12 +64,12 @@ export function useUpdates() {
   return {
     version: result?.status === 'available' ? result.version : undefined,
     status: checking
-      ? 'Verificando atualizações…'
+      ? t('Verificando atualizações…')
       : error ||
         (result?.status === 'current'
-          ? 'Você está usando a versão estável mais recente.'
+          ? t('Você está usando a versão estável mais recente.')
           : result?.status === 'unconfigured'
-            ? 'O atualizador não está configurado neste instalador.'
+            ? t('O atualizador não está configurado neste instalador.')
             : ''),
     check,
     checking,
@@ -88,18 +90,20 @@ export function UpdateSettings({ updates }: { updates: Updates }) {
       <div className="settings-section-heading">
         <Download size={20} aria-hidden="true" />
         <div>
-          <h3>Atualizações</h3>
-          <p>Versões estáveis do Fedexe API para Windows.</p>
+          <h3>{t('Atualizações')}</h3>
+          <p>{t('Versões estáveis do Fedexe API para Windows.')}</p>
         </div>
       </div>
       <p role="status">
-        {updates.version ? `Versão ${updates.version} disponível.` : updates.status}
+        {updates.version ? t('Versão {0} disponível.', updates.version) : updates.status}
       </p>
       <div className="settings-backup-actions">
         <Button variant="outline" disabled={updates.checking} onClick={() => void updates.check()}>
-          Verificar atualizações
+          {t('Verificar atualizações')}
         </Button>
-        {updates.version && <Button onClick={() => updates.setOpen(true)}>Ver atualização</Button>}
+        {updates.version && (
+          <Button onClick={() => updates.setOpen(true)}>{t('Ver atualização')}</Button>
+        )}
       </div>
     </section>
   );
@@ -112,8 +116,10 @@ export function UpdateDialog({ updates, blocked }: { updates: Updates; blocked: 
       open={updates.open}
       onOpenChange={updates.setOpen}
       dismissible={!updates.progress}
-      title={`Versão ${updates.version} disponível`}
-      description="O Fedexe vai verificar a assinatura do instalador, fechar e reabrir após a atualização."
+      title={t('Versão {0} disponível', updates.version)}
+      description={t(
+        'O Fedexe vai verificar a assinatura do instalador, fechar e reabrir após a atualização.',
+      )}
     >
       {blocked && <p role="status">{blocked}</p>}
       {updates.progress && <p role="status">{updates.progress}</p>}
@@ -124,13 +130,13 @@ export function UpdateDialog({ updates, blocked }: { updates: Updates; blocked: 
           disabled={!!updates.progress}
           onClick={() => updates.setOpen(false)}
         >
-          Adiar
+          {t('Adiar')}
         </Button>
         <Button
           disabled={!!(blocked || updates.progress)}
           onClick={() => void updates.install(!!blocked)}
         >
-          Instalar atualização
+          {t('Instalar atualização')}
         </Button>
       </div>
     </Dialog>

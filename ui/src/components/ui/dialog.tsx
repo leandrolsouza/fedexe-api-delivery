@@ -1,3 +1,4 @@
+import { t } from '../../lib/i18n';
 import * as Primitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -38,7 +39,7 @@ export function Dialog({
             <Primitive.Close
               disabled={!dismissible}
               className="button button-ghost button-icon"
-              aria-label="Fechar"
+              aria-label={t('Fechar')}
             >
               <X size={18} />
             </Primitive.Close>

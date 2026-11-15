@@ -1,3 +1,4 @@
+import { formatNumber, t } from '../lib/i18n';
 import { useState } from 'react';
 import {
   ArrowDownToLine,
@@ -60,7 +61,7 @@ import { PairEditor } from './PairEditor';
 import { CodeViewer } from './CodeViewer';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
 import { FileBodyEditor } from './FileBodyEditor';
-import { AuthFields, AuthType, authLabels } from './AuthFields';
+import { AuthFields, AuthType, authLabel } from './AuthFields';
 
 export function MethodBadge({ method, small = false }: { method: string; small?: boolean }) {
   return (
@@ -118,19 +119,19 @@ export function RequestEditor({
   const tabs = [
     {
       id: 'params',
-      label: 'Parâmetros',
+      label: t('Parâmetros'),
       count: [...request.params, ...(request.pathParams ?? [])].filter((p) => p.enabled && p.key)
         .length,
     },
-    { id: 'auth', label: 'Autorização', icon: <LockKeyhole size={12} /> },
+    { id: 'auth', label: t('Autorização'), icon: <LockKeyhole size={12} /> },
     {
       id: 'headers',
       label: 'Headers',
       count: request.headers.filter((p) => p.enabled && p.key).length,
     },
-    { id: 'body', label: 'Corpo', dot: request.bodyType !== 'none' },
-    { id: 'tests', label: 'Testes', count: request.tests.length },
-    { id: 'settings', label: 'Configurações' },
+    { id: 'body', label: t('Corpo'), dot: request.bodyType !== 'none' },
+    { id: 'tests', label: t('Testes'), count: request.tests.length },
+    { id: 'settings', label: t('Configurações') },
   ];
   let responseText = response?.preview || '';
   let json = false;
@@ -144,9 +145,9 @@ export function RequestEditor({
   const copy = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast.success('Copiado para a área de transferência');
+      toast.success(t('Copiado para a área de transferência'));
     } catch {
-      toast.error('Não foi possível acessar a área de transferência.');
+      toast.error(t('Não foi possível acessar a área de transferência.'));
     }
   };
   const saveBody = async () => {
@@ -166,7 +167,7 @@ export function RequestEditor({
         response.headers.some(
           ([key, value]) => key.toLowerCase() === 'content-type' && /[/+]json\b/i.test(value),
         );
-      if (await saveResponseBody(response.body_id, isJson)) toast.success('Resposta salva');
+      if (await saveResponseBody(response.body_id, isJson)) toast.success(t('Resposta salva'));
     } catch (error) {
       toast.error(normalizeError(error).message);
     } finally {
@@ -181,9 +182,13 @@ export function RequestEditor({
     ? request.tests.map((test) => {
         const label =
           test.type === 'status'
-            ? `Status é ${test.equals}`
+            ? t('Status é {0}', test.equals)
             : test.type === 'header'
-              ? `Header ${test.name} ${test.equals === undefined ? 'presente' : 'com valor esperado'}`
+              ? t(
+                  'Header {0} {1}',
+                  test.name,
+                  test.equals === undefined ? t('presente') : t('com valor esperado'),
+                )
               : `${test.pointer || '(raiz)'} = ${JSON.stringify(test.equals)}`;
         return { label, passed: !checkResponse(test, response, jsonForTests) };
       })
@@ -198,7 +203,7 @@ export function RequestEditor({
           <div>
             <div className="title-with-badge">
               <input
-                aria-label="Nome da requisição"
+                aria-label={t('Nome da requisição')}
                 className="request-name"
                 value={request.name}
                 onChange={(e) => update({ name: e.target.value })}
@@ -206,9 +211,9 @@ export function RequestEditor({
               <span className="subtle-badge">HTTP</span>
             </div>
             <input
-              aria-label="Descrição da requisição"
+              aria-label={t('Descrição da requisição')}
               className="request-description"
-              placeholder="Adicione uma descrição para esta requisição…"
+              placeholder={t('Adicione uma descrição para esta requisição…')}
               value={request.description}
               onChange={(e) => update({ description: e.target.value })}
             />
@@ -217,21 +222,23 @@ export function RequestEditor({
         <div className="heading-actions">
           <span className={cn('saved-status', dirty && 'unsaved')}>
             <span className="status-dot" />
-            {dirty ? 'Alterações pendentes' : 'Salvo localmente'}
+            {dirty ? t('Alterações pendentes') : t('Salvo localmente')}
           </span>
           <Button size="sm" variant="outline" onClick={onSave} disabled={!dirty}>
-            <Save size={14} /> Salvar <kbd>Ctrl S</kbd>
+            <Save size={14} />
+            {' ' + t('Salvar') + ' '}
+            <kbd>Ctrl S</kbd>
           </Button>
           <Dropdown
             trigger={
-              <Button variant="ghost" size="icon" aria-label="Mais ações da requisição">
+              <Button variant="ghost" size="icon" aria-label={t('Mais ações da requisição')}>
                 <MoreHorizontal size={19} />
               </Button>
             }
             items={[
-              { label: 'Copiar como cURL', icon: <Terminal size={15} />, action: onSnippet },
+              { label: t('Copiar como cURL'), icon: <Terminal size={15} />, action: onSnippet },
               {
-                label: 'Exportar requisição',
+                label: t('Exportar requisição'),
                 icon: <ArrowDownToLine size={15} />,
                 action: () =>
                   download(
@@ -253,7 +260,7 @@ export function RequestEditor({
         >
           <div className={`method-select method-${request.method.toLowerCase()}`}>
             <select
-              aria-label="Método HTTP"
+              aria-label={t('Método HTTP')}
               value={request.method}
               onChange={(e) => update({ method: e.target.value as Method })}
             >
@@ -264,7 +271,7 @@ export function RequestEditor({
             <ChevronDown size={13} />
           </div>
           <input
-            aria-label="URL da requisição"
+            aria-label={t('URL da requisição')}
             className="url-input"
             value={urlInput ?? urlWithQuery(request)}
             onFocus={(event) => setUrlInput(event.currentTarget.value)}
@@ -286,16 +293,19 @@ export function RequestEditor({
             }}
             onBlur={() => setUrlInput(undefined)}
             spellCheck={false}
-            placeholder="https://api.exemplo.com/recurso"
+            placeholder={t('https://api.exemplo.com/recurso')}
             required
           />
           {busy ? (
             <Button type="button" className="send-button" variant="secondary" onClick={onCancel}>
-              <X size={15} /> Cancelar
+              <X size={15} />
+              {' ' + t('Cancelar')}
             </Button>
           ) : (
             <Button type="submit" className="send-button">
-              <Send size={15} /> Enviar <kbd>↵</kbd>
+              <Send size={15} />
+              {' ' + t('Enviar') + ' '}
+              <kbd>↵</kbd>
             </Button>
           )}
         </form>
@@ -303,7 +313,7 @@ export function RequestEditor({
           <div
             className="request-tabs-list"
             role="tablist"
-            aria-label="Configuração da requisição"
+            aria-label={t('Configuração da requisição')}
             onKeyDown={navigateTabs}
           >
             {tabs.map((t) => (
@@ -319,12 +329,12 @@ export function RequestEditor({
               >
                 {t.icon}
                 {t.label}
-                {!!t.count && <span className="tab-count">{t.count}</span>}
+                {!!t.count && <span className="tab-count">{formatNumber(t.count)}</span>}
                 {t.dot && <span className="tiny-dot" />}
               </button>
             ))}
           </div>
-          <button className="code-shortcut" title="Gerar código cURL" onClick={onSnippet}>
+          <button className="code-shortcut" title={t('Gerar código cURL')} onClick={onSnippet}>
             <Code2 size={17} />
           </button>
         </div>
@@ -338,18 +348,21 @@ export function RequestEditor({
             <div className="params-layout">
               <div className="params-main">
                 <div className="section-heading">
-                  <h3>Parâmetros de query</h3>
-                  <span>As linhas ativas aparecem na URL na ordem da tabela.</span>
+                  <h3>{t('Parâmetros de query')}</h3>
+                  <span>{t('As linhas ativas aparecem na URL na ordem da tabela.')}</span>
                 </div>
                 <PairEditor rows={request.params} onChange={(params) => update({ params })} />
                 <div className="section-heading path-parameters-heading">
-                  <h3>Parâmetros de caminho</h3>
+                  <h3>{t('Parâmetros de caminho')}</h3>
                   <span>
-                    Use <code>{'{id}'}</code> no caminho e informe o valor na linha <code>id</code>.
+                    {t('Use') + ' '}
+                    <code>{'{id}'}</code>
+                    {' ' + t('no caminho e informe o valor na linha') + ' '}
+                    <code>id</code>.
                   </span>
                 </div>
                 <PairEditor
-                  kind="parâmetro de caminho"
+                  kind={t('parâmetro de caminho')}
                   rows={request.pathParams ?? []}
                   onChange={(pathParams) => update({ pathParams })}
                 />
@@ -359,17 +372,19 @@ export function RequestEditor({
                   <Sparkles size={16} />
                 </span>
                 <h4>
-                  Menos repetição.
+                  {t('Menos repetição.')}
                   <br />
-                  Mais produtividade.
+                  {t('Mais produtividade.')}
                 </h4>
                 <p>
-                  Use <code>{'{{variavel}}'}</code> para reutilizar valores entre suas requisições.
+                  {t('Use') + ' '}
+                  <code>{t('{{variavel}}')}</code>
+                  {' ' + t('para reutilizar valores entre suas requisições.')}
                 </p>
                 <div className="tip-environment">
                   <span className={`status-dot dot-${environment?.color || 'green'}`} />
-                  <span>{environment?.name || 'Sem ambiente'}</span>
-                  <span className="tiny-badge">ativo</span>
+                  <span>{environment?.name || t('Sem ambiente')}</span>
+                  <span className="tiny-badge">{t('ativo')}</span>
                 </div>
               </aside>
             </div>
@@ -377,11 +392,11 @@ export function RequestEditor({
           {tab === 'headers' && (
             <>
               <div className="section-heading">
-                <h3>Headers da requisição</h3>
+                <h3>{t('Headers da requisição')}</h3>
                 <span>
                   {native
-                    ? 'Os nomes podem se repetir em linhas ativas.'
-                    : 'O navegador pode combinar linhas com o mesmo nome.'}
+                    ? t('Os nomes podem se repetir em linhas ativas.')
+                    : t('O navegador pode combinar linhas com o mesmo nome.')}
                 </span>
               </div>
               <PairEditor
@@ -394,7 +409,7 @@ export function RequestEditor({
               {automaticHeaders.length > 0 && (
                 <div className="path-parameters-heading">
                   <div className="section-heading">
-                    <h3>Gerados pelo app</h3>
+                    <h3>{t('Gerados pelo app')}</h3>
                   </div>
                   <dl className="generated-headers">
                     {automaticHeaders.map(({ name, value, secret, source }) => (
@@ -403,7 +418,7 @@ export function RequestEditor({
                           <code>{name}</code> <span className="muted">({source})</span>
                         </dt>
                         <dd>
-                          <code aria-label={secret ? 'Valor secreto mascarado' : undefined}>
+                          <code aria-label={secret ? t('Valor secreto mascarado') : undefined}>
                             {secret ? '••••••••' : value}
                           </code>
                         </dd>
@@ -423,9 +438,12 @@ export function RequestEditor({
                     <ShieldCheck size={24} />
                     <div>
                       <strong>
-                        {authLabels[inheritedAuth.type === 'inherit' ? 'none' : inheritedAuth.type]}
+                        {authLabel(inheritedAuth.type === 'inherit' ? 'none' : inheritedAuth.type)}
                       </strong>
-                      <p>Configuração da coleção {collection.name}.</p>
+                      <p>
+                        {t('Configuração da coleção') + ' '}
+                        {collection.name}.
+                      </p>
                     </div>
                   </div>
                 ) : (
@@ -448,12 +466,12 @@ export function RequestEditor({
                       />
                       {
                         {
-                          none: 'Nenhum',
+                          none: t('Nenhum'),
                           json: 'JSON',
-                          text: 'Texto',
-                          urlencoded: 'Form URL-encoded',
+                          text: t('Texto'),
+                          urlencoded: t('Form URL-encoded'),
                           multipart: 'Multipart',
-                          binary: 'Arquivo binário',
+                          binary: t('Arquivo binário'),
                         }[type]
                       }
                     </label>
@@ -463,11 +481,11 @@ export function RequestEditor({
               {request.bodyType === 'none' ? (
                 <div className="body-empty">
                   <FileJson2 size={28} />
-                  <p>Esta requisição não tem corpo.</p>
+                  <p>{t('Esta requisição não tem corpo.')}</p>
                 </div>
               ) : request.bodyType === 'urlencoded' ? (
                 <PairEditor
-                  kind="campo"
+                  kind={t('campo')}
                   rows={request.form}
                   onChange={(form) => update({ form })}
                 />
@@ -478,7 +496,7 @@ export function RequestEditor({
                   <div className="editor-toolbar">
                     <span>
                       <span className="status-dot dot-purple" />
-                      {request.bodyType === 'json' ? 'JSON' : 'Texto bruto'}
+                      {request.bodyType === 'json' ? 'JSON' : t('Texto bruto')}
                     </span>
                     {request.bodyType === 'json' && (
                       <button
@@ -486,24 +504,25 @@ export function RequestEditor({
                           try {
                             update({ body: JSON.stringify(JSON.parse(request.body), null, 2) });
                           } catch {
-                            toast.error('JSON inválido. Verifique a sintaxe do corpo.');
+                            toast.error(t('JSON inválido. Verifique a sintaxe do corpo.'));
                           }
                         }}
                       >
-                        <Braces size={13} /> Formatar
+                        <Braces size={13} />
+                        {' ' + t('Formatar')}
                       </button>
                     )}
                   </div>
                   <textarea
-                    aria-label="Corpo da requisição"
+                    aria-label={t('Corpo da requisição')}
                     spellCheck={false}
                     className="body-textarea"
                     value={request.body}
                     onChange={(e) => update({ body: e.target.value })}
                     placeholder={
                       request.bodyType === 'json'
-                        ? '{\n  "mensagem": "Olá, mundo!"\n}'
-                        : 'Digite o corpo da requisição…'
+                        ? t('{\n  "mensagem": "Olá, mundo!"\n}')
+                        : t('Digite o corpo da requisição…')
                     }
                   />
                 </div>
@@ -519,7 +538,7 @@ export function RequestEditor({
                 </span>
                 <div>
                   <label className="field-label">
-                    Timeout da requisição (ms)
+                    {t('Timeout da requisição (ms)')}
                     <input
                       className="input"
                       type="number"
@@ -537,7 +556,7 @@ export function RequestEditor({
                       }}
                     />
                   </label>
-                  <p>Limite para receber a resposta completa.</p>
+                  <p>{t('Limite para receber a resposta completa.')}</p>
                 </div>
               </div>
               <div>
@@ -545,11 +564,12 @@ export function RequestEditor({
                   <ShieldCheck size={18} />
                 </span>
                 <div>
-                  <h4>Validação de certificados TLS</h4>
-                  <p>Ativa por padrão para manter suas conexões seguras.</p>
+                  <h4>{t('Validação de certificados TLS')}</h4>
+                  <p>{t('Ativa por padrão para manter suas conexões seguras.')}</p>
                 </div>
                 <span className="green-text">
-                  Sempre ativa <Check size={13} />
+                  {t('Sempre ativa') + ' '}
+                  <Check size={13} />
                 </span>
               </div>
               <div>
@@ -558,7 +578,7 @@ export function RequestEditor({
                 </span>
                 <div>
                   <label className="field-label">
-                    Redirecionamentos
+                    {t('Redirecionamentos')}
                     <select
                       className="input"
                       value={request.redirectPolicy ?? 'none'}
@@ -569,16 +589,16 @@ export function RequestEditor({
                         })
                       }
                     >
-                      <option value="none">Não seguir</option>
+                      <option value="none">{t('Não seguir')}</option>
                       <option value="same_origin" disabled={!native}>
-                        Seguir apenas na mesma origem
+                        {t('Seguir apenas na mesma origem')}
                       </option>
                     </select>
                   </label>
                   <p>
                     {native
-                      ? 'Uma mudança de protocolo, host ou porta encerra o redirecionamento.'
-                      : 'Seguir redirecionamentos da mesma origem requer o app desktop.'}
+                      ? t('Uma mudança de protocolo, host ou porta encerra o redirecionamento.')
+                      : t('Seguir redirecionamentos da mesma origem requer o app desktop.')}
                   </p>
                 </div>
               </div>
@@ -591,22 +611,37 @@ export function RequestEditor({
           </div>
         )}
         <div className="request-context">
-          <span>Ambiente ativo: {environment?.name ?? 'Nenhum'}</span>
+          <span>
+            {t('Ambiente ativo:') + ' '}
+            {environment?.name ?? t('Nenhum')}
+          </span>
           <button onClick={onSnippet}>
-            Gerar código <ArrowUpRight size={12} />
+            {t('Gerar código') + ' '}
+            <ArrowUpRight size={12} />
           </button>
         </div>
         {(missing.length > 0 || references?.unclosed) && (
           <div className="request-variable-warning" role="status">
             {missing.length > 0 && (
-              <div>Variáveis ausentes: {missing.map(({ name }) => name || '{{}}').join(', ')}</div>
+              <div>
+                {t('Variáveis ausentes:') + ' '}
+                {missing.map(({ name }) => name || '{{}}').join(', ')}
+              </div>
             )}
-            {references?.unclosed && <div>Feche cada referência com {'}}'}.</div>}
+            {references?.unclosed && (
+              <div>
+                {t('Feche cada referência com') + ' '}
+                {'}}'}.
+              </div>
+            )}
           </div>
         )}
         {!!references?.variables.length && (
           <details className="request-variables">
-            <summary>Origem das variáveis ({references.variables.length})</summary>
+            <summary>
+              {t('Origem das variáveis (')}
+              {formatNumber(references.variables.length)})
+            </summary>
             <dl>
               {references.variables.map(({ name, source }) => (
                 <div key={name}>
@@ -617,8 +652,8 @@ export function RequestEditor({
                     {source === 'environment'
                       ? environment?.name
                       : source === 'collection'
-                        ? collection.name + ' (coleção)'
-                        : 'Ausente'}
+                        ? collection.name + t(' (coleção)')
+                        : t('Ausente')}
                   </dd>
                 </div>
               ))}
@@ -626,10 +661,10 @@ export function RequestEditor({
           </details>
         )}
       </div>
-      <section className="response-panel" aria-label="Resposta HTTP">
+      <section className="response-panel" aria-label={t('Resposta HTTP')}>
         <div className="response-heading">
           <div className="response-heading-left">
-            <h3>Resposta</h3>
+            <h3>{t('Resposta')}</h3>
             {response && !busy && (
               <>
                 <span className={`response-status ${response.status >= 400 ? 'status-error' : ''}`}>
@@ -638,25 +673,25 @@ export function RequestEditor({
                   {(
                     {
                       200: 'OK',
-                      201: 'Created',
-                      204: 'No Content',
-                      400: 'Bad Request',
-                      401: 'Unauthorized',
-                      404: 'Not Found',
-                      500: 'Server Error',
+                      201: t('Criado'),
+                      204: t('Sem conteúdo'),
+                      400: t('Requisição inválida'),
+                      401: t('Não autorizado'),
+                      404: t('Não encontrado'),
+                      500: t('Erro do servidor'),
                     } as Record<number, string>
                   )[response.status] || ''}
                 </span>
                 <span className="response-metric">
                   <Clock3 size={12} />
-                  {response.duration_ms} ms
+                  {formatNumber(response.duration_ms)} ms
                 </span>
                 <span className="response-metric">
                   <Database size={12} />
                   {formatBytes(
                     response.size_bytes ?? new TextEncoder().encode(response.preview).length,
                   )}
-                  {response.truncated && response.size_bytes === undefined && ' (prévia)'}
+                  {response.truncated && response.size_bytes === undefined && t(' (prévia)')}
                 </span>
               </>
             )}
@@ -668,7 +703,7 @@ export function RequestEditor({
                   variant="ghost"
                   size="icon"
                   onClick={() => copy(response.preview)}
-                  aria-label="Copiar prévia da resposta"
+                  aria-label={t('Copiar prévia da resposta')}
                 >
                   <Copy size={15} />
                 </Button>
@@ -678,9 +713,11 @@ export function RequestEditor({
                   onClick={saveBody}
                   disabled={savingBody}
                   aria-label={
-                    response.body_id ? 'Salvar corpo completo' : 'Salvar prévia da resposta'
+                    response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
                   }
-                  title={response.body_id ? 'Salvar corpo completo' : 'Salvar prévia da resposta'}
+                  title={
+                    response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
+                  }
                 >
                   <ArrowDownToLine size={15} />
                 </Button>
@@ -688,7 +725,7 @@ export function RequestEditor({
             )}
             <span className="response-indicator">
               <span className={cn('status-dot', busy && 'pulse')} />
-              {busy ? 'Enviando' : response ? 'Recebida' : 'Aguardando'}
+              {busy ? t('Enviando') : response ? t('Recebida') : t('Aguardando')}
             </span>
           </div>
         </div>
@@ -697,10 +734,10 @@ export function RequestEditor({
             <div className="response-art loading-art">
               <LoaderCircle className="spin" size={32} />
             </div>
-            <h3>A caminho da sua API…</h3>
-            <p>Preparando espaço para a próxima resposta.</p>
+            <h3>{t('A caminho da sua API…')}</h3>
+            <p>{t('Preparando espaço para a próxima resposta.')}</p>
             <Button variant="outline" size="sm" onClick={onCancel}>
-              Cancelar requisição
+              {t('Cancelar requisição')}
             </Button>
           </div>
         ) : error ? (
@@ -709,10 +746,11 @@ export function RequestEditor({
               <TriangleAlert size={24} />
             </span>
             <div>
-              <h3>Não foi dessa vez</h3>
+              <h3>{t('Não foi dessa vez')}</h3>
               <p>{error}</p>
               <Button size="sm" variant="outline" onClick={onSend}>
-                Tentar novamente <ArrowRight size={13} />
+                {t('Tentar novamente') + ' '}
+                <ArrowRight size={13} />
               </Button>
             </div>
           </div>
@@ -722,13 +760,13 @@ export function RequestEditor({
               <div
                 className="response-tabs"
                 role="tablist"
-                aria-label="Visualização da resposta"
+                aria-label={t('Visualização da resposta')}
                 onKeyDown={navigateTabs}
               >
                 {[
-                  { id: 'body', label: 'Corpo' },
+                  { id: 'body', label: t('Corpo') },
                   { id: 'headers', label: 'Headers', count: response.headers.length },
-                  { id: 'tests', label: 'Resultados dos testes', count: testResults.length },
+                  { id: 'tests', label: t('Resultados dos testes'), count: testResults.length },
                 ].map((t) => (
                   <button
                     id={`response-tab-${t.id}`}
@@ -741,30 +779,33 @@ export function RequestEditor({
                     key={t.id}
                   >
                     {t.label}
-                    {t.count !== undefined && <span className="tab-count">{t.count}</span>}
+                    {t.count !== undefined && (
+                      <span className="tab-count">{formatNumber(t.count)}</span>
+                    )}
                   </button>
                 ))}
               </div>
               {responseTab === 'body' && (
                 <div className="format-select">
                   <select
-                    aria-label="Formato da resposta"
+                    aria-label={t('Formato da resposta')}
                     value={format}
                     onChange={(e) => setFormat(e.target.value)}
                   >
-                    <option value="pretty">Formatado</option>
-                    <option value="raw">Original</option>
+                    <option value="pretty">{t('Formatado')}</option>
+                    <option value="raw">{t('Original')}</option>
                   </select>
-                  <span>{json ? 'JSON' : 'Texto'}</span>
+                  <span>{json ? 'JSON' : t('Texto')}</span>
                 </div>
               )}
             </div>
             {response.truncated && (
               <div className="truncated-banner">
-                <Info size={14} /> Prévia limitada a 256 KiB.{' '}
+                <Info size={14} />
+                {' ' + t('Prévia limitada a 256 KiB.')}{' '}
                 {response.body_id
-                  ? 'O download inclui o corpo completo.'
-                  : 'O download inclui a prévia.'}
+                  ? t('O download inclui o corpo completo.')
+                  : t('O download inclui a prévia.')}
               </div>
             )}
             <div
@@ -777,13 +818,13 @@ export function RequestEditor({
               {responseTab === 'body' ? (
                 responseText ? (
                   <CodeViewer
-                    key={`${request.id}-${response.duration_ms}`}
+                    key={`${request.id}-${formatNumber(response.duration_ms)}`}
                     value={responseText}
                     json={json}
                     wrap={wrap}
                   />
                 ) : (
-                  <div className="small-empty">A resposta não contém corpo.</div>
+                  <div className="small-empty">{t('A resposta não contém corpo.')}</div>
                 )
               ) : responseTab === 'headers' ? (
                 <div className="response-header-table">
@@ -808,7 +849,7 @@ export function RequestEditor({
                     ))
                   ) : (
                     <div className="small-empty">
-                      Adicione testes na configuração da requisição.
+                      {t('Adicione testes na configuração da requisição.')}
                     </div>
                   )}
                 </div>
@@ -835,22 +876,22 @@ export function RequestEditor({
                 200 OK
               </span>
             </div>
-            <h3>Uma boa API começa com um olá.</h3>
-            <p>Envie sua requisição e veja a resposta ganhar vida aqui.</p>
+            <h3>{t('Uma boa API começa com um olá.')}</h3>
+            <p>{t('Envie sua requisição e veja a resposta ganhar vida aqui.')}</p>
             <div className="empty-shortcut">
               <kbd>Ctrl</kbd>
               <span>+</span>
               <kbd>
                 Enter <CornerDownLeft size={10} />
               </kbd>
-              <span>para enviar</span>
+              <span>{t('para enviar')}</span>
             </div>
           </div>
         )}
       </section>
       <div className="editor-bottom-note">
         <LockKeyhole size={12} />
-        <span>Suas APIs, seus dados. Tudo fica neste dispositivo.</span>
+        <span>{t('Suas APIs, seus dados. Tudo fica neste dispositivo.')}</span>
         <button onClick={onSnippet}>
           <Terminal size={12} /> cURL
         </button>
@@ -872,8 +913,8 @@ function TestEditor({
   return (
     <div className="tests-editor">
       <div className="section-heading">
-        <h3>Testes declarativos</h3>
-        <span>Valide respostas sem precisar escrever scripts</span>
+        <h3>{t('Testes declarativos')}</h3>
+        <span>{t('Valide respostas sem precisar escrever scripts')}</span>
       </div>
       {request.tests.map((test, index) => (
         <div className="test-rule" key={index}>
@@ -882,7 +923,7 @@ function TestEditor({
           </span>
           <select
             className="input"
-            aria-label={`Tipo do teste ${index + 1}`}
+            aria-label={t('Tipo do teste {0}', index + 1)}
             value={test.type === 'header' && test.equals !== undefined ? 'header-value' : test.type}
             onChange={(e) =>
               changeTest(
@@ -901,17 +942,17 @@ function TestEditor({
               )
             }
           >
-            <option value="status">Status HTTP</option>
-            <option value="header">Header presente</option>
-            <option value="header-value">Valor do header</option>
-            <option value="json">Campo JSON</option>
+            <option value="status">{t('Status HTTP')}</option>
+            <option value="header">{t('Header presente')}</option>
+            <option value="header-value">{t('Valor do header')}</option>
+            <option value="json">{t('Campo JSON')}</option>
           </select>
           {test.type === 'status' ? (
             <>
-              <span>é igual a</span>
+              <span>{t('é igual a')}</span>
               <input
                 className="input mono"
-                aria-label="Status esperado"
+                aria-label={t('Status esperado')}
                 type="number"
                 min={100}
                 max={599}
@@ -923,15 +964,15 @@ function TestEditor({
             <>
               <input
                 className="input mono grow"
-                aria-label="Nome do header esperado"
+                aria-label={t('Nome do header esperado')}
                 value={test.name}
                 onChange={(e) => changeTest(index, { ...test, name: e.target.value })}
               />
               {test.equals !== undefined && (
                 <input
                   className="input mono grow"
-                  aria-label="Valor esperado do header"
-                  placeholder="Valor exato"
+                  aria-label={t('Valor esperado do header')}
+                  placeholder={t('Valor exato')}
                   value={test.equals}
                   onChange={(e) => changeTest(index, { ...test, equals: e.target.value })}
                 />
@@ -941,7 +982,7 @@ function TestEditor({
             <>
               <input
                 className="input mono"
-                aria-label="JSON Pointer do teste"
+                aria-label={t('JSON Pointer do teste')}
                 value={test.pointer}
                 onChange={(e) => changeTest(index, { ...test, pointer: e.target.value })}
               />
@@ -954,7 +995,7 @@ function TestEditor({
           )}
           <button
             className="inline-icon"
-            aria-label={`Excluir teste ${index + 1}`}
+            aria-label={t('Excluir teste {0}', index + 1)}
             onClick={() => onChange({ tests: request.tests.filter((_, i) => i !== index) })}
           >
             <Trash2 size={14} />
@@ -967,15 +1008,20 @@ function TestEditor({
         className="add-row"
         onClick={() => onChange({ tests: [...request.tests, { type: 'status', equals: 200 }] })}
       >
-        <Plus size={14} /> Adicionar teste
+        <Plus size={14} />
+        {' ' + t('Adicionar teste')}
       </Button>
       <details className="extraction-editor">
         <summary>
-          <Settings2 size={14} /> Extrair variáveis da resposta <CircleHelp size={13} />
+          <Settings2 size={14} />
+          {' ' + t('Extrair variáveis da resposta') + ' '}
+          <CircleHelp size={13} />
         </summary>
-        <p>Mapeie nomes para JSON Pointers. Os valores são isolados por execução do runner.</p>
+        <p>
+          {t('Mapeie nomes para JSON Pointers. Os valores são isolados por execução do runner.')}
+        </p>
         <textarea
-          aria-label="Extração de variáveis JSON"
+          aria-label={t('Extração de variáveis JSON')}
           className="input mono"
           value={extractText}
           onChange={(e) => setExtractText(e.target.value)}
@@ -991,7 +1037,9 @@ function TestEditor({
                 throw new Error();
               onChange({ extract: value });
             } catch {
-              toast.error('Use um objeto JSON com nomes e JSON Pointers, como {"token":"/token"}.');
+              toast.error(
+                t('Use um objeto JSON com nomes e JSON Pointers, como {"token":"/token"}.'),
+              );
               setExtractText(JSON.stringify(request.extract, null, 2));
             }
           }}
@@ -1012,14 +1060,14 @@ function JsonValueInput({
   return (
     <input
       className="input mono"
-      aria-label="Valor JSON esperado"
+      aria-label={t('Valor JSON esperado')}
       value={text}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => {
         try {
           onChange(JSON.parse(text));
         } catch {
-          toast.error('Informe um valor JSON válido: true, 123 ou "texto".');
+          toast.error(t('Informe um valor JSON válido: true, 123 ou "texto".'));
           setText(JSON.stringify(value));
         }
       }}
@@ -1029,7 +1077,7 @@ function JsonValueInput({
 
 export function curlFor(request: RequestItem, collection: Collection, environment?: Environment) {
   if (request.bodyType === 'binary' || request.bodyType === 'multipart')
-    throw new Error('A geração de cURL para corpos com arquivos ainda não está disponível.');
+    throw new Error(t('A geração de cURL para corpos com arquivos ainda não está disponível.'));
   const headers = request.headers.map((row) =>
     isSecretHeader(row, collection, environment) && !/^\{\{[^{}]+\}\}$/.test(row.value)
       ? { ...row, value: '<segredo>' }
