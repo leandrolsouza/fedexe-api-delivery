@@ -398,13 +398,18 @@ async fn prepare_request(
         builder = builder.basic_auth(username, Some(password));
     }
     if let Some(parts) = request.multipart {
+        console::request_format("multipart/form-data");
         let mut form = reqwest::multipart::Form::new();
         for part in parts {
             match part {
                 MultipartPart::Field { name, value } => {
-                    form = form.text(part_name(&name, variables)?, expand(&value, variables)?);
+                    let name = part_name(&name, variables)?;
+                    let value = expand(&value, variables)?;
+                    console::multipart_field(&name, &value);
+                    form = form.text(name, value);
                 }
                 MultipartPart::File { name, path } => {
+                    console::multipart_file();
                     let filename = path
                         .file_name()
                         .ok_or("Arquivo multipart sem nome.")?
@@ -426,6 +431,7 @@ async fn prepare_request(
             .header(reqwest::header::CONTENT_LENGTH, size)
             .body(body);
     } else if let Some(form) = request.form {
+        console::request_format("application/x-www-form-urlencoded");
         let mut encoded = url::form_urlencoded::Serializer::new(String::new());
         for (key, value) in form {
             encoded.append_pair(&expand(&key, variables)?, &expand(&value, variables)?);
@@ -434,6 +440,7 @@ async fn prepare_request(
     } else if let Some(body) = request.body {
         let body = expand(&body, variables)?;
         if request.validate_json {
+            console::request_format("application/json");
             serde_json::from_str::<Value>(&body).map_err(|e| format!("JSON inválido: {e}"))?;
         }
         builder = builder.body(body);
@@ -1024,6 +1031,14 @@ mod tests {
                     }
                     headers.push_str(&line);
                 }
+                if let Some(length) = headers
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                {
+                    use std::io::Read;
+                    let mut body = vec![0; length.parse().unwrap()];
+                    reader.read_exact(&mut body).unwrap();
+                }
                 let (status, extra, body) = match expected {
                     "/redirect?passcode=a%26b" => {
                         assert!(headers.contains("x-private: editor-secret"));
@@ -1058,8 +1073,10 @@ mod tests {
             console::observe(move |entry| recorded.lock().unwrap().push(entry), async {
                 console::start(None);
                 let request = serde_json::from_value(json!({
-                    "method": "GET",
+                    "method": "POST",
                     "url": format!("{base}/redirect?passcode=a%26b"),
+                    "body": r#"{"message":"hello","password":"body-secret","copy":"body-secret","header":"editor-secret"}"#,
+                    "validate_json": true,
                     "headers": [["X-Private", "editor-secret"]],
                     "console_masks": {"values": [], "templates": [], "headers": ["x-private"], "query": ["passcode"]},
                     "redirect_policy": "same_origin"
@@ -1073,7 +1090,7 @@ mod tests {
             let collection = serde_json::from_value(json!({
                 "requests": [
                     {"name": "login", "request": {"method": "GET", "url": format!("{base}/login")}, "extract": {"ticket": "/ticket"}},
-                    {"name": "use", "request": {"method": "GET", "url": format!("{base}/use/{{{{ticket}}}}"), "headers": [["X-Observation", "{{ticket}}"]]}},
+                    {"name": "use", "request": {"method": "POST", "url": format!("{base}/use/{{{{ticket}}}}"), "headers": [["X-Observation", "{{ticket}}"]], "form": [["message", "hello world"], ["ticket", "{{ticket}}"], ["api_key", "form-secret"]]}},
                     {"name": "slow", "request": {"method": "GET", "url": format!("{base}/slow"), "timeout_ms": 100}},
                     {"name": "missing", "request": {"method": "GET", "url": format!("{base}/{{{{missing}}}}")}}
                 ]
@@ -1093,6 +1110,8 @@ mod tests {
             "a&b",
             "a%26b",
             "editor-secret",
+            "body-secret",
+            "form-secret",
             "redirect-secret",
             "cookie-secret",
             "response-secret",
@@ -1101,7 +1120,14 @@ mod tests {
             assert!(!text.contains(secret), "{text}");
         }
         assert_eq!(entries.as_array().unwrap().len(), 5);
-        assert_eq!(entries[0]["request"]["method"], "GET");
+        assert_eq!(entries[0]["request"]["method"], "POST");
+        let body = &entries[0]["request"]["body"];
+        let preview: Value = serde_json::from_str(body["preview"].as_str().unwrap()).unwrap();
+        assert_eq!(body["truncated"], false);
+        assert_eq!(preview["message"], "hello");
+        assert_eq!(preview["password"], "[***]");
+        assert_eq!(preview["copy"], "[***]");
+        assert_eq!(preview["header"], "[***]");
         assert_eq!(entries[0]["response"]["status"], 200);
         assert!(
             entries[0]["response"]["preview"]
@@ -1111,6 +1137,10 @@ mod tests {
         );
         assert_eq!(entries[0]["redirects"][0]["status"], 302);
         assert_eq!(entries[0]["redirects"][0]["followed"], true);
+        let form = entries[2]["request"]["body"]["preview"].as_str().unwrap();
+        assert!(form.contains("message=hello+world"));
+        assert!(form.contains("ticket=[***]"));
+        assert!(form.contains("api_key=%5B***%5D"));
         assert_eq!(entries[2]["response"]["status"], 200);
         assert_eq!(entries[2]["response"]["truncated"], true);
         let preview = entries[2]["response"]["preview"].as_str().unwrap();

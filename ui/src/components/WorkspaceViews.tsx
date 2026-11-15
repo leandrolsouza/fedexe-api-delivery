@@ -272,7 +272,11 @@ export function EnvironmentsView({
                       action: () =>
                         download(
                           `${environment.name}.json`,
-                          JSON.stringify(safeEnvironment(environment), null, 2),
+                          JSON.stringify(
+                            safeEnvironment(environment, workspace.collections),
+                            null,
+                            2,
+                          ),
                         ),
                     },
                     {
@@ -655,15 +659,19 @@ export function RunnerView({
           ...row,
           failures: row.failures.map((message) => redactSecrets(message, snapshot.environment)),
         }));
-      const outcome = await runCollection(nativeCollection, (event) => {
-        if (event.type === 'started') {
-          setActiveStep(event.index);
-        } else {
-          const [row] = redactRows([event.row]);
-          setRows((current) => [...current, row]);
-          setActiveStep((current) => (current === event.index ? undefined : current));
-        }
-      });
+      const outcome = await runCollection(
+        nativeCollection,
+        (event) => {
+          if (event.type === 'started') {
+            setActiveStep(event.index);
+          } else {
+            const [row] = redactRows([event.row]);
+            setRows((current) => [...current, row]);
+            setActiveStep((current) => (current === event.index ? undefined : current));
+          }
+        },
+        snapshot.requests.map((request) => request.id),
+      );
       const result = { ...outcome, results: redactRows(outcome.results) };
       setRows(result.results);
       setResult(result);

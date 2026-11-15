@@ -14,8 +14,18 @@ if (!(await stat(installer)).isFile()) throw new Error('O instalador precisa ser
 const signature = (await readFile(`${installer}.sig`, 'utf8')).trim();
 if (!signature) throw new Error('A assinatura do instalador está vazia.');
 
+const notesPath = `docs/release-notes/${version}.txt`;
+const notes = (
+  await readFile(notesPath, 'utf8').catch((error) => {
+    if (error.code !== 'ENOENT') throw error;
+    throw new Error(`Crie ${notesPath} com as mudanças desta versão antes de gerar o manifesto.`);
+  })
+).trim();
+if (!notes) throw new Error(`As notas da versão em ${notesPath} estão vazias.`);
+
 const manifest = {
   version,
+  notes,
   platforms: {
     'windows-x86_64': {
       signature,

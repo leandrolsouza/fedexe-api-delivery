@@ -31,6 +31,13 @@ struct Request {
     method: String,
     url: String,
     headers: Vec<(String, String)>,
+    body: Option<BodyPreview>,
+}
+
+#[derive(Default, Serialize)]
+struct BodyPreview {
+    preview: String,
+    truncated: bool,
 }
 
 #[derive(Serialize)]
@@ -55,6 +62,8 @@ struct Trace {
     preview: Vec<u8>,
     truncated: bool,
     json_response: bool,
+    multipart: BodyPreview,
+    request_format: &'static str,
 }
 
 struct Session {
@@ -99,6 +108,8 @@ pub fn start(step: Option<usize>) {
             preview: Vec::new(),
             truncated: false,
             json_response: false,
+            multipart: BodyPreview::default(),
+            request_format: "",
         });
     });
 }
@@ -335,6 +346,102 @@ fn safe_headers(
         .collect()
 }
 
+pub(super) fn request_format(format: &'static str) {
+    update(|trace| trace.request_format = format);
+}
+
+pub(super) fn multipart_field(name: &str, value: &str) {
+    update(|trace| {
+        if sensitive(name, &trace.masks.headers) || sensitive(name, &trace.masks.query) {
+            remember(&mut trace.masks.values, value);
+        }
+        if trace.multipart.preview.len() + name.len() + value.len() + 4 > PREVIEW_LIMIT {
+            trace.multipart.truncated = true;
+            return;
+        }
+        use std::fmt::Write;
+        let _ = writeln!(trace.multipart.preview, "{name} = {value}");
+    });
+}
+
+pub(super) fn multipart_file() {
+    update(|trace| trace.multipart.truncated = true);
+}
+
+fn request_body(request: &reqwest::Request, trace: &mut Trace) -> Option<BodyPreview> {
+    let body = request.body()?;
+    let Some(bytes) = body.as_bytes() else {
+        if trace.request_format == "multipart/form-data" {
+            let mut preview = std::mem::take(&mut trace.multipart);
+            preview.preview = redact(&preview.preview, &trace.masks.values, false);
+            preview.truncated |= preview.preview.len() > PREVIEW_LIMIT;
+            preview.preview = clip(preview.preview, PREVIEW_LIMIT);
+            return Some(preview);
+        }
+        return Some(BodyPreview {
+            truncated: true,
+            ..Default::default()
+        });
+    };
+    let mut truncated = bytes.len() > PREVIEW_LIMIT;
+    let mut bytes = &bytes[..bytes.len().min(PREVIEW_LIMIT)];
+    if truncated
+        && let Err(error) = std::str::from_utf8(bytes)
+        && error.error_len().is_none()
+    {
+        bytes = &bytes[..error.valid_up_to()];
+    }
+    let body = String::from_utf8_lossy(bytes);
+    let media_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let preview = if trace.request_format == "application/x-www-form-urlencoded"
+        || media_type == "application/x-www-form-urlencoded"
+    {
+        // A clipped form can end inside an escaped key or value.
+        let complete = if truncated {
+            body.rsplit_once('&').map_or("", |(prefix, _)| prefix)
+        } else {
+            &body
+        };
+        let pairs: Vec<_> = url::form_urlencoded::parse(complete.as_bytes()).collect();
+        let mut encoded = url::form_urlencoded::Serializer::new(String::new());
+        for (key, value) in pairs {
+            let value =
+                if sensitive(&key, &trace.masks.headers) || sensitive(&key, &trace.masks.query) {
+                    remember(&mut trace.masks.values, &value);
+                    MASK
+                } else {
+                    &value
+                };
+            encoded.append_pair(&key, value);
+        }
+        encoded.finish()
+    } else if !truncated && let Ok(mut json) = serde_json::from_str::<Value>(&body) {
+        mask_json(&mut json, &mut trace.masks);
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    } else if trace.request_format == "application/json"
+        || media_type == "application/json"
+        || media_type.ends_with("+json")
+        || body.trim_start().starts_with(['{', '['])
+    {
+        truncated = true;
+        String::new()
+    } else {
+        body.into_owned()
+    };
+    let preview = redact(&preview, &trace.masks.values, truncated);
+    Some(BodyPreview {
+        truncated: truncated || preview.len() > PREVIEW_LIMIT,
+        preview: clip(preview, PREVIEW_LIMIT),
+    })
+}
+
 pub(super) fn request(request: &reqwest::Request) {
     update(|trace| {
         let mut headers = request.headers().clone();
@@ -344,6 +451,7 @@ pub(super) fn request(request: &reqwest::Request) {
             .or_insert(header::HeaderValue::from_static("*/*"));
         register_headers(&headers, &mut trace.masks);
         register_query(request.url(), &mut trace.masks);
+        let body = request_body(request, trace);
         trace.entry.request = Some(Request {
             method: clip(
                 redact(request.method().as_str(), &trace.masks.values, false),
@@ -351,6 +459,7 @@ pub(super) fn request(request: &reqwest::Request) {
             ),
             url: redact_url(request.url(), &trace.masks),
             headers: safe_headers(&headers, &trace.masks, None),
+            body,
         });
         trace.entry.failure = Some("connection");
     });

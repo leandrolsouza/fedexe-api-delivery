@@ -1,0 +1,2 @@
+• Novo console de requisições no desktop. Veja os últimos envios do editor e as etapas do runner, com detalhes da requisição, dos redirecionamentos e da resposta.
+• Filtre os registros por origem ou erro. O Fedexe mascara credenciais e valores secretos antes de exibir os detalhes.

@@ -13,6 +13,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
   ChevronsUpDown,
   CircleHelp,
   Code2,
@@ -48,7 +49,8 @@ import {
 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
-import { loadSecrets, saveSecrets, secretSnapshot } from './lib/credentials';
+import { createWorkspaceAutosave } from './lib/workspace-autosave';
+import { loadSecrets, type StoredSecrets } from './lib/credentials';
 import {
   createWorkspace,
   addConsoleMasks,
@@ -61,10 +63,9 @@ import {
   newRequest,
   RequestResolutionError,
   redactSecrets,
-  safeWorkspace,
+  redactUrlCredentials,
   exportableCollection,
   exportableWorkspace,
-  safeEnvironment,
   STORAGE_KEY,
   syncUrl,
   variablesFor,
@@ -85,7 +86,12 @@ import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
 import { UpdateDialog, UpdateSettings, useUpdates } from './components/Updates';
 import { Dropdown } from './components/ui/dropdown';
-import { curlFor, MethodBadge, RequestEditor } from './components/RequestEditor';
+import {
+  curlFor,
+  MethodBadge,
+  RequestEditor,
+  type RequestLayout,
+} from './components/RequestEditor';
 import {
   EnvironmentsView,
   HistoryView,
@@ -116,15 +122,19 @@ const navigationItems = [
 ] as const;
 
 async function initialState() {
-  let raw: string | null = null;
+  let workspace: Workspace | undefined;
   try {
-    if (native) raw = await invoke<string | null>('load_workspace');
-    raw ??= localStorage.getItem(STORAGE_KEY);
-    const workspace = loadWorkspace(raw);
-    if (native) await loadSecrets(workspace);
-    return { workspace, error: '', raw: null };
+    const raw = native ? await invoke<string | null>('load_workspace') : null;
+    workspace = loadWorkspace(raw ?? localStorage.getItem(STORAGE_KEY));
+    return { ...(await loadSecrets(workspace, native)), error: '', recovery: undefined };
   } catch (error) {
-    return { workspace: createWorkspace(), error: normalizeError(error).message, raw };
+    return {
+      workspace: createWorkspace(),
+      storedSecrets: new Map() as StoredSecrets,
+      retiredSecrets: [],
+      error: normalizeError(error).message,
+      recovery: workspace && exportableWorkspace(workspace),
+    };
   }
 }
 
@@ -158,9 +168,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [storageError, setStorageError] = useState(initial.error);
   const [saveAttempt, setSaveAttempt] = useState(0);
   const [persisted, setPersisted] = useState<Workspace>();
-  const saveQueue = useRef(Promise.resolve());
-  const [storedSecrets] = useState(() => secretSnapshot(initial.workspace));
+  const [autosave] = useState(() => createWorkspaceAutosave({ ...initial, native }));
   const [view, setView] = useState<View>('collections');
+  const [requestLayout, setRequestLayout] = useState<RequestLayout>('split');
+  const [requestShare, setRequestShare] = useState(50);
   const firstCollection = workspace.collections[0];
   const firstRequest =
     firstCollection?.requests.find((r) => r.id === 'list-users') || firstCollection?.requests[0];
@@ -224,27 +235,31 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     if (storageBlocked) return;
     let superseded = false;
     setStorageError('');
-    saveQueue.current = saveQueue.current.then(async () => {
-      if (superseded) return;
-      try {
-        const contents = JSON.stringify(safeWorkspace(workspace));
-        if (native) {
-          await saveSecrets(storedSecrets, secretSnapshot(workspace), () =>
-            invoke('save_workspace', { contents }),
+    const { result, cancel } = autosave.enqueue(workspace);
+    void result.then(
+      (saved) => {
+        if (superseded || !saved) return;
+        setPersisted(workspace);
+        if (saved.cleanupError)
+          setStorageError(
+            t(
+              'O workspace foi salvo, mas a limpeza das credenciais anteriores falhou. {0}',
+              normalizeError(saved.cleanupError).message,
+            ),
           );
-        } else localStorage.setItem(STORAGE_KEY, contents);
-        if (!superseded) setPersisted(workspace);
-      } catch (error) {
+      },
+      (error) => {
         if (!superseded)
           setStorageError(
             t('Não foi possível salvar o workspace. {0}', normalizeError(error).message),
           );
-      }
-    });
+      },
+    );
     return () => {
       superseded = true;
+      cancel();
     };
-  }, [workspace, storageBlocked, storedSecrets, saveAttempt]);
+  }, [workspace, storageBlocked, autosave, saveAttempt]);
 
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
@@ -357,7 +372,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       let compiled = compileRequest(item, collection, variables);
       if (native) compiled = addConsoleMasks(compiled, item, collection, environment, variables);
       prepared = true;
-      const response = await send(compiled);
+      const response = await send(compiled, item.id);
       status = response.status;
       duration = response.duration_ms;
       setResponses((current) => ({ ...current, [item.id]: response }));
@@ -365,7 +380,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       errorText = redactSecrets(normalizeError(error).message, environment);
       duration = Math.round(performance.now() - start);
       if (native && !prepared)
-        recordEditorPreparationFailure(duration, error instanceof RequestResolutionError);
+        recordEditorPreparationFailure(duration, error instanceof RequestResolutionError, item.id);
       setErrors((current) => ({ ...current, [item.id]: errorText! }));
     } finally {
       setWorkspace((current) => ({
@@ -375,7 +390,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             id: uid(),
             name: item.name,
             method: item.method,
-            url: item.url,
+            url: redactUrlCredentials(item.url),
             status,
             duration,
             date: new Date().toISOString(),
@@ -490,6 +505,18 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     setCollapsed((current) =>
       current.includes(key) ? current.filter((k) => k !== key) : [...current, key],
     );
+  }
+  function setAllFoldersExpanded(expanded: boolean) {
+    const folderKeys = workspace.collections.flatMap((c) => c.folders.map((f) => `${c.id}:${f}`));
+    if (expanded) {
+      const keysToOpen = new Set([
+        ...folderKeys,
+        ...workspace.collections.filter((c) => c.folders.length > 0).map((c) => c.id),
+      ]);
+      setCollapsed((current) => current.filter((key) => !keysToOpen.has(key)));
+    } else {
+      setCollapsed((current) => [...new Set([...current, ...folderKeys])]);
+    }
   }
   function duplicateRequest(c: Collection, item: RequestItem) {
     const copy = {
@@ -902,8 +929,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       }
       const postman = importPostman(parsed);
       const environment =
-        postman?.environment ??
-        (isEnvironment(parsed) ? { ...safeEnvironment(parsed), id: uid() } : undefined);
+        postman?.environment ?? (isEnvironment(parsed) ? { ...parsed, id: uid() } : undefined);
       if (environment) {
         setWorkspace((current) => ({
           ...current,
@@ -968,6 +994,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     }
   }
 
+  const canToggleAllFolders =
+    !treeSearch && workspace.collections.some((c) => c.folders.length > 0);
   const settingsCollection = workspace.collections.find((c) => c.id === collectionSettings);
   const updateCollectionAuth = (auth: Auth) => {
     if (settingsCollection)
@@ -996,8 +1024,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         view !== 'collections' && 'wide-view',
       )}
     >
-      <header className="app-header">
-        <div className="header-brand" data-tauri-drag-region>
+      <header className="app-header" data-tauri-drag-region="deep">
+        <div className="header-brand">
           <span className="brand-mark">
             <svg viewBox="0 0 32 32" aria-hidden="true">
               <path d="M10 7h17l-3 6h-9l-2 4h9l-3 6h-9l-3 6H1z" fill="currentColor" />
@@ -1140,6 +1168,26 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <span>{formatNumber(workspace.collections.length)}</span>
           </h2>
           <div>
+            <button
+              type="button"
+              className="inline-icon"
+              aria-label={t('Expandir todas as pastas')}
+              title={t('Expandir todas as pastas')}
+              disabled={!canToggleAllFolders}
+              onClick={() => setAllFoldersExpanded(true)}
+            >
+              <ChevronsUpDown size={16} />
+            </button>
+            <button
+              type="button"
+              className="inline-icon"
+              aria-label={t('Recolher todas as pastas')}
+              title={t('Recolher todas as pastas')}
+              disabled={!canToggleAllFolders}
+              onClick={() => setAllFoldersExpanded(false)}
+            >
+              <ChevronsDownUp size={16} />
+            </button>
             <button
               className="inline-icon"
               aria-label={t('Buscar nas coleções')}
@@ -1310,7 +1358,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
       </aside>
       <main className="main-area">
-        <div className="main-toolbar">
+        <div className="main-toolbar" data-tauri-drag-region="deep">
           <div className="breadcrumbs">
             {(sidebarHidden || view !== 'collections') && (
               <button
@@ -1361,7 +1409,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               <span className="status-dot dot-green" /> Local-first
             </span>
             <span className="toolbar-divider" />
-            <div className="environment-picker">
+            <div className="environment-picker" data-tauri-drag-region="false">
               <Globe2 size={14} />
               <select
                 aria-label={t('Ambiente ativo')}
@@ -1399,26 +1447,32 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 {t('Tentar salvar novamente')}
               </button>
             )}
-            <button
-              onClick={() =>
-                download(
-                  'fedexe-recuperacao.json',
-                  storageBlocked && initial.raw !== null
-                    ? initial.raw
-                    : JSON.stringify(exportableWorkspace(workspace), null, 2),
-                )
-              }
-            >
-              {t('Exportar dados')}
-            </button>
+            {(!storageBlocked || initial.recovery) && (
+              <button
+                onClick={() =>
+                  download(
+                    'fedexe-recuperacao.json',
+                    JSON.stringify(
+                      storageBlocked ? initial.recovery : exportableWorkspace(workspace),
+                      null,
+                      2,
+                    ),
+                  )
+                }
+              >
+                {t('Exportar dados')}
+              </button>
+            )}
             {storageBlocked && (
               <button
                 onClick={() =>
                   setConfirmDialog({
                     title: t('Iniciar um novo workspace?'),
-                    description: t(
-                      'Exporte os dados de recuperação antes de continuar. O armazenamento local será substituído por este workspace.',
-                    ),
+                    description: initial.recovery
+                      ? t(
+                          'Exporte os dados de recuperação antes de continuar. O armazenamento local será substituído por este workspace.',
+                        )
+                      : t('O armazenamento local será substituído por este workspace.'),
                     label: t('Criar novo workspace'),
                     action: () => {
                       setStorageBlocked(false);
@@ -1432,7 +1486,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             )}
           </div>
         )}
-        <div className="main-content">
+        <div
+          className={cn('main-content', view === 'collections' && request && 'with-request-editor')}
+        >
           {view === 'collections' ? (
             <>
               <nav className="request-tabbar" aria-label={t('Requisições abertas')}>
@@ -1501,6 +1557,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   error={errors[request.id]}
                   onSnippet={() => setSnippetOpen(true)}
                   wrap={workspace.settings.wrap}
+                  layout={requestLayout}
+                  onLayoutChange={setRequestLayout}
+                  requestShare={requestShare}
+                  onRequestShareChange={setRequestShare}
                 />
               ) : (
                 <div className="welcome-page">
@@ -1560,7 +1620,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onClear={() => setWorkspace((current) => ({ ...current, history: [] }))}
             />
           ) : view === 'console' ? (
-            <RequestConsole />
+            <RequestConsole collections={workspace.collections} onOpenRequest={openRequest} />
           ) : (
             <SettingsView
               workspace={workspace}

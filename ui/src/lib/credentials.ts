@@ -1,50 +1,88 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Workspace } from './models';
+import { t } from './i18n';
+import { mapWorkspaceCredentials, type CredentialAddress, type Workspace } from './models';
 
-type Secret = { environment: string; variable: string; value: string };
+export type StoredSecret = { address: CredentialAddress; value: string };
+export type StoredSecrets = Map<string, StoredSecret>;
 
-function workspaceSecrets(workspace: Workspace) {
-  return workspace.environments.flatMap(({ id, variables }) =>
-    variables
-      .filter((variable) => variable.secret)
-      .map((variable) => ({ environment: id, variable: variable.id, value: variable.value })),
-  );
+const sessionPrefix = 'fedexe.credential.v1:';
+
+function address(
+  scope: 'environment' | 'collection',
+  environment: string,
+  field: string[],
+): CredentialAddress {
+  return {
+    scope,
+    environment,
+    variable: scope === 'environment' ? field[0] : JSON.stringify(field),
+  };
 }
 
-const secretKey = ({ environment, variable }: Secret) => JSON.stringify([environment, variable]);
-
-export async function loadSecrets(workspace: Workspace) {
-  for (const environment of workspace.environments) {
-    for (const variable of environment.variables) {
-      if (variable.secret) {
-        variable.value =
-          (await invoke<string | null>('read_secret', {
-            environment: environment.id,
-            variable: variable.id,
-          })) ?? '';
-      }
-    }
-  }
+export function revisionAddress(revision: string): CredentialAddress {
+  return { scope: 'revision', environment: '', variable: revision };
 }
 
-export function secretSnapshot(workspace: Workspace) {
-  return new Map(workspaceSecrets(workspace).map((secret) => [secretKey(secret), secret]));
+export function secretKey({ scope, environment, variable }: CredentialAddress) {
+  return JSON.stringify([scope, environment, variable]);
 }
 
-export async function saveSecrets(
-  saved: Map<string, Secret>,
-  next: Map<string, Secret>,
-  saveWorkspace: () => Promise<void>,
+async function readSecret(secret: CredentialAddress, native: boolean) {
+  return native
+    ? invoke<string | null>('read_secret', secret)
+    : sessionStorage.getItem(sessionPrefix + secretKey(secret));
+}
+
+export async function writeSecret(
+  secret: CredentialAddress,
+  value: string | null,
+  native: boolean,
 ) {
-  for (const [key, secret] of next) {
-    if (!secret.value || saved.get(key)?.value === secret.value) continue;
-    await invoke('write_secret', secret);
-    saved.set(key, secret);
+  if (native) {
+    await invoke('write_secret', { ...secret, value });
+  } else {
+    const key = sessionPrefix + secretKey(secret);
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
   }
-  await saveWorkspace();
-  for (const [key, secret] of saved) {
-    if (next.get(key)?.value) continue;
-    await invoke('write_secret', { ...secret, value: null });
-    saved.delete(key);
+}
+
+export async function loadSecrets(workspace: Workspace, native: boolean) {
+  const storedSecrets: StoredSecrets = new Map();
+  const savedSlots = workspace.credentialSlots && new Set(workspace.credentialSlots);
+  const reads = new Map<string, CredentialAddress>();
+  mapWorkspaceCredentials(workspace, (scope, owner, field, value, publicValue) => {
+    const legacyAddress = address(scope, owner, field);
+    const key = secretKey(legacyAddress);
+    if (
+      value === publicValue &&
+      (savedSlots ? savedSlots.has(key) : native && scope === 'environment')
+    ) {
+      const revision = workspace.credentialRevisions?.[key];
+      reads.set(key, revision === undefined ? legacyAddress : revisionAddress(revision));
+    }
+    return value;
+  });
+  for (const [key, location] of reads) {
+    const value = await readSecret(location, native);
+    if (value === null && native && savedSlots?.has(key))
+      throw new Error(t('Uma credencial do workspace não está disponível no cofre do Windows.'));
+    if (value !== null) storedSecrets.set(key, { address: location, value });
   }
+  const hydrated = mapWorkspaceCredentials(workspace, (scope, owner, field, value) => {
+    return storedSecrets.get(secretKey(address(scope, owner, field)))?.value ?? value;
+  });
+  return { workspace: hydrated, storedSecrets, retiredSecrets: workspace.retiredCredentials ?? [] };
+}
+
+export function prepareSecrets(workspace: Workspace) {
+  const values = new Map<string, string>();
+  const sanitized = mapWorkspaceCredentials(
+    workspace,
+    (scope, owner, field, value, publicValue) => {
+      if (value !== publicValue) values.set(secretKey(address(scope, owner, field)), value);
+      return publicValue;
+    },
+  );
+  return { sanitized, values };
 }

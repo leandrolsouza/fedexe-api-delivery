@@ -9,6 +9,14 @@
     format('woff2-variations');
 }
 
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2') format('woff2');
+}
+
 @theme inline {
   --color-primary: var(--accent);
   --color-background: var(--canvas);
@@ -646,7 +654,12 @@ kbd {
 }
 .sidebar-heading > div {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+}
+.sidebar-heading .inline-icon:disabled {
+  opacity: 0.45;
+  background: transparent;
+  color: var(--muted);
 }
 .sidebar-actions {
   display: flex;
@@ -1373,7 +1386,6 @@ kbd {
   min-width: 50px;
   flex: 1;
   color: var(--secondary);
-  font-family: 'Cascadia Code', Consolas, monospace;
   font-size: 12px;
   padding: 9px 15px;
   background: none;
@@ -2234,6 +2246,11 @@ kbd {
   margin: 0;
   line-height: 1.9;
   font-size: inherit;
+}
+.url-input,
+.response-tab-panel .code-viewer pre,
+.response-tab-panel .code-viewer code {
+  font-family: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
 }
 .code-line {
   display: flex;
@@ -3300,6 +3317,11 @@ kbd {
 .console-entry summary > * {
   margin-inline-start: 12px;
 }
+.console-request-link {
+  cursor: pointer;
+  text-align: start;
+  text-decoration: underline;
+}
 .console-details {
   display: grid;
   gap: 12px;
@@ -3853,6 +3875,26 @@ button.history-row:hover {
   width: 25px;
   height: 25px;
   min-height: 25px;
+}
+.update-notes {
+  margin-bottom: 16px;
+}
+.update-notes h3 {
+  margin-bottom: 8px;
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 600;
+}
+.update-notes p {
+  max-height: min(240px, 35dvh);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
 }
 .dialog-footer {
   display: flex;
@@ -5776,6 +5818,126 @@ button.history-row:hover {
   .sidebar-local-card {
     display: none;
   }
+}
+.main-content.with-request-editor {
+  display: flex;
+  flex-direction: column;
+}
+.with-request-editor > .request-tabbar {
+  flex-shrink: 0;
+}
+.with-request-editor > .request-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  min-height: 320px;
+  margin: 0 auto;
+  padding-bottom: 12px;
+}
+.request-page > .request-heading,
+.request-command {
+  flex-shrink: 0;
+}
+.request-command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.request-command > .url-bar {
+  flex: 1 1 310px;
+  min-width: 0;
+  margin: 0;
+}
+.request-layout-switch {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.request-layout-switch > button {
+  min-height: 29px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 11px;
+}
+.request-layout-switch > button:hover,
+.request-layout-switch > button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.request-panes {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+}
+.request-panes.layout-split {
+  grid-template-rows: minmax(0, var(--request-share)) 12px minmax(0, var(--response-share));
+}
+.request-panes.layout-request {
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.request-panes.layout-response {
+  grid-template-rows: minmax(0, 1fr);
+}
+.request-panes > .request-surface,
+.request-panes .response-content {
+  overflow: auto;
+  min-height: 0;
+}
+.request-panes > .response-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 0;
+}
+.request-panes .response-heading {
+  flex: none;
+}
+.request-panes .response-indicator {
+  display: flex;
+}
+.request-panes .response-content {
+  flex: 1;
+}
+.request-panes.layout-request .response-heading {
+  border-bottom: 0;
+}
+.request-surface > .editor-bottom-note {
+  padding-inline: 12px;
+}
+.request-surface > .editor-bottom-note > button {
+  position: static;
+  margin-left: auto;
+}
+.request-pane-divider {
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  cursor: row-resize;
+  touch-action: none;
+  user-select: none;
+}
+.request-pane-divider::before {
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  content: '';
+}
+.request-pane-divider:hover::before,
+.request-pane-divider:focus-visible::before,
+.request-pane-divider:active::before {
+  background: var(--accent);
 }
 @media (prefers-reduced-motion: reduce) {
   *,

@@ -54,7 +54,7 @@ O protótipo já envia requisições HTTP e executa coleções JSON em sequênci
 
 ## Depois da 1.0.0
 
-A referência inicial é a tag `v1.0.0`. As tags `v1.1.0`, `v1.2.0` e `v1.3.0` registram as entregas do atualizador, do inglês como idioma padrão e do runner funcional por CLI. Os próximos marcos seguem sem datas fixas. A série 1.x melhora o diagnóstico e a execução de coleções HTTP no Windows. A 2.0 acrescenta scripts para estender as validações e extrações. O Fedexe mantém os dados locais, o uso sem conta e a licença MIT.
+A referência inicial é a tag `v1.0.0`. As tags `v1.1.0`, `v1.2.0` e `v1.3.0` registram as entregas do atualizador, do inglês como idioma padrão e do runner funcional por CLI. Os próximos marcos seguem sem datas fixas. A série 1.x melhora o diagnóstico e a execução de coleções HTTP no Windows. A 2.0 acrescenta scripts para estender as validações e extrações. O Fedexe mantém o armazenamento local e o uso sem conta como padrão. As integrações com Postman e Google Drive são opcionais. O projeto mantém a licença MIT.
 
 ### 1.0.x — Estabilidade e atualização
 
@@ -96,15 +96,13 @@ O teste de integração do workflow cobre a reutilização do token extraído no
 
 Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e timeout, com registros do editor e do runner. A verificação também cobriu filtros, limpeza do console e mascaramento dos segredos do cenário.
 
-### 1.5 — Testes de carga
+### 1.5 — Importação direta de workspaces do Postman
 
-- Criar um modo de carga para repetir uma coleção ou pasta em ambientes de teste. Permitir configurar usuários virtuais, duração, subida gradual e um limite global de requisições por segundo. Mostrar o ambiente e os destinos antes de iniciar e oferecer cancelamento durante a rodada.
-- Executar os passos da coleção em ordem para cada usuário virtual, com tokens e variáveis extraídos isolados entre usuários. Reaproveitar as validações do runner e agregar as métricas sem guardar todos os corpos de resposta.
-- Mostrar volume de requisições por segundo, taxa de erros e latências p50, p95 e p99 por endpoint, com contagem de amostras. Exportar o resumo em JSON e indicar se a rodada respeitou os limites de aprovação para p95 e taxa de erros.
+- Conectar à API do Postman com uma chave guardada no cofre do Windows. Listar os workspaces acessíveis e permitir importar todos os itens compatíveis de um workspace ou selecionar o que trazer.
+- Reaproveitar a importação de coleções e ambientes. Preservar pastas, ordem das requisições e vínculos que o Fedexe representa. Importar especificações OpenAPI compatíveis quando o suporte da 1.7 estiver disponível.
+- Resumir o que foi importado e o que exige configuração manual. Avaliar cobertura para exemplos de resposta, scripts, mocks, monitores e flows conforme a disponibilidade na API e o suporte no Fedexe.
 
-- Executar cenários de carga pela CLI com os mesmos limites e formato de relatório do desktop. Retornar código de falha quando o p95 ou a taxa de erros ultrapassar o limite configurado.
-
-**Pronto quando** um cenário local com login, respostas lentas e falhas intencionais confirmar a ordem dos passos e o isolamento dos tokens por usuário. O relatório deve refletir os resultados observados no servidor, mostrar os limites excedidos e preservar o resumo parcial ao cancelar.
+**Pronto quando** um workspace com várias coleções e ambientes puder ser migrado em uma operação, as coleções compatíveis rodarem no Fedexe e o relatório identificar itens omitidos ou parcialmente convertidos.
 
 ### 1.6 — OAuth 2.0
 
@@ -113,21 +111,28 @@ Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e ti
 
 **Pronto quando** o desktop autenticar contra um provedor de teste e reutilizar a sessão com renovação quando aplicável, e a CLI executar Client Credentials sem interação. Os testes devem cobrir falha de autenticação e conferir que tokens não aparecem nas exportações nem nos relatórios.
 
-### 1.7 — Proxy e certificados de cliente
-
-- Configurar proxy por ambiente e associar certificados de cliente a destinos explícitos para autenticação mTLS. Manter a validação TLS e documentar como fornecer credenciais e certificados no desktop e na CLI.
-- Validar troca de ambiente, diagnóstico de proxy e certificado inválido, além dos casos em que um redirecionamento tenta mudar de destino.
-
-**Pronto quando** a mesma coleção executar em dois ambientes de teste com configurações distintas de proxy e mTLS, com confirmação no servidor de que cada destino recebeu o certificado esperado e de que o tráfego direto continua funcionando.
-
-### 1.8 — Importação de OpenAPI
+### 1.7 — Importação de OpenAPI
 
 - Importar arquivos OpenAPI 3.0 e 3.1 em JSON ou YAML e gerar uma coleção HTTP editável, com requisições agrupadas por tag, parâmetros de caminho, query e headers, e exemplos de corpo quando disponíveis.
 - Converter a URL do servidor em uma variável de ambiente, mapear a autenticação compatível com o Fedexe e listar no relatório de importação os itens que exigem configuração manual.
 
 **Pronto quando** uma especificação em JSON e sua equivalente em YAML gerarem as mesmas requisições, e a coleção puder ser executada contra um servidor de teste após configurar o ambiente e as credenciais.
 
-### 1.9 — Coleções versionadas com Git
+### 1.8 — Backup e restauração no Google Drive e aba de notificações
+
+- Oferecer backup opcional e restauração pelo app, usando a conta Google do usuário. Incluir coleções, pastas, requisições, ambientes e configurações do workspace, com uma lista do conteúdo antes do envio. Omitir credenciais e valores secretos dos arquivos enviados. Guardar os tokens de acesso no cofre do Windows.
+- Adicionar uma aba de notificações para consultar avisos de atualização e resultados de importação, backup e restauração. Indicar avisos não lidos, permitir marcá-los como lidos e abrir a tela relacionada quando houver uma ação disponível.
+
+**Pronto quando** um backup feito em uma instalação puder ser restaurado em outra, os arquivos enviados omitirem os segredos do cenário e os avisos puderem ser consultados depois que as mensagens temporárias sumirem.
+
+### 1.9 — Proxy e certificados de cliente
+
+- Configurar proxy por ambiente e associar certificados de cliente a destinos explícitos para autenticação mTLS. Manter a validação TLS e documentar como fornecer credenciais e certificados no desktop e na CLI.
+- Validar troca de ambiente, diagnóstico de proxy e certificado inválido, além dos casos em que um redirecionamento tenta mudar de destino.
+
+**Pronto quando** a mesma coleção executar em dois ambientes de teste com configurações distintas de proxy e mTLS, com confirmação no servidor de que cada destino recebeu o certificado esperado e de que o tráfego direto continua funcionando.
+
+### 1.10 — Coleções versionadas com Git
 
 - Abrir e editar no Fedexe coleções de uma pasta local versionada com Git, com arquivos separados para requisições e ambientes. Preservar a ordem de execução e gerar diferenças legíveis ao editar uma requisição.
 - Permitir que a CLI execute a coleção diretamente da pasta. Manter valores marcados como secretos fora dos arquivos versionados e avisar quando houver alterações externas antes de sobrescrever arquivos.
@@ -142,6 +147,23 @@ Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e ti
 - Preservar as regras declarativas e testar a atualização de um workspace 1.x com coleções, ambientes e segredos existentes. Documentar quais scripts são aceitos e informar no relatório de importação quais scripts do Postman exigem adaptação.
 
 **Pronto quando** uma coleção existente executar após a atualização e uma coleção com script validar uma resposta e reutilizar um valor extraído no desktop e na CLI. O console e o relatório devem mostrar a falha quando um script exceder seus limites ou tentar acessar um recurso indisponível. Scripts importados só devem rodar após autorização explícita.
+
+### 2.1 — Sincronização com o Google Drive
+
+- Adicionar sincronização automática opcional entre instalações após validar backup e restauração na 1.8. Manter o workspace utilizável offline e permitir recuperar versões anteriores.
+- Quando duas instalações editarem o mesmo item, preservar as duas versões até a resolução do conflito.
+
+**Pronto quando** duas instalações sincronizarem o mesmo workspace, retomarem a sincronização depois de ficar offline e permitirem resolver edições concorrentes sem perder dados. Verificar que os arquivos no Drive omitiram os segredos usados no cenário.
+
+### 2.2 — Testes de carga
+
+- Criar um modo de carga para repetir uma coleção ou pasta em ambientes de teste. Permitir configurar usuários virtuais, duração, subida gradual e um limite global de requisições por segundo. Mostrar o ambiente e os destinos antes de iniciar e oferecer cancelamento durante a rodada.
+- Executar os passos da coleção em ordem para cada usuário virtual, com tokens e variáveis extraídos isolados entre usuários. Reaproveitar as validações do runner e agregar as métricas sem guardar todos os corpos de resposta.
+- Mostrar volume de requisições por segundo, taxa de erros e latências p50, p95 e p99 por endpoint, com contagem de amostras. Exportar o resumo em JSON e indicar se a rodada respeitou os limites de aprovação para p95 e taxa de erros.
+
+- Executar cenários de carga pela CLI com os mesmos limites e formato de relatório do desktop. Retornar código de falha quando o p95 ou a taxa de erros ultrapassar o limite configurado.
+
+**Pronto quando** um cenário local com login, respostas lentas e falhas intencionais confirmar a ordem dos passos e o isolamento dos tokens por usuário. O relatório deve refletir os resultados observados no servidor, mostrar os limites excedidos e preservar o resumo parcial ao cancelar.
 
 ### Backlog sem versão definida
 

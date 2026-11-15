@@ -8,7 +8,8 @@ import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
 type CheckResult =
-  { status: 'unconfigured' | 'current' } | { status: 'available'; version: string };
+  | { status: 'unconfigured' | 'current' }
+  | { status: 'available'; version: string; notes: string | null };
 
 export function useUpdates() {
   const [result, setResult] = useState<CheckResult>();
@@ -63,6 +64,7 @@ export function useUpdates() {
 
   return {
     version: result?.status === 'available' ? result.version : undefined,
+    notes: result?.status === 'available' ? result.notes?.trim() : undefined,
     status: checking
       ? t('Verificando atualizações…')
       : error ||
@@ -121,6 +123,12 @@ export function UpdateDialog({ updates, blocked }: { updates: Updates; blocked: 
         'O Fedexe vai verificar a assinatura do instalador, fechar e reabrir após a atualização.',
       )}
     >
+      <section className="update-notes" aria-labelledby="update-notes-heading">
+        <h3 id="update-notes-heading">{t('O que mudou')}</h3>
+        <p tabIndex={updates.notes ? 0 : undefined}>
+          {updates.notes || t('As notas desta versão não estão disponíveis.')}
+        </p>
+      </section>
       {blocked && <p role="status">{blocked}</p>}
       {updates.progress && <p role="status">{updates.progress}</p>}
       {updates.installError && <p role="alert">{updates.installError}</p>}

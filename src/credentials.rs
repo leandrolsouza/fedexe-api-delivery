@@ -7,22 +7,36 @@ use windows_sys::Win32::{
     },
 };
 
-fn credential_target(environment: &str, variable: &str) -> Result<Vec<u16>, String> {
+fn credential_target(
+    environment: &str,
+    variable: &str,
+    scope: Option<&str>,
+) -> Result<Vec<u16>, String> {
     if environment.contains('\0') || variable.contains('\0') {
         return Err("Identificador de segredo inválido.".into());
     }
     // Hex encoding prevents case-insensitive Windows targets from aliasing imported IDs.
     let id = serde_json::to_vec(&(environment, variable)).map_err(|e| e.to_string())?;
     let encoded: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
-    Ok(format!("app.fedexe.api/{encoded}")
+    let prefix = match scope {
+        None | Some("environment") => "app.fedexe.api/",
+        Some("collection") => "app.fedexe.api/collection/",
+        Some("revision") => "app.fedexe.api/revision/",
+        _ => return Err("Identificador de segredo inválido.".into()),
+    };
+    Ok(format!("{prefix}{encoded}")
         .encode_utf16()
         .chain([0])
         .collect())
 }
 
 #[tauri::command]
-pub fn read_secret(environment: String, variable: String) -> Result<Option<String>, String> {
-    let target = credential_target(&environment, &variable)?;
+pub fn read_secret(
+    environment: String,
+    variable: String,
+    scope: Option<String>,
+) -> Result<Option<String>, String> {
+    let target = credential_target(&environment, &variable, scope.as_deref())?;
     let mut credential = ptr::null_mut();
     // Windows owns the returned allocation until CredFree.
     if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) } == 0 {
@@ -49,8 +63,9 @@ pub fn write_secret(
     environment: String,
     variable: String,
     value: Option<String>,
+    scope: Option<String>,
 ) -> Result<(), String> {
-    let mut target = credential_target(&environment, &variable)?;
+    let mut target = credential_target(&environment, &variable, scope.as_deref())?;
     let Some(value) = value else {
         if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0 {
             return Ok(());
@@ -90,6 +105,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn collection_credentials_have_their_own_namespace() {
+        let legacy = credential_target("owner", "field", None).unwrap();
+        assert_eq!(
+            credential_target("owner", "field", Some("environment")).unwrap(),
+            legacy
+        );
+        assert_ne!(
+            credential_target("owner", "field", Some("collection")).unwrap(),
+            legacy
+        );
+    }
+
+    #[test]
     fn stores_updates_and_removes_a_secret_for_one_environment() {
         let sandbox = tempfile::tempdir().unwrap();
         let environment = format!(
@@ -98,18 +126,28 @@ mod tests {
         );
         let variable = "token".to_string();
         let result = (|| {
-            write_secret(environment.clone(), variable.clone(), Some("ação🔑".into()))?;
-            let original = read_secret(environment.clone(), variable.clone())?;
-            let other = read_secret(format!("{environment}-other"), variable.clone())?;
-            write_secret(environment.clone(), variable.clone(), Some("novo".into()))?;
-            let updated = read_secret(environment.clone(), variable.clone())?;
+            write_secret(
+                environment.clone(),
+                variable.clone(),
+                Some("ação🔑".into()),
+                None,
+            )?;
+            let original = read_secret(environment.clone(), variable.clone(), None)?;
+            let other = read_secret(format!("{environment}-other"), variable.clone(), None)?;
+            write_secret(
+                environment.clone(),
+                variable.clone(),
+                Some("novo".into()),
+                None,
+            )?;
+            let updated = read_secret(environment.clone(), variable.clone(), None)?;
             Ok::<_, String>((original, other, updated))
         })();
-        write_secret(environment.clone(), variable.clone(), None).unwrap();
+        write_secret(environment.clone(), variable.clone(), None, None).unwrap();
         assert_eq!(
             result.unwrap(),
             (Some("ação🔑".into()), None, Some("novo".into()))
         );
-        assert_eq!(read_secret(environment, variable).unwrap(), None);
+        assert_eq!(read_secret(environment, variable, None).unwrap(), None);
     }
 }

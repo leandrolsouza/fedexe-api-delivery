@@ -89,10 +89,16 @@ export function isEnvironment(value: unknown): value is Environment {
   );
 }
 
-export function safeEnvironment(environment: Environment): Environment {
+export function safeEnvironment(
+  environment: Environment,
+  collections: Collection[] = [],
+): Environment {
+  const references = workspaceCredentialReferences(collections);
   return {
     ...environment,
-    variables: environment.variables.map((row) => (row.secret ? { ...row, value: '' } : row)),
+    variables: environment.variables.map((row) =>
+      privateVariable(row, references) ? { ...row, value: '', secret: true } : row,
+    ),
   };
 }
 export type HttpRequest = {
@@ -160,8 +166,17 @@ export type NativeCollection = {
     | { request?: never; preparation_error: string }
   ))[];
 };
+export type CredentialAddress = {
+  scope: 'environment' | 'collection' | 'revision';
+  environment: string;
+  variable: string;
+};
+
 export type Workspace = {
   version: 1;
+  credentialSlots?: string[];
+  credentialRevisions?: Record<string, string>;
+  retiredCredentials?: CredentialAddress[];
   collections: Collection[];
   environments: Environment[];
   activeEnvironment: string;
@@ -291,7 +306,12 @@ export function createWorkspace(): Workspace {
 export const STORAGE_KEY = 'fedexe.workspace.v1';
 export function loadWorkspace(raw: string | null): Workspace {
   if (raw === null) return createWorkspace();
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = undefined;
+  }
   if (!isWorkspace(parsed))
     throw new Error(
       t(
@@ -306,6 +326,25 @@ export function isWorkspace(value: unknown): value is Workspace {
   const data = value as Workspace;
   return (
     data.version === 1 &&
+    (data.credentialSlots === undefined ||
+      (Array.isArray(data.credentialSlots) &&
+        data.credentialSlots.every((key) => typeof key === 'string'))) &&
+    (data.credentialRevisions === undefined ||
+      (!!data.credentialRevisions &&
+        typeof data.credentialRevisions === 'object' &&
+        !Array.isArray(data.credentialRevisions) &&
+        Object.values(data.credentialRevisions).every(
+          (revision) => typeof revision === 'string',
+        ))) &&
+    (data.retiredCredentials === undefined ||
+      (Array.isArray(data.retiredCredentials) &&
+        data.retiredCredentials.every(
+          (address) =>
+            address &&
+            ['environment', 'collection', 'revision'].includes(address.scope) &&
+            typeof address.environment === 'string' &&
+            typeof address.variable === 'string',
+        ))) &&
     Array.isArray(data.collections) &&
     data.collections.every(validCollection) &&
     Array.isArray(data.environments) &&
@@ -415,33 +454,209 @@ export function validCollection(value: unknown): value is Collection {
     )
   );
 }
-export function safeWorkspace(workspace: Workspace): Workspace {
+const credentialHeader =
+  /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key)$/i;
+const credentialParameter =
+  /^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|x[_-]?api[_-]?key|api[_-]?key|password|client[_-]?secret)$/i;
+function privateVariable(row: Pair, references: Set<string>) {
+  return row.secret || credentialParameter.test(row.key.trim()) || references.has(row.key);
+}
+
+const variableReference = /^\{\{[^{}]+\}\}$/;
+
+export function redactUrlCredentials(url: string) {
+  const withoutUserInfo = url.replace(/^(\s*https?:\/\/)[^/?#]*@/i, '$1');
+  const queryStart = withoutUserInfo.indexOf('?');
+  const hash = withoutUserInfo.indexOf('#');
+  if (queryStart < 0 || (hash >= 0 && hash < queryStart)) return withoutUserInfo;
+  const queryEnd = hash < 0 ? withoutUserInfo.length : hash;
+  const query = withoutUserInfo.slice(queryStart + 1, queryEnd).split('&');
+  const sanitized = query.map((part) => {
+    const [key, value] = new URLSearchParams(part).entries().next().value ?? [];
+    return key && value && credentialParameter.test(key) && !variableReference.test(value)
+      ? part.slice(0, part.indexOf('=') + 1)
+      : part;
+  });
+  return (
+    withoutUserInfo.slice(0, queryStart + 1) + sanitized.join('&') + withoutUserInfo.slice(queryEnd)
+  );
+}
+
+type CredentialValue = (field: string[], value: string, publicValue: string) => string;
+const publicCredential: CredentialValue = (_field, _value, publicValue) => publicValue;
+
+function mapAuth(auth: Auth, credential: CredentialValue, keepReferences = true): Auth {
+  const result = { ...auth };
+  for (const field of ['token', 'username', 'password', 'value'] as const) {
+    if (!keepReferences || !variableReference.test(auth[field]))
+      result[field] = credential(['auth', field], auth[field], '');
+  }
+  return result;
+}
+
+function mapPairs<T extends Pair>(
+  rows: T[],
+  field: string,
+  credential: CredentialValue,
+  sensitiveName?: RegExp,
+  keepReferences = true,
+): T[] {
+  return rows.map((row) =>
+    (row.secret || sensitiveName?.test(row.key.trim())) &&
+    (!keepReferences ||
+      (!variableReference.test(row.value) &&
+        !(field === 'headers' && /^Bearer \{\{[^{}]+\}\}$/i.test(row.value))))
+      ? { ...row, value: credential([field, row.id], row.value, '') }
+      : row,
+  );
+}
+
+function mapRequest(
+  request: RequestItem,
+  credential: CredentialValue,
+  keepReferences = true,
+): RequestItem {
   return {
-    ...workspace,
-    environments: workspace.environments.map(safeEnvironment),
+    ...request,
+    url: credential(['url'], request.url, redactUrlCredentials(request.url)),
+    auth: mapAuth(request.auth, credential, keepReferences),
+    headers: mapPairs(request.headers, 'headers', credential, credentialHeader, keepReferences),
+    params: mapPairs(request.params, 'params', credential, credentialParameter, keepReferences),
+    form: mapPairs(request.form, 'form', credential, credentialParameter, keepReferences),
+    ...(request.pathParams && {
+      pathParams: mapPairs(request.pathParams, 'pathParams', credential, undefined, keepReferences),
+    }),
+    ...(request.multipart && {
+      multipart: mapPairs(
+        request.multipart,
+        'multipart',
+        credential,
+        credentialParameter,
+        keepReferences,
+      ),
+    }),
   };
+}
+
+function collectCredentialReferences(collection: Collection, references: Set<string>) {
+  const collect: CredentialValue = (field, value) => {
+    if (field[0] !== 'url') {
+      for (const [, name] of value.matchAll(/\{\{([^{}]+)\}\}/g)) references.add(name.trim());
+    }
+    return value;
+  };
+  mapAuth(collection.auth, collect, false);
+  for (const request of collection.requests) mapRequest(syncUrl(request), collect, false);
+  return references;
+}
+
+function workspaceCredentialReferences(collections: Collection[]) {
+  const references = new Set<string>();
+  for (const collection of collections) collectCredentialReferences(collection, references);
+  return references;
+}
+
+function mapCollection(collection: Collection, credential: CredentialValue): Collection {
+  const references = collectCredentialReferences(collection, new Set());
+  return {
+    ...collection,
+    auth: mapAuth(collection.auth, credential),
+    variables: collection.variables.map((row) =>
+      privateVariable(row, references)
+        ? { ...row, value: credential(['variables', row.id], row.value, ''), secret: true }
+        : row,
+    ),
+    requests: collection.requests.map((request) =>
+      mapRequest(request, (field, value, publicValue) =>
+        credential(['request', request.id, ...field], value, publicValue),
+      ),
+    ),
+  };
+}
+
+export function mapWorkspaceCredentials(
+  workspace: Workspace,
+  credential: (
+    scope: 'environment' | 'collection',
+    owner: string,
+    field: string[],
+    value: string,
+    publicValue: string,
+  ) => string,
+): Workspace {
+  const {
+    credentialSlots: _slots,
+    credentialRevisions: _revisions,
+    retiredCredentials: _retired,
+    ...data
+  } = workspace;
+  const references = workspaceCredentialReferences(workspace.collections);
+  return {
+    ...data,
+    environments: workspace.environments.map((environment) => ({
+      ...environment,
+      variables: environment.variables.map((row) =>
+        privateVariable(row, references)
+          ? {
+              ...row,
+              value: credential('environment', environment.id, [row.id], row.value, ''),
+              secret: true,
+            }
+          : row,
+      ),
+    })),
+    collections: workspace.collections.map((collection) =>
+      mapCollection(collection, (field, value, publicValue) =>
+        credential('collection', collection.id, field, value, publicValue),
+      ),
+    ),
+    history: workspace.history.map((row) => ({ ...row, url: redactUrlCredentials(row.url) })),
+  };
+}
+
+export function compileRequestSnippet(
+  request: RequestItem,
+  collection: Collection,
+  environment?: Environment,
+) {
+  const mask = '<segredo>';
+  const references = collectCredentialReferences({ ...collection, requests: [request] }, new Set());
+  const maskCredential: CredentialValue = (_field, value) => (value ? mask : '');
+  const maskVariables = (rows: Pair[]) =>
+    rows.map((row) =>
+      privateVariable(row, references) && row.value ? { ...row, value: mask } : row,
+    );
+  const safeCollection = {
+    ...collection,
+    auth: mapAuth(collection.auth, maskCredential, false),
+    variables: maskVariables(collection.variables),
+  };
+  const safeEnvironment = environment && {
+    ...environment,
+    variables: maskVariables(environment.variables),
+  };
+  const safeRequest = mapRequest(
+    syncUrl(request),
+    (field, value, publicValue) =>
+      field[0] === 'url' ? publicValue : maskCredential(field, value, publicValue),
+    false,
+  );
+  return compileRequest(safeRequest, safeCollection, variablesFor(safeCollection, safeEnvironment));
 }
 
 export function exportableRequest(request: RequestItem): RequestItem {
-  return {
-    ...request,
-    headers: request.headers.map((row) => (row.secret ? { ...row, value: '' } : row)),
-  };
+  return mapRequest(request, publicCredential);
 }
 
 export function exportableCollection(collection: Collection): Collection {
-  return {
-    ...collection,
-    variables: collection.variables.map((row) => (row.secret ? { ...row, value: '' } : row)),
-    requests: collection.requests.map(exportableRequest),
-  };
+  return mapCollection(collection, publicCredential);
 }
 
 export function exportableWorkspace(workspace: Workspace): Workspace {
-  return {
-    ...safeWorkspace(workspace),
-    collections: workspace.collections.map(exportableCollection),
-  };
+  return mapWorkspaceCredentials(
+    workspace,
+    (_scope, _owner, _field, _value, publicValue) => publicValue,
+  );
 }
 
 export function redactSecrets(message: string, environment?: Environment): string {
@@ -585,13 +800,7 @@ export function generatedHeaders(item: RequestItem, collection: Collection) {
 }
 
 export function isSecretHeader(row: Pair, collection: Collection, environment?: Environment) {
-  if (
-    row.secret ||
-    /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key)$/i.test(
-      row.key.trim(),
-    )
-  )
-    return true;
+  if (row.secret || credentialHeader.test(row.key.trim())) return true;
   const variables = resolvedVariables(collection, environment);
   return [...row.value.matchAll(/\{\{([\s\S]*?)\}\}/g)].some(
     ([, name]) => variables.get(name.trim())?.secret,

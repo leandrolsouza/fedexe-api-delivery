@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compileRequest,
+  compileRequestSnippet,
   authHeaderConflict,
   generatedHeaders,
   isSecretHeader,
@@ -15,7 +16,6 @@ import {
   requestVariables,
   requestsForRun,
   resolveHttpRequest,
-  safeWorkspace,
   exportableWorkspace,
   exportableCollection,
   syncUrl,
@@ -32,8 +32,53 @@ describe('workspace e coleções', () => {
     collection.requests[0].headers.push(secret);
     const exported = exportableWorkspace(workspace);
     expect(exported.collections[0].requests[0].headers.at(-1)).toEqual({ ...secret, value: '' });
-    expect(safeWorkspace(workspace).collections[0].requests[0].headers.at(-1)).toEqual(secret);
+    expect(workspace.collections[0].requests[0].headers.at(-1)).toEqual(secret);
     expect(isWorkspace(JSON.parse(JSON.stringify(exported)))).toBe(true);
+  });
+  it('omite credenciais de autorização e de requisição dos arquivos e do cURL', () => {
+    const workspace = createWorkspace();
+    const collection = workspace.collections[0];
+    const [request, second] = collection.requests;
+    const environment = workspace.environments[0];
+    collection.auth = {
+      ...collection.auth,
+      type: 'basic',
+      username: 'chave-como-usuario',
+      password: 'senha-literal',
+    };
+    request.auth = { ...request.auth, type: 'api-key', key: 'X-Custom', value: 'chave-literal' };
+    second.auth = {
+      ...second.auth,
+      type: 'bearer',
+      token: '{{alias_producao}}',
+      password: 'senha-inativa',
+    };
+    request.url = 'https://example.com/items?access_token=token-na-url';
+    request.headers = [pair('Cookie', 'session=token-no-header')];
+    environment.variables.push(pair('alias_producao', 'token-no-ambiente'));
+
+    const backup = exportableWorkspace(workspace);
+    expect(backup.collections[0].requests[1].auth.token).toBe('{{alias_producao}}');
+    expect(isWorkspace(backup)).toBe(true);
+    const artifacts = JSON.stringify([
+      backup,
+      compileRequestSnippet(request, collection, environment),
+    ]);
+    for (const secret of [
+      'senha-literal',
+      'chave-como-usuario',
+      'chave-literal',
+      'senha-inativa',
+      'token-na-url',
+      'token-no-header',
+      'token-no-ambiente',
+    ])
+      expect(artifacts).not.toContain(secret);
+    expect(request.auth.value).toBe('chave-literal');
+    expect(compileRequest(request, collection, {}).headers).toContainEqual([
+      'X-Custom',
+      'chave-literal',
+    ]);
   });
   it('executa coleção, pasta ou seleção na ordem salva, mesmo com seleção invertida', () => {
     const collection = createWorkspace().collections[0];
@@ -69,7 +114,7 @@ describe('workspace e coleções', () => {
   it('exclui segredos de persistência e backup sem alterar a sessão', () => {
     const workspace = createWorkspace();
     workspace.environments[0].variables.push({ ...pair('token', 'segredo-real'), secret: true });
-    const safe = safeWorkspace(workspace);
+    const safe = exportableWorkspace(workspace);
     expect(JSON.stringify(safe)).not.toContain('segredo-real');
     expect(workspace.environments[0].variables[1].value).toBe('segredo-real');
   });

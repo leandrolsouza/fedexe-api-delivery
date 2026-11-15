@@ -27,6 +27,7 @@ export const messages = {
   'Runner de coleções': 'Collection runner',
   Histórico: 'History',
   'Console de requisições': 'Request console',
+  'Abrir requisição': 'Open request',
   Origem: 'Source',
   Editor: 'Editor',
   'Todas as origens': 'All sources',
@@ -48,6 +49,10 @@ export const messages = {
   'Prévia da resposta': 'Response preview',
   'Prévia incompleta ou indisponível.': 'Preview incomplete or unavailable.',
   'Carregando workspace…': 'Loading workspace…',
+  'O workspace foi salvo, mas a limpeza das credenciais anteriores falhou. {0}':
+    'The workspace was saved, but previous credentials could not be cleaned up. {0}',
+  'Uma credencial do workspace não está disponível no cofre do Windows.':
+    'A workspace credential is unavailable in Windows Credential Manager.',
   'Não foi possível salvar o workspace. {0}': 'Could not save the workspace. {0}',
   'Fechar o Fedexe?': 'Close Fedexe?',
   'Há alterações pendentes ou uma execução ativa. Salve seu trabalho antes de fechar.':
@@ -124,6 +129,8 @@ export const messages = {
   'Árvore de coleções': 'Collection tree',
   'Buscar nas coleções': 'Search collections',
   'Recolher painel de coleções': 'Collapse collections panel',
+  'Expandir todas as pastas': 'Expand all folders',
+  'Recolher todas as pastas': 'Collapse all folders',
   'Recolher painel': 'Collapse panel',
   Novo: 'New',
   Importar: 'Import',
@@ -150,6 +157,8 @@ export const messages = {
   'Tentar salvar novamente': 'Retry save',
   'Exportar dados': 'Export data',
   'Iniciar um novo workspace?': 'Start a new workspace?',
+  'O armazenamento local será substituído por este workspace.':
+    'This workspace will replace your locally stored data.',
   'Exporte os dados de recuperação antes de continuar. O armazenamento local será substituído por este workspace.':
     'Export your recovery data before continuing. This workspace will replace your locally stored data.',
   'Criar novo workspace': 'Create new workspace',
@@ -368,6 +377,11 @@ export const messages = {
   Ausente: 'Missing',
   'Resposta HTTP': 'HTTP response',
   Resposta: 'Response',
+  Requisição: 'Request',
+  Dividido: 'Split',
+  'Foco do editor': 'Editor focus',
+  'Redimensionar painéis': 'Resize panes',
+  'Mostrar resposta': 'Show response',
   'Copiar prévia da resposta': 'Copy response preview',
   'Salvar corpo completo': 'Save full response body',
   'Salvar prévia da resposta': 'Save response preview',
@@ -430,6 +444,8 @@ export const messages = {
   'Verificar atualizações': 'Check for updates',
   'Ver atualização': 'View update',
   'Versão {0} disponível': 'Version {0} available',
+  'O que mudou': 'What’s new',
+  'As notas desta versão não estão disponíveis.': 'Release notes are unavailable for this version.',
   'O Fedexe vai verificar a assinatura do instalador, fechar e reabrir após a atualização.':
     'Fedexe will verify the installer signature, close, and reopen after the update.',
   Adiar: 'Later',
@@ -519,7 +535,6 @@ export const messages = {
   'Editar seleção': 'Edit selection',
   'Filtrar resultados': 'Filter results',
   'Resultados da execução': 'Run results',
-  Requisição: 'Request',
   'Visualização da execução': 'Run view',
   Resultados: 'Results',
   Relatório: 'Report',

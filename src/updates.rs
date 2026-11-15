@@ -12,7 +12,10 @@ pub(crate) struct PendingUpdate(Mutex<Option<Update>>);
 pub(crate) enum CheckResult {
     Unconfigured,
     Current,
-    Available { version: String },
+    Available {
+        version: String,
+        notes: Option<String>,
+    },
 }
 
 fn stable_channel(builder: UpdaterBuilder) -> UpdaterBuilder {
@@ -55,8 +58,9 @@ pub(crate) async fn check_update(
     if let Some(mut update) = update {
         update.timeout = Some(Duration::from_secs(180));
         let version = update.version.clone();
+        let notes = update.body.clone();
         *slot = Some(update);
-        Ok(CheckResult::Available { version })
+        Ok(CheckResult::Available { version, notes })
     } else {
         Ok(CheckResult::Current)
     }
@@ -101,13 +105,20 @@ mod tests {
             assert!(updater.restore_update(manifest(version)).unwrap().is_none());
         }
         let payload = b"Fedexe updater signature test fixture";
-        let update = updater.restore_update(manifest("1.1.1")).unwrap().unwrap();
+        let mut release = manifest("1.1.1");
+        release["notes"] = json!("• Melhorias no console\n• Correções no runner");
+        let update = updater.restore_update(release).unwrap().unwrap();
+        assert_eq!(
+            update.body.as_deref(),
+            Some("• Melhorias no console\n• Correções no runner")
+        );
         update.verify(payload).unwrap();
         assert!(matches!(
             update.install(b"modified payload"),
             Err(Error::Minisign(_))
         ));
         let mismatched = updater.restore_update(manifest("1.1.2")).unwrap().unwrap();
+        assert!(mismatched.body.is_none());
         assert!(matches!(
             mismatched.verify(payload),
             Err(Error::SignedVersionMismatch { .. })

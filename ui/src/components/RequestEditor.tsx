@@ -1,5 +1,5 @@
 import { formatNumber, t } from '../lib/i18n';
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -8,6 +8,7 @@ import {
   Check,
   CheckCheck,
   ChevronDown,
+  ChevronUp,
   CircleHelp,
   Clock3,
   Code2,
@@ -33,7 +34,7 @@ import {
 import { toast } from 'sonner';
 import {
   authHeaderConflict,
-  compileRequest,
+  compileRequestSnippet,
   DEFAULT_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
   effectiveAuth,
@@ -44,7 +45,6 @@ import {
   requestVariables,
   syncUrl,
   urlWithQuery,
-  variablesFor,
   type Collection,
   type Environment,
   type HttpResponse,
@@ -62,6 +62,11 @@ import { CodeViewer } from './CodeViewer';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
 import { FileBodyEditor } from './FileBodyEditor';
 import { AuthFields, AuthType, authLabel } from './AuthFields';
+
+export type RequestLayout = 'request' | 'split' | 'response';
+
+const minRequestShare = 25;
+const maxRequestShare = 75;
 
 export function MethodBadge({ method, small = false }: { method: string; small?: boolean }) {
   return (
@@ -85,6 +90,10 @@ export function RequestEditor({
   error,
   onSnippet,
   wrap,
+  layout,
+  onLayoutChange,
+  requestShare,
+  onRequestShareChange,
 }: {
   request: RequestItem;
   collection: Collection;
@@ -99,12 +108,23 @@ export function RequestEditor({
   error?: string;
   onSnippet: () => void;
   wrap: boolean;
+  layout: RequestLayout;
+  onLayoutChange: (layout: RequestLayout) => void;
+  requestShare: number;
+  onRequestShareChange: (share: number) => void;
 }) {
   const [tab, setTab] = useState('params');
   const [urlInput, setUrlInput] = useState<string>();
   const [responseTab, setResponseTab] = useState('body');
   const [format, setFormat] = useState('pretty');
   const [savingBody, setSavingBody] = useState(false);
+  const layouts = [
+    { id: 'request', label: t('Requisição') },
+    { id: 'split', label: t('Dividido') },
+    { id: 'response', label: t('Resposta') },
+  ] as const;
+  const resizePanes = (share: number) =>
+    onRequestShareChange(Math.max(minRequestShare, Math.min(maxRequestShare, Math.round(share))));
   const authConflict = authHeaderConflict(request, collection);
   const inheritedAuth = effectiveAuth(request, collection);
   const automaticHeaders = generatedHeaders(request, collection);
@@ -250,7 +270,7 @@ export function RequestEditor({
           />
         </div>
       </div>
-      <div className="request-surface">
+      <div className="request-command">
         <form
           className="url-bar"
           onSubmit={(e) => {
@@ -309,592 +329,685 @@ export function RequestEditor({
             </Button>
           )}
         </form>
-        <div className="request-tabs">
-          <div
-            className="request-tabs-list"
-            role="tablist"
-            aria-label={t('Configuração da requisição')}
-            onKeyDown={navigateTabs}
-          >
-            {tabs.map((t) => (
-              <button
-                id={`tab-${t.id}`}
-                className={cn('tab-button', tab === t.id && 'active')}
-                role="tab"
-                aria-selected={tab === t.id}
-                tabIndex={tab === t.id ? 0 : -1}
-                aria-controls={tab === t.id ? `panel-${t.id}` : undefined}
-                key={t.id}
-                onClick={() => setTab(t.id)}
-              >
-                {t.icon}
-                {t.label}
-                {!!t.count && <span className="tab-count">{formatNumber(t.count)}</span>}
-                {t.dot && <span className="tiny-dot" />}
-              </button>
-            ))}
-          </div>
-          <button className="code-shortcut" title={t('Gerar código cURL')} onClick={onSnippet}>
-            <Code2 size={17} />
-          </button>
+        <div className="request-layout-switch" role="group" aria-label={t('Foco do editor')}>
+          {layouts.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={layout === id}
+              onClick={() => onLayoutChange(id)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-        <div
-          className="request-config"
-          id={`panel-${tab}`}
-          role="tabpanel"
-          aria-labelledby={`tab-${tab}`}
-        >
-          {tab === 'params' && (
-            <div className="params-layout">
-              <div className="params-main">
-                <div className="section-heading">
-                  <h3>{t('Parâmetros de query')}</h3>
-                  <span>{t('As linhas ativas aparecem na URL na ordem da tabela.')}</span>
+      </div>
+      <div
+        className={`request-panes layout-${layout}`}
+        style={
+          {
+            '--request-share': `${requestShare}fr`,
+            '--response-share': `${100 - requestShare}fr`,
+          } as CSSProperties
+        }
+      >
+        <div className="request-surface" id="request-configuration" hidden={layout === 'response'}>
+          <div className="request-tabs">
+            <div
+              className="request-tabs-list"
+              role="tablist"
+              aria-label={t('Configuração da requisição')}
+              onKeyDown={navigateTabs}
+            >
+              {tabs.map((t) => (
+                <button
+                  id={`tab-${t.id}`}
+                  className={cn('tab-button', tab === t.id && 'active')}
+                  role="tab"
+                  aria-selected={tab === t.id}
+                  tabIndex={tab === t.id ? 0 : -1}
+                  aria-controls={tab === t.id ? `panel-${t.id}` : undefined}
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                >
+                  {t.icon}
+                  {t.label}
+                  {!!t.count && <span className="tab-count">{formatNumber(t.count)}</span>}
+                  {t.dot && <span className="tiny-dot" />}
+                </button>
+              ))}
+            </div>
+            <button className="code-shortcut" title={t('Gerar código cURL')} onClick={onSnippet}>
+              <Code2 size={17} />
+            </button>
+          </div>
+          <div
+            className="request-config"
+            id={`panel-${tab}`}
+            role="tabpanel"
+            aria-labelledby={`tab-${tab}`}
+          >
+            {tab === 'params' && (
+              <div className="params-layout">
+                <div className="params-main">
+                  <div className="section-heading">
+                    <h3>{t('Parâmetros de query')}</h3>
+                    <span>{t('As linhas ativas aparecem na URL na ordem da tabela.')}</span>
+                  </div>
+                  <PairEditor rows={request.params} onChange={(params) => update({ params })} />
+                  <div className="section-heading path-parameters-heading">
+                    <h3>{t('Parâmetros de caminho')}</h3>
+                    <span>
+                      {t('Use') + ' '}
+                      <code>{'{id}'}</code>
+                      {' ' + t('no caminho e informe o valor na linha') + ' '}
+                      <code>id</code>.
+                    </span>
+                  </div>
+                  <PairEditor
+                    kind={t('parâmetro de caminho')}
+                    rows={request.pathParams ?? []}
+                    onChange={(pathParams) => update({ pathParams })}
+                  />
                 </div>
-                <PairEditor rows={request.params} onChange={(params) => update({ params })} />
-                <div className="section-heading path-parameters-heading">
-                  <h3>{t('Parâmetros de caminho')}</h3>
-                  <span>
+                <aside className="tip-card">
+                  <span className="tip-icon">
+                    <Sparkles size={16} />
+                  </span>
+                  <h4>
+                    {t('Menos repetição.')}
+                    <br />
+                    {t('Mais produtividade.')}
+                  </h4>
+                  <p>
                     {t('Use') + ' '}
-                    <code>{'{id}'}</code>
-                    {' ' + t('no caminho e informe o valor na linha') + ' '}
-                    <code>id</code>.
+                    <code>{t('{{variavel}}')}</code>
+                    {' ' + t('para reutilizar valores entre suas requisições.')}
+                  </p>
+                  <div className="tip-environment">
+                    <span className={`status-dot dot-${environment?.color || 'green'}`} />
+                    <span>{environment?.name || t('Sem ambiente')}</span>
+                    <span className="tiny-badge">{t('ativo')}</span>
+                  </div>
+                </aside>
+              </div>
+            )}
+            {tab === 'headers' && (
+              <>
+                <div className="section-heading">
+                  <h3>{t('Headers da requisição')}</h3>
+                  <span>
+                    {native
+                      ? t('Os nomes podem se repetir em linhas ativas.')
+                      : t('O navegador pode combinar linhas com o mesmo nome.')}
                   </span>
                 </div>
                 <PairEditor
-                  kind={t('parâmetro de caminho')}
-                  rows={request.pathParams ?? []}
-                  onChange={(pathParams) => update({ pathParams })}
+                  kind="header"
+                  rows={request.headers}
+                  onChange={(headers) => update({ headers })}
+                  maskValue={(row) => isSecretHeader(row, collection, environment)}
+                  markSecrets
                 />
-              </div>
-              <aside className="tip-card">
-                <span className="tip-icon">
-                  <Sparkles size={16} />
-                </span>
-                <h4>
-                  {t('Menos repetição.')}
-                  <br />
-                  {t('Mais produtividade.')}
-                </h4>
-                <p>
-                  {t('Use') + ' '}
-                  <code>{t('{{variavel}}')}</code>
-                  {' ' + t('para reutilizar valores entre suas requisições.')}
-                </p>
-                <div className="tip-environment">
-                  <span className={`status-dot dot-${environment?.color || 'green'}`} />
-                  <span>{environment?.name || t('Sem ambiente')}</span>
-                  <span className="tiny-badge">{t('ativo')}</span>
-                </div>
-              </aside>
-            </div>
-          )}
-          {tab === 'headers' && (
-            <>
-              <div className="section-heading">
-                <h3>{t('Headers da requisição')}</h3>
-                <span>
-                  {native
-                    ? t('Os nomes podem se repetir em linhas ativas.')
-                    : t('O navegador pode combinar linhas com o mesmo nome.')}
-                </span>
-              </div>
-              <PairEditor
-                kind="header"
-                rows={request.headers}
-                onChange={(headers) => update({ headers })}
-                maskValue={(row) => isSecretHeader(row, collection, environment)}
-                markSecrets
-              />
-              {automaticHeaders.length > 0 && (
-                <div className="path-parameters-heading">
-                  <div className="section-heading">
-                    <h3>{t('Gerados pelo app')}</h3>
-                  </div>
-                  <dl className="generated-headers">
-                    {automaticHeaders.map(({ name, value, secret, source }) => (
-                      <div key={name}>
-                        <dt>
-                          <code>{name}</code> <span className="muted">({source})</span>
-                        </dt>
-                        <dd>
-                          <code aria-label={secret ? t('Valor secreto mascarado') : undefined}>
-                            {secret ? '••••••••' : value}
-                          </code>
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              )}
-            </>
-          )}
-          {tab === 'auth' && (
-            <div className="auth-layout">
-              <AuthType auth={request.auth} onChange={(auth) => update({ auth })} inheritance />
-              <div className="auth-fields">
-                {request.auth.type === 'inherit' ? (
-                  <div className="inline-info">
-                    <ShieldCheck size={24} />
-                    <div>
-                      <strong>
-                        {authLabel(inheritedAuth.type === 'inherit' ? 'none' : inheritedAuth.type)}
-                      </strong>
-                      <p>
-                        {t('Configuração da coleção') + ' '}
-                        {collection.name}.
-                      </p>
+                {automaticHeaders.length > 0 && (
+                  <div className="path-parameters-heading">
+                    <div className="section-heading">
+                      <h3>{t('Gerados pelo app')}</h3>
                     </div>
+                    <dl className="generated-headers">
+                      {automaticHeaders.map(({ name, value, secret, source }) => (
+                        <div key={name}>
+                          <dt>
+                            <code>{name}</code> <span className="muted">({source})</span>
+                          </dt>
+                          <dd>
+                            <code aria-label={secret ? t('Valor secreto mascarado') : undefined}>
+                              {secret ? '••••••••' : value}
+                            </code>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
-                ) : (
-                  <AuthFields auth={request.auth} onChange={(auth) => update({ auth })} />
                 )}
-              </div>
-            </div>
-          )}
-          {tab === 'body' && (
-            <>
-              <div className="body-options">
-                {(['none', 'json', 'text', 'urlencoded', 'multipart', 'binary'] as const).map(
-                  (type) => (
-                    <label key={type}>
-                      <input
-                        type="radio"
-                        name="body-type"
-                        checked={request.bodyType === type}
-                        onChange={() => update({ bodyType: type })}
-                      />
-                      {
-                        {
-                          none: t('Nenhum'),
-                          json: 'JSON',
-                          text: t('Texto'),
-                          urlencoded: t('Form URL-encoded'),
-                          multipart: 'Multipart',
-                          binary: t('Arquivo binário'),
-                        }[type]
-                      }
-                    </label>
-                  ),
-                )}
-              </div>
-              {request.bodyType === 'none' ? (
-                <div className="body-empty">
-                  <FileJson2 size={28} />
-                  <p>{t('Esta requisição não tem corpo.')}</p>
-                </div>
-              ) : request.bodyType === 'urlencoded' ? (
-                <PairEditor
-                  kind={t('campo')}
-                  rows={request.form}
-                  onChange={(form) => update({ form })}
-                />
-              ) : request.bodyType === 'multipart' || request.bodyType === 'binary' ? (
-                <FileBodyEditor request={request} onChange={update} />
-              ) : (
-                <div className="body-code">
-                  <div className="editor-toolbar">
-                    <span>
-                      <span className="status-dot dot-purple" />
-                      {request.bodyType === 'json' ? 'JSON' : t('Texto bruto')}
-                    </span>
-                    {request.bodyType === 'json' && (
-                      <button
-                        onClick={() => {
-                          try {
-                            update({ body: JSON.stringify(JSON.parse(request.body), null, 2) });
-                          } catch {
-                            toast.error(t('JSON inválido. Verifique a sintaxe do corpo.'));
-                          }
-                        }}
-                      >
-                        <Braces size={13} />
-                        {' ' + t('Formatar')}
-                      </button>
-                    )}
-                  </div>
-                  <textarea
-                    aria-label={t('Corpo da requisição')}
-                    spellCheck={false}
-                    className="body-textarea"
-                    value={request.body}
-                    onChange={(e) => update({ body: e.target.value })}
-                    placeholder={
-                      request.bodyType === 'json'
-                        ? t('{\n  "mensagem": "Olá, mundo!"\n}')
-                        : t('Digite o corpo da requisição…')
-                    }
-                  />
-                </div>
-              )}
-            </>
-          )}
-          {tab === 'tests' && <TestEditor request={request} onChange={update} />}
-          {tab === 'settings' && (
-            <div className="network-settings">
-              <div>
-                <span className="settings-icon">
-                  <Clock3 size={18} />
-                </span>
-                <div>
-                  <label className="field-label">
-                    {t('Timeout da requisição (ms)')}
-                    <input
-                      className="input"
-                      type="number"
-                      min={1}
-                      max={MAX_TIMEOUT_MS}
-                      step={1}
-                      value={request.timeoutMs ?? DEFAULT_TIMEOUT_MS}
-                      onChange={(event) => {
-                        const value = event.currentTarget.valueAsNumber;
-                        update({
-                          timeoutMs: Number.isInteger(value)
-                            ? Math.min(MAX_TIMEOUT_MS, Math.max(1, value))
-                            : undefined,
-                        });
-                      }}
-                    />
-                  </label>
-                  <p>{t('Limite para receber a resposta completa.')}</p>
-                </div>
-              </div>
-              <div>
-                <span className="settings-icon">
-                  <ShieldCheck size={18} />
-                </span>
-                <div>
-                  <h4>{t('Validação de certificados TLS')}</h4>
-                  <p>{t('Ativa por padrão para manter suas conexões seguras.')}</p>
-                </div>
-                <span className="green-text">
-                  {t('Sempre ativa') + ' '}
-                  <Check size={13} />
-                </span>
-              </div>
-              <div>
-                <span className="settings-icon">
-                  <ArrowUpRight size={18} />
-                </span>
-                <div>
-                  <label className="field-label">
-                    {t('Redirecionamentos')}
-                    <select
-                      className="input"
-                      value={request.redirectPolicy ?? 'none'}
-                      onChange={(event) =>
-                        update({
-                          redirectPolicy:
-                            event.target.value === 'same_origin' ? 'same_origin' : 'none',
-                        })
-                      }
-                    >
-                      <option value="none">{t('Não seguir')}</option>
-                      <option value="same_origin" disabled={!native}>
-                        {t('Seguir apenas na mesma origem')}
-                      </option>
-                    </select>
-                  </label>
-                  <p>
-                    {native
-                      ? t('Uma mudança de protocolo, host ou porta encerra o redirecionamento.')
-                      : t('Seguir redirecionamentos da mesma origem requer o app desktop.')}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        {authConflict && (
-          <div className="request-variable-warning" role="status">
-            {authConflict}
-          </div>
-        )}
-        <div className="request-context">
-          <span>
-            {t('Ambiente ativo:') + ' '}
-            {environment?.name ?? t('Nenhum')}
-          </span>
-          <button onClick={onSnippet}>
-            {t('Gerar código') + ' '}
-            <ArrowUpRight size={12} />
-          </button>
-        </div>
-        {(missing.length > 0 || references?.unclosed) && (
-          <div className="request-variable-warning" role="status">
-            {missing.length > 0 && (
-              <div>
-                {t('Variáveis ausentes:') + ' '}
-                {missing.map(({ name }) => name || '{{}}').join(', ')}
-              </div>
-            )}
-            {references?.unclosed && (
-              <div>
-                {t('Feche cada referência com') + ' '}
-                {'}}'}.
-              </div>
-            )}
-          </div>
-        )}
-        {!!references?.variables.length && (
-          <details className="request-variables">
-            <summary>
-              {t('Origem das variáveis (')}
-              {formatNumber(references.variables.length)})
-            </summary>
-            <dl>
-              {references.variables.map(({ name, source }) => (
-                <div key={name}>
-                  <dt>
-                    <code>{`{{${name}}}`}</code>
-                  </dt>
-                  <dd>
-                    {source === 'environment'
-                      ? environment?.name
-                      : source === 'collection'
-                        ? collection.name + t(' (coleção)')
-                        : t('Ausente')}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </details>
-        )}
-      </div>
-      <section className="response-panel" aria-label={t('Resposta HTTP')}>
-        <div className="response-heading">
-          <div className="response-heading-left">
-            <h3>{t('Resposta')}</h3>
-            {response && !busy && (
-              <>
-                <span className={`response-status ${response.status >= 400 ? 'status-error' : ''}`}>
-                  <span className="status-dot" />
-                  {response.status}{' '}
-                  {(
-                    {
-                      200: 'OK',
-                      201: t('Criado'),
-                      204: t('Sem conteúdo'),
-                      400: t('Requisição inválida'),
-                      401: t('Não autorizado'),
-                      404: t('Não encontrado'),
-                      500: t('Erro do servidor'),
-                    } as Record<number, string>
-                  )[response.status] || ''}
-                </span>
-                <span className="response-metric">
-                  <Clock3 size={12} />
-                  {formatNumber(response.duration_ms)} ms
-                </span>
-                <span className="response-metric">
-                  <Database size={12} />
-                  {formatBytes(
-                    response.size_bytes ?? new TextEncoder().encode(response.preview).length,
-                  )}
-                  {response.truncated && response.size_bytes === undefined && t(' (prévia)')}
-                </span>
               </>
             )}
-          </div>
-          <div className="response-actions">
-            {response && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => copy(response.preview)}
-                  aria-label={t('Copiar prévia da resposta')}
-                >
-                  <Copy size={15} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={saveBody}
-                  disabled={savingBody}
-                  aria-label={
-                    response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
-                  }
-                  title={
-                    response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
-                  }
-                >
-                  <ArrowDownToLine size={15} />
-                </Button>
-              </>
-            )}
-            <span className="response-indicator">
-              <span className={cn('status-dot', busy && 'pulse')} />
-              {busy ? t('Enviando') : response ? t('Recebida') : t('Aguardando')}
-            </span>
-          </div>
-        </div>
-        {busy ? (
-          <div className="response-empty">
-            <div className="response-art loading-art">
-              <LoaderCircle className="spin" size={32} />
-            </div>
-            <h3>{t('A caminho da sua API…')}</h3>
-            <p>{t('Preparando espaço para a próxima resposta.')}</p>
-            <Button variant="outline" size="sm" onClick={onCancel}>
-              {t('Cancelar requisição')}
-            </Button>
-          </div>
-        ) : error ? (
-          <div className="response-error">
-            <span className="error-icon">
-              <TriangleAlert size={24} />
-            </span>
-            <div>
-              <h3>{t('Não foi dessa vez')}</h3>
-              <p>{error}</p>
-              <Button size="sm" variant="outline" onClick={onSend}>
-                {t('Tentar novamente') + ' '}
-                <ArrowRight size={13} />
-              </Button>
-            </div>
-          </div>
-        ) : response ? (
-          <>
-            <div className="response-toolbar">
-              <div
-                className="response-tabs"
-                role="tablist"
-                aria-label={t('Visualização da resposta')}
-                onKeyDown={navigateTabs}
-              >
-                {[
-                  { id: 'body', label: t('Corpo') },
-                  { id: 'headers', label: 'Headers', count: response.headers.length },
-                  { id: 'tests', label: t('Resultados dos testes'), count: testResults.length },
-                ].map((t) => (
-                  <button
-                    id={`response-tab-${t.id}`}
-                    role="tab"
-                    aria-controls={responseTab === t.id ? `response-panel-${t.id}` : undefined}
-                    aria-selected={responseTab === t.id}
-                    tabIndex={responseTab === t.id ? 0 : -1}
-                    className={cn('tab-button', responseTab === t.id && 'active')}
-                    onClick={() => setResponseTab(t.id)}
-                    key={t.id}
-                  >
-                    {t.label}
-                    {t.count !== undefined && (
-                      <span className="tab-count">{formatNumber(t.count)}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-              {responseTab === 'body' && (
-                <div className="format-select">
-                  <select
-                    aria-label={t('Formato da resposta')}
-                    value={format}
-                    onChange={(e) => setFormat(e.target.value)}
-                  >
-                    <option value="pretty">{t('Formatado')}</option>
-                    <option value="raw">{t('Original')}</option>
-                  </select>
-                  <span>{json ? 'JSON' : t('Texto')}</span>
-                </div>
-              )}
-            </div>
-            {response.truncated && (
-              <div className="truncated-banner">
-                <Info size={14} />
-                {' ' + t('Prévia limitada a 256 KiB.')}{' '}
-                {response.body_id
-                  ? t('O download inclui o corpo completo.')
-                  : t('O download inclui a prévia.')}
-              </div>
-            )}
-            <div
-              id={`response-panel-${responseTab}`}
-              role="tabpanel"
-              aria-labelledby={`response-tab-${responseTab}`}
-              tabIndex={0}
-              className="response-tab-panel"
-            >
-              {responseTab === 'body' ? (
-                responseText ? (
-                  <CodeViewer
-                    key={`${request.id}-${formatNumber(response.duration_ms)}`}
-                    value={responseText}
-                    json={json}
-                    wrap={wrap}
-                  />
-                ) : (
-                  <div className="small-empty">{t('A resposta não contém corpo.')}</div>
-                )
-              ) : responseTab === 'headers' ? (
-                <div className="response-header-table">
-                  {response.headers.map(([key, value], i) => (
-                    <div key={i}>
-                      <code>{key}</code>
-                      <code>{value}</code>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="test-result-list">
-                  {testResults.length ? (
-                    testResults.map((test, i) => (
-                      <div key={i}>
-                        <span className={test.passed ? 'test-pass' : 'test-fail'}>
-                          {test.passed ? <CheckCheck size={16} /> : <X size={16} />}
-                          {test.passed ? 'PASSOU' : 'FALHOU'}
-                        </span>
-                        <code>{test.label}</code>
+            {tab === 'auth' && (
+              <div className="auth-layout">
+                <AuthType auth={request.auth} onChange={(auth) => update({ auth })} inheritance />
+                <div className="auth-fields">
+                  {request.auth.type === 'inherit' ? (
+                    <div className="inline-info">
+                      <ShieldCheck size={24} />
+                      <div>
+                        <strong>
+                          {authLabel(
+                            inheritedAuth.type === 'inherit' ? 'none' : inheritedAuth.type,
+                          )}
+                        </strong>
+                        <p>
+                          {t('Configuração da coleção') + ' '}
+                          {collection.name}.
+                        </p>
                       </div>
-                    ))
+                    </div>
                   ) : (
-                    <div className="small-empty">
-                      {t('Adicione testes na configuração da requisição.')}
-                    </div>
+                    <AuthFields auth={request.auth} onChange={(auth) => update({ auth })} />
                   )}
+                </div>
+              </div>
+            )}
+            {tab === 'body' && (
+              <>
+                <div className="body-options">
+                  {(['none', 'json', 'text', 'urlencoded', 'multipart', 'binary'] as const).map(
+                    (type) => (
+                      <label key={type}>
+                        <input
+                          type="radio"
+                          name="body-type"
+                          checked={request.bodyType === type}
+                          onChange={() => update({ bodyType: type })}
+                        />
+                        {
+                          {
+                            none: t('Nenhum'),
+                            json: 'JSON',
+                            text: t('Texto'),
+                            urlencoded: t('Form URL-encoded'),
+                            multipart: 'Multipart',
+                            binary: t('Arquivo binário'),
+                          }[type]
+                        }
+                      </label>
+                    ),
+                  )}
+                </div>
+                {request.bodyType === 'none' ? (
+                  <div className="body-empty">
+                    <FileJson2 size={28} />
+                    <p>{t('Esta requisição não tem corpo.')}</p>
+                  </div>
+                ) : request.bodyType === 'urlencoded' ? (
+                  <PairEditor
+                    kind={t('campo')}
+                    rows={request.form}
+                    onChange={(form) => update({ form })}
+                  />
+                ) : request.bodyType === 'multipart' || request.bodyType === 'binary' ? (
+                  <FileBodyEditor request={request} onChange={update} />
+                ) : (
+                  <div className="body-code">
+                    <div className="editor-toolbar">
+                      <span>
+                        <span className="status-dot dot-purple" />
+                        {request.bodyType === 'json' ? 'JSON' : t('Texto bruto')}
+                      </span>
+                      {request.bodyType === 'json' && (
+                        <button
+                          onClick={() => {
+                            try {
+                              update({ body: JSON.stringify(JSON.parse(request.body), null, 2) });
+                            } catch {
+                              toast.error(t('JSON inválido. Verifique a sintaxe do corpo.'));
+                            }
+                          }}
+                        >
+                          <Braces size={13} />
+                          {' ' + t('Formatar')}
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      aria-label={t('Corpo da requisição')}
+                      spellCheck={false}
+                      className="body-textarea"
+                      value={request.body}
+                      onChange={(e) => update({ body: e.target.value })}
+                      placeholder={
+                        request.bodyType === 'json'
+                          ? t('{\n  "mensagem": "Olá, mundo!"\n}')
+                          : t('Digite o corpo da requisição…')
+                      }
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {tab === 'tests' && <TestEditor request={request} onChange={update} />}
+            {tab === 'settings' && (
+              <div className="network-settings">
+                <div>
+                  <span className="settings-icon">
+                    <Clock3 size={18} />
+                  </span>
+                  <div>
+                    <label className="field-label">
+                      {t('Timeout da requisição (ms)')}
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        max={MAX_TIMEOUT_MS}
+                        step={1}
+                        value={request.timeoutMs ?? DEFAULT_TIMEOUT_MS}
+                        onChange={(event) => {
+                          const value = event.currentTarget.valueAsNumber;
+                          update({
+                            timeoutMs: Number.isInteger(value)
+                              ? Math.min(MAX_TIMEOUT_MS, Math.max(1, value))
+                              : undefined,
+                          });
+                        }}
+                      />
+                    </label>
+                    <p>{t('Limite para receber a resposta completa.')}</p>
+                  </div>
+                </div>
+                <div>
+                  <span className="settings-icon">
+                    <ShieldCheck size={18} />
+                  </span>
+                  <div>
+                    <h4>{t('Validação de certificados TLS')}</h4>
+                    <p>{t('Ativa por padrão para manter suas conexões seguras.')}</p>
+                  </div>
+                  <span className="green-text">
+                    {t('Sempre ativa') + ' '}
+                    <Check size={13} />
+                  </span>
+                </div>
+                <div>
+                  <span className="settings-icon">
+                    <ArrowUpRight size={18} />
+                  </span>
+                  <div>
+                    <label className="field-label">
+                      {t('Redirecionamentos')}
+                      <select
+                        className="input"
+                        value={request.redirectPolicy ?? 'none'}
+                        onChange={(event) =>
+                          update({
+                            redirectPolicy:
+                              event.target.value === 'same_origin' ? 'same_origin' : 'none',
+                          })
+                        }
+                      >
+                        <option value="none">{t('Não seguir')}</option>
+                        <option value="same_origin" disabled={!native}>
+                          {t('Seguir apenas na mesma origem')}
+                        </option>
+                      </select>
+                    </label>
+                    <p>
+                      {native
+                        ? t('Uma mudança de protocolo, host ou porta encerra o redirecionamento.')
+                        : t('Seguir redirecionamentos da mesma origem requer o app desktop.')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {authConflict && (
+            <div className="request-variable-warning" role="status">
+              {authConflict}
+            </div>
+          )}
+          <div className="request-context">
+            <span>
+              {t('Ambiente ativo:') + ' '}
+              {environment?.name ?? t('Nenhum')}
+            </span>
+            <button onClick={onSnippet}>
+              {t('Gerar código') + ' '}
+              <ArrowUpRight size={12} />
+            </button>
+          </div>
+          {(missing.length > 0 || references?.unclosed) && (
+            <div className="request-variable-warning" role="status">
+              {missing.length > 0 && (
+                <div>
+                  {t('Variáveis ausentes:') + ' '}
+                  {missing.map(({ name }) => name || '{{}}').join(', ')}
+                </div>
+              )}
+              {references?.unclosed && (
+                <div>
+                  {t('Feche cada referência com') + ' '}
+                  {'}}'}.
                 </div>
               )}
             </div>
-          </>
-        ) : (
-          <div className="response-empty">
-            <div className="response-art">
-              <div className="orbit orbit-one" />
-              <div className="orbit orbit-two" />
-              <div className="art-spark art-spark-one">✦</div>
-              <div className="art-spark art-spark-two">✦</div>
-              <div className="art-code">
-                <Braces size={31} strokeWidth={1.5} />
-                <div className="art-code-lines">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              </div>
-              <span className="art-status">
-                <Check size={12} />
-                200 OK
-              </span>
+          )}
+          {!!references?.variables.length && (
+            <details className="request-variables">
+              <summary>
+                {t('Origem das variáveis (')}
+                {formatNumber(references.variables.length)})
+              </summary>
+              <dl>
+                {references.variables.map(({ name, source }) => (
+                  <div key={name}>
+                    <dt>
+                      <code>{`{{${name}}}`}</code>
+                    </dt>
+                    <dd>
+                      {source === 'environment'
+                        ? environment?.name
+                        : source === 'collection'
+                          ? collection.name + t(' (coleção)')
+                          : t('Ausente')}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+          )}
+          <div className="editor-bottom-note">
+            <LockKeyhole size={12} />
+            <span>{t('Suas APIs, seus dados. Tudo fica neste dispositivo.')}</span>
+            <button onClick={onSnippet}>
+              <Terminal size={12} /> cURL
+            </button>
+          </div>
+        </div>
+        {layout === 'split' && (
+          <div
+            className="request-pane-divider"
+            role="separator"
+            aria-label={t('Redimensionar painéis')}
+            aria-orientation="horizontal"
+            aria-controls="request-configuration"
+            aria-valuemin={minRequestShare}
+            aria-valuemax={maxRequestShare}
+            aria-valuenow={requestShare}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const divider = event.currentTarget;
+              if (!divider.hasPointerCapture(event.pointerId)) return;
+              const panes = divider.parentElement!.getBoundingClientRect();
+              const height = divider.offsetHeight;
+              resizePanes(
+                ((event.clientY - panes.top - height / 2) / (panes.height - height)) * 100,
+              );
+            }}
+            onKeyDown={(event) => {
+              switch (event.key) {
+                case 'ArrowUp':
+                  resizePanes(requestShare - 5);
+                  break;
+                case 'ArrowDown':
+                  resizePanes(requestShare + 5);
+                  break;
+                case 'Home':
+                  resizePanes(minRequestShare);
+                  break;
+                case 'End':
+                  resizePanes(maxRequestShare);
+                  break;
+                default:
+                  return;
+              }
+              event.preventDefault();
+            }}
+          />
+        )}
+        <section className="response-panel" aria-label={t('Resposta HTTP')}>
+          <div className="response-heading">
+            <div className="response-heading-left">
+              <h3>{t('Resposta')}</h3>
+              {response && !busy && !error && (
+                <>
+                  <span
+                    className={`response-status ${response.status >= 400 ? 'status-error' : ''}`}
+                  >
+                    <span className="status-dot" />
+                    {response.status}{' '}
+                    {(
+                      {
+                        200: 'OK',
+                        201: t('Criado'),
+                        204: t('Sem conteúdo'),
+                        400: t('Requisição inválida'),
+                        401: t('Não autorizado'),
+                        404: t('Não encontrado'),
+                        500: t('Erro do servidor'),
+                      } as Record<number, string>
+                    )[response.status] || ''}
+                  </span>
+                  <span className="response-metric">
+                    <Clock3 size={12} />
+                    {formatNumber(response.duration_ms)} ms
+                  </span>
+                  <span className="response-metric">
+                    <Database size={12} />
+                    {formatBytes(
+                      response.size_bytes ?? new TextEncoder().encode(response.preview).length,
+                    )}
+                    {response.truncated && response.size_bytes === undefined && t(' (prévia)')}
+                  </span>
+                </>
+              )}
             </div>
-            <h3>{t('Uma boa API começa com um olá.')}</h3>
-            <p>{t('Envie sua requisição e veja a resposta ganhar vida aqui.')}</p>
-            <div className="empty-shortcut">
-              <kbd>Ctrl</kbd>
-              <span>+</span>
-              <kbd>
-                Enter <CornerDownLeft size={10} />
-              </kbd>
-              <span>{t('para enviar')}</span>
+            <div className="response-actions">
+              {layout !== 'request' && response && !busy && !error && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => copy(response.preview)}
+                    aria-label={t('Copiar prévia da resposta')}
+                  >
+                    <Copy size={15} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={saveBody}
+                    disabled={savingBody}
+                    aria-label={
+                      response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
+                    }
+                    title={
+                      response.body_id ? t('Salvar corpo completo') : t('Salvar prévia da resposta')
+                    }
+                  >
+                    <ArrowDownToLine size={15} />
+                  </Button>
+                </>
+              )}
+              <span className="response-indicator" role="status">
+                <span className={cn('status-dot', busy && 'pulse')} />
+                {busy
+                  ? t('Enviando')
+                  : error
+                    ? t('Falhou')
+                    : response
+                      ? t('Recebida')
+                      : t('Aguardando')}
+              </span>
+              {layout === 'request' && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('Mostrar resposta')}
+                  title={t('Mostrar resposta')}
+                  aria-controls="response-content"
+                  aria-expanded={false}
+                  onClick={() => onLayoutChange('split')}
+                >
+                  <ChevronUp size={16} />
+                </Button>
+              )}
             </div>
           </div>
-        )}
-      </section>
-      <div className="editor-bottom-note">
-        <LockKeyhole size={12} />
-        <span>{t('Suas APIs, seus dados. Tudo fica neste dispositivo.')}</span>
-        <button onClick={onSnippet}>
-          <Terminal size={12} /> cURL
-        </button>
+          <div id="response-content" className="response-content" hidden={layout === 'request'}>
+            {busy ? (
+              <div className="response-empty">
+                <div className="response-art loading-art">
+                  <LoaderCircle className="spin" size={32} />
+                </div>
+                <h3>{t('A caminho da sua API…')}</h3>
+                <p>{t('Preparando espaço para a próxima resposta.')}</p>
+                <Button variant="outline" size="sm" onClick={onCancel}>
+                  {t('Cancelar requisição')}
+                </Button>
+              </div>
+            ) : error ? (
+              <div className="response-error">
+                <span className="error-icon">
+                  <TriangleAlert size={24} />
+                </span>
+                <div>
+                  <h3>{t('Não foi dessa vez')}</h3>
+                  <p>{error}</p>
+                  <Button size="sm" variant="outline" onClick={onSend}>
+                    {t('Tentar novamente') + ' '}
+                    <ArrowRight size={13} />
+                  </Button>
+                </div>
+              </div>
+            ) : response ? (
+              <>
+                <div className="response-toolbar">
+                  <div
+                    className="response-tabs"
+                    role="tablist"
+                    aria-label={t('Visualização da resposta')}
+                    onKeyDown={navigateTabs}
+                  >
+                    {[
+                      { id: 'body', label: t('Corpo') },
+                      { id: 'headers', label: 'Headers', count: response.headers.length },
+                      { id: 'tests', label: t('Resultados dos testes'), count: testResults.length },
+                    ].map((t) => (
+                      <button
+                        id={`response-tab-${t.id}`}
+                        role="tab"
+                        aria-controls={responseTab === t.id ? `response-panel-${t.id}` : undefined}
+                        aria-selected={responseTab === t.id}
+                        tabIndex={responseTab === t.id ? 0 : -1}
+                        className={cn('tab-button', responseTab === t.id && 'active')}
+                        onClick={() => setResponseTab(t.id)}
+                        key={t.id}
+                      >
+                        {t.label}
+                        {t.count !== undefined && (
+                          <span className="tab-count">{formatNumber(t.count)}</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {responseTab === 'body' && (
+                    <div className="format-select">
+                      <select
+                        aria-label={t('Formato da resposta')}
+                        value={format}
+                        onChange={(e) => setFormat(e.target.value)}
+                      >
+                        <option value="pretty">{t('Formatado')}</option>
+                        <option value="raw">{t('Original')}</option>
+                      </select>
+                      <span>{json ? 'JSON' : t('Texto')}</span>
+                    </div>
+                  )}
+                </div>
+                {response.truncated && (
+                  <div className="truncated-banner">
+                    <Info size={14} />
+                    {' ' + t('Prévia limitada a 256 KiB.')}{' '}
+                    {response.body_id
+                      ? t('O download inclui o corpo completo.')
+                      : t('O download inclui a prévia.')}
+                  </div>
+                )}
+                <div
+                  id={`response-panel-${responseTab}`}
+                  role="tabpanel"
+                  aria-labelledby={`response-tab-${responseTab}`}
+                  tabIndex={0}
+                  className="response-tab-panel"
+                >
+                  {responseTab === 'body' ? (
+                    responseText ? (
+                      <CodeViewer
+                        key={`${request.id}-${formatNumber(response.duration_ms)}`}
+                        value={responseText}
+                        json={json}
+                        wrap={wrap}
+                      />
+                    ) : (
+                      <div className="small-empty">{t('A resposta não contém corpo.')}</div>
+                    )
+                  ) : responseTab === 'headers' ? (
+                    <div className="response-header-table">
+                      {response.headers.map(([key, value], i) => (
+                        <div key={i}>
+                          <code>{key}</code>
+                          <code>{value}</code>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="test-result-list">
+                      {testResults.length ? (
+                        testResults.map((test, i) => (
+                          <div key={i}>
+                            <span className={test.passed ? 'test-pass' : 'test-fail'}>
+                              {test.passed ? <CheckCheck size={16} /> : <X size={16} />}
+                              {test.passed ? 'PASSOU' : 'FALHOU'}
+                            </span>
+                            <code>{test.label}</code>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="small-empty">
+                          {t('Adicione testes na configuração da requisição.')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="response-empty">
+                <div className="response-art">
+                  <div className="orbit orbit-one" />
+                  <div className="orbit orbit-two" />
+                  <div className="art-spark art-spark-one">✦</div>
+                  <div className="art-spark art-spark-two">✦</div>
+                  <div className="art-code">
+                    <Braces size={31} strokeWidth={1.5} />
+                    <div className="art-code-lines">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  </div>
+                  <span className="art-status">
+                    <Check size={12} />
+                    200 OK
+                  </span>
+                </div>
+                <h3>{t('Uma boa API começa com um olá.')}</h3>
+                <p>{t('Envie sua requisição e veja a resposta ganhar vida aqui.')}</p>
+                <div className="empty-shortcut">
+                  <kbd>Ctrl</kbd>
+                  <span>+</span>
+                  <kbd>
+                    Enter <CornerDownLeft size={10} />
+                  </kbd>
+                  <span>{t('para enviar')}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -1078,17 +1191,7 @@ function JsonValueInput({
 export function curlFor(request: RequestItem, collection: Collection, environment?: Environment) {
   if (request.bodyType === 'binary' || request.bodyType === 'multipart')
     throw new Error(t('A geração de cURL para corpos com arquivos ainda não está disponível.'));
-  const headers = request.headers.map((row) =>
-    isSecretHeader(row, collection, environment) && !/^\{\{[^{}]+\}\}$/.test(row.value)
-      ? { ...row, value: '<segredo>' }
-      : row,
-  );
-  const compiled = compileRequest(
-    syncUrl({ ...request, headers }),
-    collection,
-    variablesFor(collection, environment),
-    false,
-  );
+  const compiled = compileRequestSnippet(request, collection, environment);
   const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
   return [
     `curl --request ${compiled.method}`,

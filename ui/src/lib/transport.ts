@@ -92,13 +92,15 @@ export async function pickBodyFile() {
   return invoke<string | null>('pick_body_file', { title: t('Selecionar arquivo') });
 }
 
-export async function send(request: HttpRequest) {
+export async function send(request: HttpRequest, requestId?: string) {
   controller = new AbortController();
   try {
     if (native)
       return await invoke<HttpResponse>('send', {
         request,
-        console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('editor', trace)),
+        console: new Channel<ConsoleTrace>((trace) =>
+          recordRequestTrace('editor', trace, requestId),
+        ),
       });
     checkBrowserRequest(request);
     return await browserSend(request);
@@ -119,6 +121,7 @@ type RunProgress =
 export async function runCollection(
   collection: NativeCollection,
   onProgress: (event: RunProgress) => void,
+  requestIds: readonly string[] = [],
 ): Promise<RunResult> {
   if (native) {
     const localizeRow = (row: RunRow) => ({
@@ -132,7 +135,9 @@ export async function runCollection(
       const result = await invoke<RunResult>('run', {
         collection,
         progress,
-        console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('runner', trace)),
+        console: new Channel<ConsoleTrace>((trace) =>
+          recordRequestTrace('runner', trace, requestIds[(trace.step ?? 0) - 1]),
+        ),
       });
       return { ...result, results: result.results.map(localizeRow) };
     } finally {

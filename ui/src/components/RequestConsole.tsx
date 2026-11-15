@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatDate, formatNumber, t, type Message } from '../lib/i18n';
+import type { Collection } from '../lib/models';
 import {
   clearRequestConsole,
   useRequestConsole,
@@ -36,7 +37,13 @@ function Headers({ values }: { values: [string, string][] }) {
   );
 }
 
-export function RequestConsole() {
+export function RequestConsole({
+  collections,
+  onOpenRequest,
+}: {
+  collections: Collection[];
+  onOpenRequest: (collectionId: string, requestId: string) => void;
+}) {
   const entries = useRequestConsole();
   const [source, setSource] = useState<ConsoleSource | 'all'>('all');
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -77,59 +84,93 @@ export function RequestConsole() {
         <p>{t(entries.length ? 'Nenhum resultado encontrado' : 'Nenhum envio registrado.')}</p>
       )}
       <div className="console-entries">
-        {filtered.map((entry) => (
-          <details key={entry.id} className="console-entry">
-            <summary>
-              <time dateTime={entry.date}>
-                {formatDate(entry.date, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </time>
-              <span>
-                {t(sourceLabels[entry.source])}
-                {entry.step !== null && ` · ${t('Etapa {0}', entry.step)}`}
-              </span>
-              {entry.request && (
-                <code>
-                  {entry.request.method} {entry.request.url}
-                </code>
-              )}
-              <span>{entry.response?.status ?? '—'}</span>
-              <span>{formatNumber(entry.duration_ms)} ms</span>
-              {entry.failure && <span>{t(failureLabels[entry.failure])}</span>}
-            </summary>
-            <div className="console-details">
-              {entry.request && (
-                <section>
-                  <h2>{t('Headers da requisição')}</h2>
-                  <Headers values={entry.request.headers} />
-                </section>
-              )}
-              {entry.redirects.length > 0 && (
-                <section>
-                  <h2>{t('Redirecionamentos')}</h2>
-                  <ol>
-                    {entry.redirects.map((redirect, index) => (
-                      <li key={index}>
-                        <code>
-                          {redirect.status} {redirect.url}
-                        </code>
-                        {' · ' + t(redirect.followed ? 'Seguido' : 'Não seguido')}
-                      </li>
-                    ))}
-                  </ol>
-                </section>
-              )}
-              {entry.response && (
-                <section>
-                  <h2>{t('Headers da resposta')}</h2>
-                  <Headers values={entry.response.headers} />
-                  <h2>{t('Prévia da resposta')}</h2>
-                  {entry.response.preview && <pre>{entry.response.preview}</pre>}
-                  {entry.response.truncated && <p>{t('Prévia incompleta ou indisponível.')}</p>}
-                </section>
-              )}
-            </div>
-          </details>
-        ))}
+        {filtered.map((entry) => {
+          const requestId = entry.requestId;
+          const collection = collections.find((item) =>
+            item.requests.some((request) => request.id === requestId),
+          );
+          const requestLabel = entry.request && (
+            <code>
+              {entry.request.method} {entry.request.url}
+            </code>
+          );
+          return (
+            <details key={entry.id} className="console-entry">
+              <summary>
+                <time dateTime={entry.date}>
+                  {formatDate(entry.date, {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                  })}
+                </time>
+                <span>
+                  {t(sourceLabels[entry.source])}
+                  {entry.step !== null && ` · ${t('Etapa {0}', entry.step)}`}
+                </span>
+                {collection && requestId ? (
+                  <button
+                    type="button"
+                    className="console-request-link"
+                    title={t('Abrir requisição')}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onOpenRequest(collection.id, requestId);
+                    }}
+                  >
+                    {requestLabel ?? t('Abrir requisição')}
+                  </button>
+                ) : (
+                  requestLabel
+                )}
+                <span>{entry.response?.status ?? '—'}</span>
+                <span>{formatNumber(entry.duration_ms)} ms</span>
+                {entry.failure && <span>{t(failureLabels[entry.failure])}</span>}
+              </summary>
+              <div className="console-details">
+                {entry.request && (
+                  <section>
+                    <h2>{t('Headers da requisição')}</h2>
+                    <Headers values={entry.request.headers} />
+                    {entry.request.body && (
+                      <>
+                        <h2>{t('Corpo da requisição')}</h2>
+                        {entry.request.body.preview && <pre>{entry.request.body.preview}</pre>}
+                        {entry.request.body.truncated && (
+                          <p>{t('Prévia incompleta ou indisponível.')}</p>
+                        )}
+                      </>
+                    )}
+                  </section>
+                )}
+                {entry.redirects.length > 0 && (
+                  <section>
+                    <h2>{t('Redirecionamentos')}</h2>
+                    <ol>
+                      {entry.redirects.map((redirect, index) => (
+                        <li key={index}>
+                          <code>
+                            {redirect.status} {redirect.url}
+                          </code>
+                          {' · ' + t(redirect.followed ? 'Seguido' : 'Não seguido')}
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+                )}
+                {entry.response && (
+                  <section>
+                    <h2>{t('Headers da resposta')}</h2>
+                    <Headers values={entry.response.headers} />
+                    <h2>{t('Prévia da resposta')}</h2>
+                    {entry.response.preview && <pre>{entry.response.preview}</pre>}
+                    {entry.response.truncated && <p>{t('Prévia incompleta ou indisponível.')}</p>}
+                  </section>
+                )}
+              </div>
+            </details>
+          );
+        })}
       </div>
     </section>
   );
