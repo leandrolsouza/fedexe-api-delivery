@@ -1,3 +1,4 @@
+import { formatNumber, t, useLocale } from './lib/i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
@@ -78,6 +79,7 @@ import { cancel, native, normalizeError, releaseResponseBodies, send } from './l
 import { cn, download, uid } from './lib/utils';
 import { Button } from './components/ui/button';
 import { Dialog } from './components/ui/dialog';
+import { UpdateDialog, UpdateSettings, useUpdates } from './components/Updates';
 import { Dropdown } from './components/ui/dropdown';
 import { curlFor, MethodBadge, RequestEditor } from './components/RequestEditor';
 import {
@@ -101,7 +103,7 @@ type EditDialog = {
   action: (name: string) => void;
 };
 type ConfirmDialog = { title: string; description: string; label: string; action: () => void };
-const navigation = [
+const navigationItems = [
   { id: 'collections', label: 'Coleções', icon: Layers3 },
   { id: 'environments', label: 'Ambientes', icon: Globe2 },
   { id: 'runner', label: 'Runner de coleções', icon: Play },
@@ -122,6 +124,10 @@ async function initialState() {
 }
 
 export function App() {
+  const locale = useLocale();
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
   const [initial, setInitial] = useState<Awaited<ReturnType<typeof initialState>>>();
   useEffect(() => {
     let disposed = false;
@@ -133,11 +139,13 @@ export function App() {
     };
   }, []);
 
-  if (!initial) return <p role="status">Carregando workspace…</p>;
+  if (!initial) return <p role="status">{t('Carregando workspace…')}</p>;
   return <WorkspaceApp initial={initial} />;
 }
 
 function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
+  const updates = useUpdates();
+  const navigation = navigationItems.map((item) => ({ ...item, label: t(item.label) }));
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
   const [storageError, setStorageError] = useState(initial.error);
@@ -221,7 +229,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         if (!superseded) setPersisted(workspace);
       } catch (error) {
         if (!superseded)
-          setStorageError(`Não foi possível salvar o workspace. ${normalizeError(error).message}`);
+          setStorageError(
+            t('Não foi possível salvar o workspace. {0}', normalizeError(error).message),
+          );
       }
     });
     return () => {
@@ -264,10 +274,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           if (!Object.keys(drafts).length && !busy && !hasPendingStorage) return;
           event.preventDefault();
           setConfirmDialog({
-            title: 'Fechar o Fedexe?',
-            description:
+            title: t('Fechar o Fedexe?'),
+            description: t(
               'Há alterações pendentes ou uma execução ativa. Salve seu trabalho antes de fechar.',
-            label: 'Fechar sem salvar',
+            ),
+            label: t('Fechar sem salvar'),
             action: () => {
               void getCurrentWindow().destroy();
             },
@@ -378,7 +389,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         target = uid();
         const c: Collection = {
           id: target,
-          name: 'Minha coleção',
+          name: t('Minha coleção'),
           description: '',
           folders: [],
           variables: [],
@@ -401,6 +412,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
+      if (updates.progress) return;
       if (event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setCommandOpen((current) => !current);
@@ -425,7 +437,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [save, sendRequest, addRequest, view]);
+  }, [save, sendRequest, addRequest, view, updates.progress]);
 
   function askName(
     title: string,
@@ -437,7 +449,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     setEditDialog({ title, description, initial: initialName, action });
   }
   function createCollection() {
-    askName('Nova coleção', 'Um novo espaço para organizar suas APIs.', '', (name) => {
+    askName(t('Nova coleção'), t('Um novo espaço para organizar suas APIs.'), '', (name) => {
       const c: Collection = {
         id: uid(),
         name,
@@ -453,9 +465,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     });
   }
   function createFolder(c: Collection) {
-    askName('Nova pasta', `Organize as requisições de ${c.name}.`, '', (name) => {
+    askName(t('Nova pasta'), t('Organize as requisições de {0}.', c.name), '', (name) => {
       if (c.folders.includes(name)) {
-        toast.error('Já existe uma pasta com esse nome.');
+        toast.error(t('Já existe uma pasta com esse nome.'));
         return;
       }
       updateCollection(c.id, (current) => ({ ...current, folders: [...current.folders, name] }));
@@ -470,7 +482,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     const copy = {
       ...structuredClone(drafts[item.id] || item),
       id: uid(),
-      name: `${item.name} (cópia)`,
+      name: t('{0} (cópia)', item.name),
     };
     updateCollection(c.id, (current) => ({ ...current, requests: [...current.requests, copy] }));
     openRequest(c.id, copy.id);
@@ -506,27 +518,27 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     const finish = () => removeTabs([tab.requestId]);
     if (drafts[tab.requestId])
       setConfirmDialog({
-        title: 'Descartar alterações?',
-        description: 'Esta requisição tem alterações que ainda não foram salvas.',
-        label: 'Descartar e fechar',
+        title: t('Descartar alterações?'),
+        description: t('Esta requisição tem alterações que ainda não foram salvas.'),
+        label: t('Descartar e fechar'),
         action: finish,
       });
     else finish();
   }
   function deleteRequest(c: Collection, item: RequestItem) {
     setConfirmDialog({
-      title: 'Excluir requisição?',
-      description: `“${item.name}” será removida da coleção ${c.name}.`,
-      label: 'Excluir requisição',
+      title: t('Excluir requisição?'),
+      description: t('“{0}” será removida da coleção {1}.', item.name, c.name),
+      label: t('Excluir requisição'),
       action: () => {
         updateCollection(c.id, (current) => ({
           ...current,
           requests: current.requests.filter((r) => r.id !== item.id),
         }));
         removeTabs([item.id]);
-        toast.success('Requisição excluída', {
+        toast.success(t('Requisição excluída'), {
           action: {
-            label: 'Desfazer',
+            label: t('Desfazer'),
             onClick: () =>
               updateCollection(c.id, (current) => ({
                 ...current,
@@ -540,48 +552,52 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
 
   function collectionActions(c: Collection) {
     return [
-      { label: 'Nova requisição', icon: <Plus size={14} />, action: () => addRequest(c.id) },
-      { label: 'Nova pasta', icon: <FolderPlus size={14} />, action: () => createFolder(c) },
+      { label: t('Nova requisição'), icon: <Plus size={14} />, action: () => addRequest(c.id) },
+      { label: t('Nova pasta'), icon: <FolderPlus size={14} />, action: () => createFolder(c) },
       {
-        label: 'Renomear',
+        label: t('Renomear'),
         icon: <Pencil size={14} />,
         action: () =>
-          askName('Renomear coleção', 'Encontre o nome ideal para sua API.', c.name, (name) =>
+          askName(t('Renomear coleção'), t('Encontre o nome ideal para sua API.'), c.name, (name) =>
             updateCollection(c.id, (current) => ({ ...current, name })),
           ),
       },
       {
-        label: 'Variáveis e autorização da coleção',
+        label: t('Variáveis e autorização da coleção'),
         icon: <Braces size={14} />,
         action: () => setCollectionSettings(c.id),
       },
       {
-        label: 'Duplicar coleção',
+        label: t('Duplicar coleção'),
         icon: <Copy size={14} />,
         action: () => {
           const copy = {
             ...structuredClone(c),
             id: uid(),
-            name: `${c.name} (cópia)`,
+            name: t('{0} (cópia)', c.name),
             requests: c.requests.map((r) => ({ ...r, id: uid() })),
           };
           setWorkspace((current) => ({ ...current, collections: [...current.collections, copy] }));
         },
       },
       {
-        label: 'Exportar JSON',
+        label: t('Exportar JSON'),
         icon: <ArrowDownToLine size={14} />,
         action: () => download(`${c.name}.json`, JSON.stringify(exportableCollection(c), null, 2)),
       },
       {
-        label: 'Excluir coleção',
+        label: t('Excluir coleção'),
         icon: <Trash2 size={14} />,
         danger: true,
         action: () =>
           setConfirmDialog({
-            title: 'Excluir coleção?',
-            description: `“${c.name}” e suas ${c.requests.length} requisições serão removidas.`,
-            label: 'Excluir coleção',
+            title: t('Excluir coleção?'),
+            description: t(
+              '“{0}” e suas {1} requisições serão removidas.',
+              c.name,
+              c.requests.length,
+            ),
+            label: t('Excluir coleção'),
             action: () => {
               setWorkspace((current) => ({
                 ...current,
@@ -641,7 +657,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <button
           className="tree-request-main"
           onClick={() => openRequest(c.id, item.id)}
-          title={`${current.method} ${current.url}`}
+          title={t('{0} {1}', current.method, current.url)}
         >
           <MethodBadge method={current.method} small />
           <span>{current.name}</span>
@@ -649,16 +665,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </button>
         <Dropdown
           trigger={
-            <button className="tree-more" aria-label={`Ações de ${item.name}`}>
+            <button className="tree-more" aria-label={t('Ações de {0}', item.name)}>
               <MoreHorizontal size={14} />
             </button>
           }
           items={[
             {
-              label: 'Renomear',
+              label: t('Renomear'),
               icon: <Pencil size={14} />,
               action: () =>
-                askName('Renomear requisição', '', current.name, (name) => {
+                askName(t('Renomear requisição'), '', current.name, (name) => {
                   if (drafts[item.id]) changeDraft({ ...drafts[item.id], name });
                   else
                     updateCollection(c.id, (current) => ({
@@ -670,12 +686,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 }),
             },
             {
-              label: 'Duplicar',
+              label: t('Duplicar'),
               icon: <Copy size={14} />,
               action: () => duplicateRequest(c, item),
             },
             {
-              label: 'Mover para pasta',
+              label: t('Mover para pasta'),
               icon: <Folder size={14} />,
               action: () => {
                 setMoveTarget(item.folder);
@@ -683,17 +699,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               },
             },
             {
-              label: 'Mover para cima',
+              label: t('Mover para cima'),
               icon: <ArrowUp size={14} />,
               action: () => reorder(c, item, -1),
             },
             {
-              label: 'Mover para baixo',
+              label: t('Mover para baixo'),
               icon: <ArrowDown size={14} />,
               action: () => reorder(c, item, 1),
             },
             {
-              label: 'Excluir',
+              label: t('Excluir'),
               icon: <Trash2 size={14} />,
               danger: true,
               action: () => deleteRequest(c, item),
@@ -719,27 +735,27 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             {expanded ? <FolderOpen size={15} /> : <FolderClosed size={15} />}
             <span>{folder}</span>
-            <span className="tree-count">{requests.length}</span>
+            <span className="tree-count">{formatNumber(requests.length)}</span>
           </button>
           <Dropdown
             trigger={
-              <button className="tree-more" aria-label={`Ações da pasta ${folder}`}>
+              <button className="tree-more" aria-label={t('Ações da pasta {0}', folder)}>
                 <MoreHorizontal size={14} />
               </button>
             }
             items={[
               {
-                label: 'Nova requisição',
+                label: t('Nova requisição'),
                 icon: <Plus size={14} />,
                 action: () => addRequest(c.id, folder),
               },
               {
-                label: 'Renomear pasta',
+                label: t('Renomear pasta'),
                 icon: <Pencil size={14} />,
                 action: () =>
-                  askName('Renomear pasta', '', folder, (name) => {
+                  askName(t('Renomear pasta'), '', folder, (name) => {
                     if (c.folders.includes(name) && name !== folder) {
-                      toast.error('Já existe uma pasta com esse nome.');
+                      toast.error(t('Já existe uma pasta com esse nome.'));
                       return;
                     }
                     updateCollection(c.id, (current) => ({
@@ -762,11 +778,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   }),
               },
               {
-                label: 'Duplicar pasta',
+                label: t('Duplicar pasta'),
                 icon: <Copy size={14} />,
                 action: () => {
-                  let name = `${folder} (cópia)`;
-                  while (c.folders.includes(name)) name += ' (cópia)';
+                  let name = t('{0} (cópia)', folder);
+                  while (c.folders.includes(name)) name += t(' (cópia)');
                   updateCollection(c.id, (current) => ({
                     ...current,
                     folders: [...current.folders, name],
@@ -778,14 +794,18 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 },
               },
               {
-                label: 'Excluir pasta',
+                label: t('Excluir pasta'),
                 icon: <Trash2 size={14} />,
                 danger: true,
                 action: () =>
                   setConfirmDialog({
-                    title: 'Excluir pasta e requisições?',
-                    description: `A pasta “${folder}” e suas ${requests.length} requisições serão removidas.`,
-                    label: 'Excluir pasta',
+                    title: t('Excluir pasta e requisições?'),
+                    description: t(
+                      'A pasta “{0}” e suas {1} requisições serão removidas.',
+                      folder,
+                      requests.length,
+                    ),
+                    label: t('Excluir pasta'),
                     action: () => {
                       updateCollection(c.id, (current) => ({
                         ...current,
@@ -804,7 +824,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             {requests.map((item) => renderRequest(c, item))}
             {!requests.length && (
               <button className="empty-folder" onClick={() => addRequest(c.id, folder)}>
-                <Plus size={12} /> Adicionar requisição
+                <Plus size={12} />
+                {' ' + t('Adicionar requisição')}
               </button>
             )}
           </div>
@@ -829,7 +850,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 ...current.collections,
                 {
                   id,
-                  name: 'Importações cURL',
+                  name: t('Importações cURL'),
                   description: '',
                   folders: [],
                   variables: [],
@@ -848,10 +869,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
       if (isWorkspace(parsed)) {
         setConfirmDialog({
-          title: 'Restaurar backup?',
-          description:
+          title: t('Restaurar backup?'),
+          description: t(
             'Este backup substituirá as coleções, ambientes e configurações atuais. Exporte seus dados antes de continuar.',
-          label: 'Restaurar backup',
+          ),
+          label: t('Restaurar backup'),
           action: () => {
             setWorkspace(parsed);
             setStorageBlocked(false);
@@ -860,7 +882,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             setTabs([]);
             setActive({ collectionId: parsed.collections[0]?.id || '', requestId: '' });
             setImportOpen(false);
-            toast.success('Backup restaurado');
+            toast.success(t('Backup restaurado'));
           },
         });
         return;
@@ -889,7 +911,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       setImportError('');
       if (c.requests[0]) openRequest(c.id, c.requests[0].id);
       else setActive({ collectionId: c.id, requestId: '' });
-      toast.success(`${c.name}: ${c.requests.length} requisições importadas`);
+      toast.success(t('{0}: {1} requisições importadas', c.name, c.requests.length));
     } catch (error) {
       setImportError(normalizeError(error).message);
     }
@@ -904,16 +926,19 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       openRequest(row.collectionId, row.requestId);
     else
       toast.info(
-        'A requisição original não está mais na coleção. O histórico preserva apenas seus metadados.',
+        t(
+          'A requisição original não está mais na coleção. O histórico preserva apenas seus metadados.',
+        ),
       );
   }
   async function windowAction(action: 'minimize' | 'toggleMaximize' | 'close') {
     if (action === 'close' && (Object.keys(drafts).length || busy || hasPendingStorage)) {
       setConfirmDialog({
-        title: 'Fechar o Fedexe?',
-        description:
+        title: t('Fechar o Fedexe?'),
+        description: t(
           'Há alterações pendentes ou uma execução ativa. Salve seu trabalho antes de fechar.',
-        label: 'Fechar sem salvar',
+        ),
+        label: t('Fechar sem salvar'),
         action: () => {
           void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
             getCurrentWindow().destroy(),
@@ -968,28 +993,28 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <strong>
             fedexe<span>api</span>
           </strong>
-          <span className="version-tag" aria-label={`Versão ${version}`}>
+          <span className="version-tag" aria-label={t('Versão {0}', version)}>
             {version}
           </span>
         </div>
         <div className="header-workspace">
           <span className="header-divider" />
           <Box size={15} />
-          <span>{workspace.settings.workspaceName || 'Meu workspace'}</span>
+          <span>{workspace.settings.workspaceName || t('Meu workspace')}</span>
           <Dropdown
             trigger={
-              <button className="inline-icon" aria-label="Opções do workspace">
+              <button className="inline-icon" aria-label={t('Opções do workspace')}>
                 <ChevronsUpDown size={12} />
               </button>
             }
             items={[
               {
-                label: 'Configurar workspace',
+                label: t('Configurar workspace'),
                 icon: <Settings2 size={14} />,
                 action: () => setView('settings'),
               },
               {
-                label: 'Exportar backup',
+                label: t('Exportar backup'),
                 icon: <ArrowDownToLine size={14} />,
                 action: () =>
                   download(
@@ -1002,20 +1027,20 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
         <button className="global-search" onClick={() => setCommandOpen(true)}>
           <Search size={15} />
-          <span>Encontre qualquer coisa…</span>
+          <span>{t('Encontre qualquer coisa…')}</span>
           <kbd>Ctrl K</kbd>
         </button>
         <div className="header-right">
           <button className="documentation-button" onClick={() => setHelpOpen(true)}>
             <BookOpen size={14} />
-            <span>Guia rápido</span>
+            <span>{t('Guia rápido')}</span>
             <ArrowUpRight size={12} />
           </button>
           <span className="header-divider" />
           <button
             className="header-help"
-            aria-label="Novidades do projeto"
-            title="Novidades do projeto"
+            aria-label={t('Novidades do projeto')}
+            title={t('Novidades do projeto')}
             onClick={() => setHelpOpen(true)}
           >
             <Bell size={17} />
@@ -1023,26 +1048,26 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </button>
           <button
             className="profile-avatar"
-            aria-label="Configurações do meu workspace"
+            aria-label={t('Configurações do meu workspace')}
             onClick={() => setView('settings')}
           >
-            EU
+            {t('EU')}
           </button>
         </div>
         {native && (
           <div className="window-controls">
-            <button aria-label="Minimizar janela" onClick={() => windowAction('minimize')}>
+            <button aria-label={t('Minimizar janela')} onClick={() => windowAction('minimize')}>
               <Minus size={15} />
             </button>
             <button
-              aria-label="Maximizar ou restaurar janela"
+              aria-label={t('Maximizar ou restaurar janela')}
               onClick={() => windowAction('toggleMaximize')}
             >
               <Maximize2 size={12} />
             </button>
             <button
               className="window-close"
-              aria-label="Fechar janela"
+              aria-label={t('Fechar janela')}
               onClick={() => windowAction('close')}
             >
               <X size={16} />
@@ -1050,7 +1075,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </div>
         )}
       </header>
-      <nav className="navigation-rail" aria-label="Navegação principal">
+      <nav className="navigation-rail" aria-label={t('Navegação principal')}>
         <div className="rail-top">
           {navigation.map((item) => (
             <button
@@ -1069,17 +1094,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <div className="rail-bottom">
           <button
             className={cn('rail-button', view === 'settings' && 'active')}
-            aria-label="Configurações"
+            aria-label={t('Configurações')}
             aria-current={view === 'settings' ? 'page' : undefined}
-            title="Configurações"
+            title={t('Configurações')}
             onClick={() => setView('settings')}
           >
             <Settings2 size={20} strokeWidth={1.7} />
           </button>
           <button
             className="rail-button"
-            aria-label="Atalhos de teclado"
-            title="Atalhos de teclado"
+            aria-label={t('Atalhos de teclado')}
+            title={t('Atalhos de teclado')}
             onClick={() => setShortcutsOpen(true)}
           >
             <Keyboard size={20} strokeWidth={1.7} />
@@ -1087,32 +1112,33 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <div className="rail-bottom-divider" />
           <button
             className="rail-button help-rail-button"
-            aria-label="Ajuda e primeiros passos"
-            title="Ajuda"
+            aria-label={t('Ajuda e primeiros passos')}
+            title={t('Ajuda')}
             onClick={() => setHelpOpen(true)}
           >
             <CircleHelp size={19} strokeWidth={1.7} />
           </button>
         </div>
       </nav>
-      <aside className="collections-sidebar" aria-label="Árvore de coleções">
+      <aside className="collections-sidebar" aria-label={t('Árvore de coleções')}>
         <div className="sidebar-heading">
           <h2>
-            Coleções <span>{workspace.collections.length}</span>
+            {t('Coleções') + ' '}
+            <span>{formatNumber(workspace.collections.length)}</span>
           </h2>
           <div>
             <button
               className="inline-icon"
-              aria-label="Buscar nas coleções"
-              title="Buscar nas coleções"
+              aria-label={t('Buscar nas coleções')}
+              title={t('Buscar nas coleções')}
               onClick={() => setShowTreeSearch((v) => !v)}
             >
               <Search size={16} />
             </button>
             <button
               className="inline-icon"
-              aria-label="Recolher painel de coleções"
-              title="Recolher painel"
+              aria-label={t('Recolher painel de coleções')}
+              title={t('Recolher painel')}
               onClick={() => setSidebarHidden(true)}
             >
               <PanelLeftClose size={16} />
@@ -1123,14 +1149,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <Dropdown
             trigger={
               <Button className="new-button" size="sm">
-                <Plus size={15} /> Novo <ChevronDown size={12} />
+                <Plus size={15} />
+                {' ' + t('Novo') + ' '}
+                <ChevronDown size={12} />
               </Button>
             }
             items={[
-              { label: 'Nova requisição', icon: <Zap size={14} />, action: () => addRequest() },
-              { label: 'Nova coleção', icon: <Layers3 size={14} />, action: createCollection },
+              { label: t('Nova requisição'), icon: <Zap size={14} />, action: () => addRequest() },
+              { label: t('Nova coleção'), icon: <Layers3 size={14} />, action: createCollection },
               {
-                label: 'Nova pasta',
+                label: t('Nova pasta'),
                 icon: <FolderPlus size={14} />,
                 disabled: !collection,
                 action: () => collection && createFolder(collection),
@@ -1145,7 +1173,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               setImportError('');
             }}
           >
-            <Upload size={13} /> Importar
+            <Upload size={13} />
+            {' ' + t('Importar')}
           </Button>
         </div>
         {showTreeSearch && (
@@ -1153,14 +1182,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <Search size={14} />
             <input
               autoFocus
-              aria-label="Filtrar coleções"
-              placeholder="Filtrar requisições…"
+              aria-label={t('Filtrar coleções')}
+              placeholder={t('Filtrar requisições…')}
               value={treeSearch}
               onChange={(e) => setTreeSearch(e.target.value)}
             />
             <button
               className="inline-icon"
-              aria-label="Limpar busca"
+              aria-label={t('Limpar busca')}
               onClick={() => {
                 setTreeSearch('');
                 setShowTreeSearch(false);
@@ -1194,11 +1223,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                     <Layers3 size={16} />
                   </span>
                   <strong>{c.name}</strong>
-                  <span className="tree-count">{c.requests.length}</span>
+                  <span className="tree-count">{formatNumber(c.requests.length)}</span>
                 </button>
                 <Dropdown
                   trigger={
-                    <button className="tree-more" aria-label={`Ações da coleção ${c.name}`}>
+                    <button className="tree-more" aria-label={t('Ações da coleção {0}', c.name)}>
                       <MoreHorizontal size={15} />
                     </button>
                   }
@@ -1212,7 +1241,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                     .map((item) => renderRequest(c, item))}
                   {c.folders.map((folder) => renderFolder(c, folder))}
                   <button className="add-tree-request" onClick={() => addRequest(c.id)}>
-                    <Plus size={13} /> Nova requisição
+                    <Plus size={13} />
+                    {' ' + t('Nova requisição')}
                   </button>
                 </div>
               )}
@@ -1221,9 +1251,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           {!workspace.collections.length && (
             <div className="sidebar-empty">
               <Layers3 size={28} />
-              <p>Sua próxima grande API começa aqui.</p>
+              <p>{t('Sua próxima grande API começa aqui.')}</p>
               <Button variant="secondary" size="sm" onClick={createCollection}>
-                Criar coleção
+                {t('Criar coleção')}
               </Button>
             </div>
           )}
@@ -1233,8 +1263,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <Play size={13} fill="currentColor" />
           </span>
           <div>
-            <strong>Runner de coleções</strong>
-            <small>Seu fluxo, de ponta a ponta.</small>
+            <strong>{t('Runner de coleções')}</strong>
+            <small>{t('Seu fluxo, de ponta a ponta.')}</small>
           </div>
           <ArrowUpRight size={15} />
         </button>
@@ -1242,25 +1272,26 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span className="local-card-art">
             <ShieldCheck size={21} />
           </span>
-          <span className="local-card-label">SEU CÓDIGO. SEU ESPAÇO.</span>
+          <span className="local-card-label">{t('SEU CÓDIGO. SEU ESPAÇO.')}</span>
           <h3>
-            Local por natureza.
+            {t('Local por natureza.')}
             <br />
-            Livre por escolha.
+            {t('Livre por escolha.')}
           </h3>
           <p>
-            Sem conta, sem nuvem obrigatória.
+            {t('Sem conta, sem nuvem obrigatória.')}
             <br />
-            Só você e suas APIs.
+            {t('Só você e suas APIs.')}
           </p>
           <div>
-            <span className="status-dot dot-green" /> Sempre no seu dispositivo{' '}
-            <ArrowUpRight size={12} />
+            <span className="status-dot dot-green" />
+            {' ' + t('Sempre no seu dispositivo')} <ArrowUpRight size={12} />
           </div>
         </div>
         <div className="sidebar-bottom">
           <span>
-            <span className="status-dot dot-green" /> Workspace local
+            <span className="status-dot dot-green" />
+            {' ' + t('Workspace local')}
           </span>
           <HardDrive size={13} />
         </div>
@@ -1271,7 +1302,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             {(sidebarHidden || view !== 'collections') && (
               <button
                 className="inline-icon show-sidebar"
-                aria-label="Mostrar coleções"
+                aria-label={t('Mostrar coleções')}
                 onClick={() => {
                   setSidebarHidden(false);
                   setView('collections');
@@ -1282,26 +1313,26 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             )}
             <span>
               {view === 'collections'
-                ? 'Coleções'
+                ? t('Coleções')
                 : view === 'environments'
                   ? 'Workspace'
                   : view === 'runner'
-                    ? 'Ferramentas'
+                    ? t('Ferramentas')
                     : view === 'history'
                       ? 'Workspace'
-                      : 'Preferências'}
+                      : t('Preferências')}
             </span>
             <ChevronRight size={12} />
             <span className={!request || view !== 'collections' ? 'breadcrumb-current' : ''}>
               {view === 'collections'
-                ? collection?.name || 'Meu workspace'
+                ? collection?.name || t('Meu workspace')
                 : view === 'environments'
-                  ? 'Ambientes'
+                  ? t('Ambientes')
                   : view === 'runner'
-                    ? 'Runner de coleções'
+                    ? t('Runner de coleções')
                     : view === 'history'
-                      ? 'Histórico'
-                      : 'Configurações'}
+                      ? t('Histórico')
+                      : t('Configurações')}
             </span>
             {view === 'collections' && request?.folder && (
               <>
@@ -1318,14 +1349,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <div className="environment-picker">
               <Globe2 size={14} />
               <select
-                aria-label="Ambiente ativo"
+                aria-label={t('Ambiente ativo')}
                 value={workspace.activeEnvironment}
                 disabled={busy}
                 onChange={(e) =>
                   setWorkspace((current) => ({ ...current, activeEnvironment: e.target.value }))
                 }
               >
-                <option value="">Sem ambiente</option>
+                <option value="">{t('Sem ambiente')}</option>
                 {workspace.environments.map((env) => (
                   <option key={env.id} value={env.id}>
                     {env.name}
@@ -1336,8 +1367,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             </div>
             <button
               className="inline-icon"
-              aria-label="Gerenciar ambientes"
-              title="Gerenciar ambientes"
+              aria-label={t('Gerenciar ambientes')}
+              title={t('Gerenciar ambientes')}
               onClick={() => setView('environments')}
             >
               <Settings2 size={15} />
@@ -1350,7 +1381,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <span>{storageError}</span>
             {!storageBlocked && (
               <button onClick={() => setSaveAttempt((attempt) => attempt + 1)}>
-                Tentar salvar novamente
+                {t('Tentar salvar novamente')}
               </button>
             )}
             <button
@@ -1363,16 +1394,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 )
               }
             >
-              Exportar dados
+              {t('Exportar dados')}
             </button>
             {storageBlocked && (
               <button
                 onClick={() =>
                   setConfirmDialog({
-                    title: 'Iniciar um novo workspace?',
-                    description:
+                    title: t('Iniciar um novo workspace?'),
+                    description: t(
                       'Exporte os dados de recuperação antes de continuar. O armazenamento local será substituído por este workspace.',
-                    label: 'Criar novo workspace',
+                    ),
+                    label: t('Criar novo workspace'),
                     action: () => {
                       setStorageBlocked(false);
                       setStorageError('');
@@ -1380,7 +1412,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   })
                 }
               >
-                Começar de novo
+                {t('Começar de novo')}
               </button>
             )}
           </div>
@@ -1388,7 +1420,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <div className="main-content">
           {view === 'collections' ? (
             <>
-              <nav className="request-tabbar" aria-label="Requisições abertas">
+              <nav className="request-tabbar" aria-label={t('Requisições abertas')}>
                 {tabs.map((tab) => {
                   const c = workspace.collections.find((c) => c.id === tab.collectionId);
                   const saved = c?.requests.find((r) => r.id === tab.requestId);
@@ -1412,7 +1444,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                         </button>
                         <button
                           className="close-tab"
-                          aria-label={`Fechar aba ${item.name}`}
+                          aria-label={t('Fechar aba {0}', item.name)}
                           onClick={() => closeTab(tab)}
                         >
                           <X size={12} />
@@ -1423,15 +1455,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 })}
                 <button
                   className="new-tab"
-                  aria-label="Nova requisição"
-                  title="Nova requisição (Ctrl N)"
+                  aria-label={t('Nova requisição')}
+                  title={t('Nova requisição (Ctrl N)')}
                   onClick={() => addRequest()}
                 >
                   <Plus size={17} />
                 </button>
                 <div className="tabbar-spacer" />
                 <button className="tabbar-run" onClick={() => setView('runner')}>
-                  <Play size={12} /> Executar coleção
+                  <Play size={12} />
+                  {' ' + t('Executar coleção')}
                 </button>
               </nav>
               {request && collection ? (
@@ -1445,7 +1478,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   dirty={dirty}
                   busy={busy && sendingId === request.id}
                   onSend={() => {
-                    if (busy) toast.info('Aguarde a execução atual terminar.');
+                    if (busy) toast.info(t('Aguarde a execução atual terminar.'));
                     else void sendRequest();
                   }}
                   onCancel={cancelExecution}
@@ -1457,7 +1490,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               ) : (
                 <div className="welcome-page">
                   <span className="welcome-kicker">
-                    <Sparkles size={14} /> MENOS FRICÇÃO. MAIS CRIAÇÃO.
+                    <Sparkles size={14} />
+                    {' ' + t('MENOS FRICÇÃO. MAIS CRIAÇÃO.')}
                   </span>
                   <div className="welcome-illustration">
                     <div />
@@ -1467,21 +1501,23 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                     </span>
                   </div>
                   <h1>
-                    Seu próximo grande projeto
+                    {t('Seu próximo grande projeto')}
                     <br />
-                    começa com um request.
+                    {t('começa com um request.')}
                   </h1>
                   <p>
-                    Um espaço leve para criar, organizar e testar suas APIs.
+                    {t('Um espaço leve para criar, organizar e testar suas APIs.')}
                     <br />
-                    No seu ritmo. No seu dispositivo.
+                    {t('No seu ritmo. No seu dispositivo.')}
                   </p>
                   <div className="welcome-actions">
                     <Button onClick={() => addRequest()}>
-                      <Plus size={16} /> Nova requisição
+                      <Plus size={16} />
+                      {' ' + t('Nova requisição')}
                     </Button>
                     <Button variant="outline" onClick={() => setImportOpen(true)}>
-                      <Upload size={15} /> Importar coleção
+                      <Upload size={15} />
+                      {' ' + t('Importar coleção')}
                     </Button>
                   </div>
                   <div className="welcome-features">
@@ -1489,10 +1525,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                       <ShieldCheck size={15} /> Local-first
                     </span>
                     <span>
-                      <Zap size={15} /> Feito para ser leve
+                      <Zap size={15} />
+                      {' ' + t('Feito para ser leve')}
                     </span>
                     <span>
-                      <Code2 size={15} /> Livre e open source
+                      <Code2 size={15} />
+                      {' ' + t('Livre e open source')}
                     </span>
                   </div>
                 </div>
@@ -1512,6 +1550,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onChange={setWorkspace}
               onImport={() => setImportOpen(true)}
               onHelp={() => setHelpOpen(true)}
+              updates={<UpdateSettings updates={updates} />}
             />
           )}
           <div hidden={view !== 'runner'}>
@@ -1536,52 +1575,74 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               className={cn('status-dot', storageError || saving ? 'dot-amber' : 'dot-green')}
             />
             {storageError
-              ? 'Verifique o armazenamento'
+              ? t('Verifique o armazenamento')
               : saving
-                ? 'Salvando workspace…'
-                : 'Todos os dados neste dispositivo'}
+                ? t('Salvando workspace…')
+                : t('Todos os dados neste dispositivo')}
           </span>
         </div>
         <div>
           {busy ? (
             <span>
-              <LoaderCircle size={12} className="spin" /> Executando…
+              <LoaderCircle size={12} className="spin" />
+              {' ' + t('Executando…')}
             </span>
           ) : (
             lastRun && (
               <span>
-                <Check size={12} /> Última rodada: {lastRun.results.length} etapas
+                <Check size={12} />
+                {' ' + t('Última rodada:') + ' '}
+                {formatNumber(lastRun.results.length)}
+                {' ' + t('etapas')}
               </span>
             )
           )}
-          <span>{totalRequests} requisições</span>
+          <span>
+            {formatNumber(totalRequests)}
+            {' ' + t('requisições')}
+          </span>
           <span className="statusbar-separator" />
-          <span>{native ? 'Rust + Tauri' : 'Modo navegador'}</span>
+          <span>{native ? 'Rust + Tauri' : t('Modo navegador')}</span>
           <button onClick={() => setShortcutsOpen(true)}>
-            <Keyboard size={12} /> Atalhos
+            <Keyboard size={12} />
+            {' ' + t('Atalhos')}
           </button>
         </div>
       </footer>
 
+      <UpdateDialog
+        updates={updates}
+        blocked={
+          Object.keys(drafts).length
+            ? t('Salve ou descarte os rascunhos antes de instalar.')
+            : busy
+              ? t('Aguarde a execução atual terminar antes de instalar.')
+              : storageError
+                ? t('Resolva o problema de armazenamento antes de instalar.')
+                : hasPendingStorage
+                  ? t('Aguarde o workspace terminar de salvar.')
+                  : ''
+        }
+      />
       <Dialog
         open={commandOpen}
         onOpenChange={setCommandOpen}
-        title="Encontre seu próximo passo"
-        description="Busque uma requisição ou navegue pelo workspace."
+        title={t('Encontre seu próximo passo')}
+        description={t('Busque uma requisição ou navegue pelo workspace.')}
         className="command-dialog"
       >
         <div className="command-input">
           <Search size={20} />
           <input
             autoFocus
-            aria-label="Buscar em todo o workspace"
-            placeholder="Digite um nome, endpoint ou comando…"
+            aria-label={t('Buscar em todo o workspace')}
+            placeholder={t('Digite um nome, endpoint ou comando…')}
             value={commandSearch}
             onChange={(e) => setCommandSearch(e.target.value)}
           />
         </div>
         <div className="command-results">
-          <span className="command-group-label">REQUISIÇÕES</span>
+          <span className="command-group-label">{t('REQUISIÇÕES')}</span>
           {commandResults.slice(0, 20).map(({ collection, request }) => (
             <button
               key={request.id}
@@ -1601,8 +1662,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               <ArrowUpRight size={14} />
             </button>
           ))}
-          {!commandResults.length && <p className="small-empty">Nenhuma requisição encontrada.</p>}
-          <span className="command-group-label">NAVEGAR</span>
+          {!commandResults.length && (
+            <p className="small-empty">{t('Nenhuma requisição encontrada.')}</p>
+          )}
+          <span className="command-group-label">{t('NAVEGAR')}</span>
           {navigation
             .filter((n) => n.label.toLowerCase().includes(commandSearch.toLowerCase()))
             .map((n) => (
@@ -1621,13 +1684,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
         <div className="command-footer">
           <span>
-            <kbd>Tab</kbd> para navegar
+            <kbd>Tab</kbd>
+            {' ' + t('para navegar')}
           </span>
           <span>
-            <kbd>Enter</kbd> para abrir
+            <kbd>Enter</kbd>
+            {' ' + t('para abrir')}
           </span>
           <span>
-            <kbd>Esc</kbd> para fechar
+            <kbd>Esc</kbd>
+            {' ' + t('para fechar')}
           </span>
         </div>
       </Dialog>
@@ -1648,7 +1714,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           }}
         >
           <label className="field-label">
-            Nome
+            {t('Nome')}
             <input
               className="input"
               autoFocus
@@ -1656,15 +1722,15 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onChange={(e) => setEditName(e.target.value)}
               required
               maxLength={100}
-              placeholder="Um nome fácil de encontrar"
+              placeholder={t('Um nome fácil de encontrar')}
             />
           </label>
           <div className="dialog-footer">
             <Button type="button" variant="outline" onClick={() => setEditDialog(undefined)}>
-              Cancelar
+              {t('Cancelar')}
             </Button>
             <Button type="submit">
-              {editDialog?.initial ? 'Salvar nome' : 'Criar'} <ArrowRight size={14} />
+              {editDialog?.initial ? t('Salvar nome') : t('Criar')} <ArrowRight size={14} />
             </Button>
           </div>
         </form>
@@ -1679,7 +1745,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       >
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setConfirmDialog(undefined)}>
-            Cancelar
+            {t('Cancelar')}
           </Button>
           <Button
             variant="destructive"
@@ -1695,8 +1761,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       <Dialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        title="Traga suas APIs para casa."
-        description="Importe um backup, uma coleção, um ambiente Postman ou uma requisição cURL."
+        title={t('Traga suas APIs para casa.')}
+        description={t(
+          'Importe um backup, uma coleção, um ambiente Postman ou uma requisição cURL.',
+        )}
         className="import-dialog"
       >
         <button
@@ -1708,7 +1776,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             const file = e.dataTransfer.files[0];
             if (file) {
               if (file.size > 10 * 1024 * 1024) {
-                setImportError('O arquivo excede o limite de importação de 10 MB.');
+                setImportError(t('O arquivo excede o limite de importação de 10 MB.'));
                 return;
               }
               const text = await file.text();
@@ -1720,8 +1788,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span>
             <Upload size={25} />
           </span>
-          <strong>Arraste seu arquivo ou clique para escolher</strong>
-          <small>Arquivos .json · até 10 MB</small>
+          <strong>{t('Arraste seu arquivo ou clique para escolher')}</strong>
+          <small>{t('Arquivos .json · até 10 MB')}</small>
         </button>
         <input
           ref={fileInput}
@@ -1733,7 +1801,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             e.target.value = '';
             if (!file) return;
             if (file.size > 10 * 1024 * 1024) {
-              setImportError('O arquivo excede o limite de importação de 10 MB.');
+              setImportError(t('O arquivo excede o limite de importação de 10 MB.'));
               return;
             }
             try {
@@ -1747,11 +1815,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         />
         <div className="import-divider">
           <span />
-          ou cole JSON ou cURL
+          {t('ou cole JSON ou cURL')}
           <span />
         </div>
         <textarea
-          aria-label="JSON da coleção para importar"
+          aria-label={t('JSON da coleção para importar')}
           className="input mono import-textarea"
           value={importText}
           onChange={(e) => {
@@ -1772,10 +1840,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setImportOpen(false)}>
-            Cancelar
+            {t('Cancelar')}
           </Button>
           <Button disabled={!importText.trim()} onClick={() => importData(importText)}>
-            {isCurl(importText) ? 'Importar cURL' : 'Importar JSON'} <ArrowRight size={14} />
+            {isCurl(importText) ? t('Importar cURL') : t('Importar JSON')} <ArrowRight size={14} />
           </Button>
         </div>
       </Dialog>
@@ -1784,7 +1852,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         onOpenChange={(open) => {
           if (!open) setImportReport(undefined);
         }}
-        title="Relatório de importação"
+        title={t('Relatório de importação')}
         description={importReport?.name ?? ''}
       >
         {importReport?.issues.length ? (
@@ -1794,17 +1862,19 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             ))}
           </ul>
         ) : (
-          <p>Nenhum ajuste identificado na importação.</p>
+          <p>{t('Nenhum ajuste identificado na importação.')}</p>
         )}
         <div className="dialog-footer">
-          <Button onClick={() => setImportReport(undefined)}>Concluir</Button>
+          <Button onClick={() => setImportReport(undefined)}>{t('Concluir')}</Button>
         </div>
       </Dialog>
       <Dialog
         open={snippetOpen}
         onOpenChange={setSnippetOpen}
-        title="Do seu workspace para o terminal."
-        description="Comando cURL para a requisição atual. Placeholders são preservados; revise os valores antes de compartilhar."
+        title={t('Do seu workspace para o terminal.')}
+        description={t(
+          'Comando cURL para a requisição atual. Placeholders são preservados; revise os valores antes de compartilhar.',
+        )}
         className="snippet-dialog"
       >
         <div className="snippet-language">
@@ -1813,37 +1883,38 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <CodeViewer value={snippet} json={false} />
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setSnippetOpen(false)}>
-            Fechar
+            {t('Fechar')}
           </Button>
           <Button
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(snippet);
-                toast.success('cURL copiado');
+                toast.success(t('cURL copiado'));
               } catch {
-                toast.error('Não foi possível copiar. Selecione o texto manualmente.');
+                toast.error(t('Não foi possível copiar. Selecione o texto manualmente.'));
               }
             }}
           >
-            <Copy size={14} /> Copiar código
+            <Copy size={14} />
+            {' ' + t('Copiar código')}
           </Button>
         </div>
       </Dialog>
       <Dialog
         open={shortcutsOpen}
         onOpenChange={setShortcutsOpen}
-        title="Seu fluxo, na ponta dos dedos."
-        description="Pequenos atalhos. Grandes diferenças."
+        title={t('Seu fluxo, na ponta dos dedos.')}
+        description={t('Pequenos atalhos. Grandes diferenças.')}
         className="shortcuts-dialog"
       >
         <div className="shortcut-list">
           {[
-            { label: 'Buscar em todo o workspace', keys: ['Ctrl', 'K'] },
-            { label: 'Enviar requisição', keys: ['Ctrl', 'Enter'] },
-            { label: 'Salvar requisição', keys: ['Ctrl', 'S'] },
-            { label: 'Nova requisição', keys: ['Ctrl', 'N'] },
-            { label: 'Alternar painel de coleções', keys: ['Ctrl', '\\'] },
-            { label: 'Fechar diálogo', keys: ['Esc'] },
+            { label: t('Buscar em todo o workspace'), keys: ['Ctrl', 'K'] },
+            { label: t('Enviar requisição'), keys: ['Ctrl', 'Enter'] },
+            { label: t('Salvar requisição'), keys: ['Ctrl', 'S'] },
+            { label: t('Nova requisição'), keys: ['Ctrl', 'N'] },
+            { label: t('Alternar painel de coleções'), keys: ['Ctrl', '\\'] },
+            { label: t('Fechar diálogo'), keys: ['Esc'] },
           ].map((shortcut) => (
             <div key={shortcut.label}>
               <span>{shortcut.label}</span>
@@ -1856,14 +1927,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           ))}
         </div>
         <div className="shortcut-note">
-          <Keyboard size={15} /> No macOS, use ⌘ no lugar de Ctrl.
+          <Keyboard size={15} />
+          {' ' + t('No macOS, use ⌘ no lugar de Ctrl.')}
         </div>
       </Dialog>
       <Dialog
         open={helpOpen}
         onOpenChange={setHelpOpen}
-        title="Olá, mundo. Olá, Fedexe."
-        description="Seu cliente de APIs local, gratuito e feito para manter o foco no que importa."
+        title={t('Olá, mundo. Olá, Fedexe.')}
+        description={t(
+          'Seu cliente de APIs local, gratuito e feito para manter o foco no que importa.',
+        )}
         className="help-dialog"
       >
         <div className="help-hero">
@@ -1871,33 +1945,34 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <Zap size={26} fill="currentColor" />
           </span>
           <div>
-            <strong>Construir APIs pode ser mais leve.</strong>
-            <p>Explore a coleção Acme API para conhecer seu novo workspace.</p>
+            <strong>{t('Construir APIs pode ser mais leve.')}</strong>
+            <p>{t('Explore a coleção Acme API para conhecer seu novo workspace.')}</p>
           </div>
         </div>
         <div className="help-steps">
           <div>
             <span>01</span>
             <div>
-              <h4>Inicie a API de exemplo</h4>
-              <p>Na pasta do projeto, execute:</p>
+              <h4>{t('Inicie a API de exemplo')}</h4>
+              <p>{t('Na pasta do projeto, execute:')}</p>
               <code>node tools/test-server.mjs</code>
             </div>
           </div>
           <div>
             <span>02</span>
             <div>
-              <h4>Envie seu primeiro request</h4>
-              <p>Abra “Listar usuários”, escolha o ambiente Local e clique em Enviar.</p>
+              <h4>{t('Envie seu primeiro request')}</h4>
+              <p>{t('Abra “Listar usuários”, escolha o ambiente Local e clique em Enviar.')}</p>
             </div>
           </div>
           <div>
             <span>03</span>
             <div>
-              <h4>Teste o fluxo completo</h4>
+              <h4>{t('Teste o fluxo completo')}</h4>
               <p>
-                O runner obtém um token e o reutiliza nas etapas seguintes. Tudo fica isolado por
-                rodada.
+                {t(
+                  'O runner obtém um token e o reutiliza nas etapas seguintes. Tudo fica isolado por rodada.',
+                )}
               </p>
             </div>
           </div>
@@ -1910,7 +1985,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               setShortcutsOpen(true);
             }}
           >
-            <Keyboard size={14} /> Ver atalhos
+            <Keyboard size={14} />
+            {' ' + t('Ver atalhos')}
           </Button>
           <Button
             onClick={() => {
@@ -1918,7 +1994,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               setView('collections');
             }}
           >
-            Vamos construir <ArrowRight size={14} />
+            {t('Vamos construir') + ' '}
+            <ArrowRight size={14} />
           </Button>
         </div>
       </Dialog>
@@ -1927,14 +2004,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         onOpenChange={(open) => {
           if (!open) setCollectionSettings(undefined);
         }}
-        title={`Variáveis e autorização · ${settingsCollection?.name || ''}`}
-        description="Defina as variáveis e a autorização que os endpoints podem herdar."
+        title={t('Variáveis e autorização · {0}', settingsCollection?.name || '')}
+        description={t('Defina as variáveis e a autorização que os endpoints podem herdar.')}
         className="collection-settings-dialog"
       >
         {settingsCollection && (
           <>
             <PairEditor
-              kind="variável"
+              kind={t('variável')}
               rows={settingsCollection.variables}
               onChange={(variables) =>
                 updateCollection(settingsCollection.id, (current) => ({ ...current, variables }))
@@ -1945,9 +2022,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               <AuthFields auth={settingsCollection.auth} onChange={updateCollectionAuth} />
             </div>
             <div className="dialog-footer">
-              <span className="muted">Alterações salvas automaticamente</span>
+              <span className="muted">{t('Alterações salvas automaticamente')}</span>
               <Button onClick={() => setCollectionSettings(undefined)}>
-                Concluir <Check size={14} />
+                {t('Concluir') + ' '}
+                <Check size={14} />
               </Button>
             </div>
           </>
@@ -1958,17 +2036,17 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         onOpenChange={(open) => {
           if (!open) setMoveRequest(undefined);
         }}
-        title="Cada request no seu lugar."
-        description="Escolha a pasta de destino dentro da coleção."
+        title={t('Cada request no seu lugar.')}
+        description={t('Escolha a pasta de destino dentro da coleção.')}
       >
         <label className="field-label">
-          Pasta
+          {t('Pasta')}
           <select
             className="input"
             value={moveTarget}
             onChange={(e) => setMoveTarget(e.target.value)}
           >
-            <option value="">Raiz da coleção</option>
+            <option value="">{t('Raiz da coleção')}</option>
             {workspace.collections
               .find((c) => c.id === moveRequest?.collectionId)
               ?.folders.map((f) => (
@@ -1978,7 +2056,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </label>
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setMoveRequest(undefined)}>
-            Cancelar
+            {t('Cancelar')}
           </Button>
           <Button
             onClick={() => {
@@ -1994,7 +2072,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               setMoveRequest(undefined);
             }}
           >
-            Mover requisição <ArrowRight size={14} />
+            {t('Mover requisição') + ' '}
+            <ArrowRight size={14} />
           </Button>
         </div>
       </Dialog>

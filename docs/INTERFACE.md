@@ -41,6 +41,14 @@ O timeout padrão é de 30 segundos. No desktop, o endpoint pode manter a respos
 
 ## Verificação
 
+O importador converte atribuições simples como `pm.environment.set('token', pm.response.json().token);` em extrações do runner. O valor extraído fica disponível nas etapas seguintes da rodada. O ambiente salvo mantém seus valores.
+
+Na versão publicada 1.0.0-rc.1, importamos pela interface uma coleção Postman e dois ambientes de teste no mesmo Windows. Cada ambiente apontava para um servidor local distinto, com seu próprio token. A mesma coleção executou três etapas em cada ambiente. O login e a consulta autenticada passaram, e a terceira etapa mostrou “Status esperado 200, recebido 409.” em ambas as execuções. Os logs dos servidores confirmaram a ordem e o destino de cada chamada. A extração usou a forma `pm.collectionVariables.set` compatível com o importador.
+
+Na versão 1.0.0-rc.2, conferimos o SHA-256 do instalador baixado publicamente e repetimos o cenário com o executável extraído do pacote. A coleção usou `pm.environment.set` e passou nas duas primeiras etapas de cada ambiente, com HTTP 409 na terceira etapa intencional. Os dois servidores confirmaram que cada consulta usou o token emitido pelo seu próprio login.
+
+Em um perfil isolado no mesmo Windows, atualizamos da rc.1 para a rc.2 com instaladores NSIS de teste. O SHA-256 do workspace permaneceu igual durante a atualização. Ao abrir a rc.2, a interface carregou a coleção e os dois ambientes gravados antes da atualização.
+
 `npm test` cobre modelos, importação, precedência, persistência segura, montagem de requisições, equivalência editor/runner, HTTP real, extração, isolamento, truncamento e cancelamento. `cargo test --locked --features custom-protocol` mantém o cenário existente de 100 requisições e respostas de 10 MiB.
 
 Uma execução desktop com duas etapas e servidor local confirmou que a região `role="status"` com `aria-atomic="true"` exibe a segunda etapa em andamento e o resultado e a duração da primeira. Ao cancelar durante a segunda etapa, a região exibiu o cancelamento, uma etapa concluída de duas e o mesmo resultado parcial.

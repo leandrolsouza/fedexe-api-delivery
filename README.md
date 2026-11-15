@@ -2,6 +2,10 @@
 
 Cliente HTTP desktop local sob licença MIT. Rust + Tauri 2, com interface React, TypeScript, Tailwind CSS e componentes no padrão shadcn/ui. Sem conta e sem serviços de nuvem obrigatórios.
 
+A partir da 1.2, a interface abre em inglês quando o perfil ainda não tem preferência de idioma. Para mudar para português do Brasil, abra **Settings → Interface language** e selecione **Português (Brasil)**. A escolha fica salva no perfil local.
+
+**Vindo da 1.0.x?** Baixe o instalador da [versão 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) quando ela estiver disponível e execute-o sobre a instalação existente. A série 1.0.x não tem atualizador. A partir da 1.1, o Fedexe verifica versões estáveis na abertura e em **Configurações → Atualizações**.
+
 ## Executar
 
 Instale Node.js 22.17+, Rust com o toolchain MSVC, as ferramentas de build C++ da Microsoft e o WebView2.
@@ -11,7 +15,7 @@ npm ci
 npm run tauri dev
 ```
 
-Para experimentar a coleção **Acme API**, suba `node tools/test-server.mjs` em outro terminal. No app, mantenha o ambiente **Local** e envie **Listar usuários**, ou abra o **Collection runner** e execute as 8 etapas. Os usuários são fictícios e alterações no servidor de exemplo não são persistidas. Para testar uma resposta grande, envie GET para `http://127.0.0.1:8787/large`.
+Para experimentar a coleção **Acme API**, suba `node tools/test-server.mjs` em outro terminal. No app, mantenha o ambiente **Local** e envie **List users**, ou abra o **Collection runner** e execute as 8 etapas. Os usuários são fictícios e alterações no servidor de exemplo não são persistidas. Para testar uma resposta grande, envie GET para `http://127.0.0.1:8787/large`.
 
 ### Prévia no navegador
 
@@ -30,7 +34,9 @@ cargo run --release --locked --features custom-protocol
 
 Para gerar o instalador Windows por usuário, execute `.\node_modules\.bin\tauri.cmd build --ci -- --locked` no PowerShell. O pacote NSIS fica em `target/release/bundle/nsis`. A versão do instalador vem de `tauri.conf.json`.
 
-No GitHub, a publicação de uma release com a tag `v<versão>` dispara o workflow **Windows installer**. O workflow confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows. Depois dessas verificações, anexa à release o instalador, o SHA-256, os resultados do benchmark e os scripts usados na medição. A execução manual do workflow também gera e testa o pacote, que fica disponível como artefato da execução.
+Execute manualmente o workflow **Windows installer** no commit da release. Ele confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows.
+
+Para publicar uma versão estável com o atualizador habilitado, siga o [procedimento de assinatura e publicação](docs/UPDATER.md).
 
 ### Validar a instalação em outro Windows
 

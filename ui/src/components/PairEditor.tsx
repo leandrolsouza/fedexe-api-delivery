@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 import { Eye, EyeOff, LockKeyhole, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { pair, type Pair } from '../lib/models';
@@ -6,7 +7,7 @@ import { Button } from './ui/button';
 export function PairEditor({
   rows,
   onChange,
-  kind = 'parâmetro',
+  kind = t('parâmetro'),
   variables = false,
   maskValue,
   markSecrets = false,
@@ -23,11 +24,11 @@ export function PairEditor({
     onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   return (
     <div className="pair-editor">
-      <div className="pair-table" role="table" aria-label={`Editor de ${kind}s`}>
+      <div className="pair-table" role="table" aria-label={t('Editor de {0}s', kind)}>
         <div className="pair-row pair-heading" role="row">
           <span />
-          <span role="columnheader">{variables ? 'Variável' : 'Chave'}</span>
-          <span role="columnheader">Valor</span>
+          <span role="columnheader">{variables ? t('Variável') : t('Chave')}</span>
+          <span role="columnheader">{t('Valor')}</span>
           <span />
         </div>
         {rows.map((row) => (
@@ -37,15 +38,15 @@ export function PairEditor({
                 type="checkbox"
                 checked={row.enabled}
                 onChange={(event) => update(row.id, { enabled: event.target.checked })}
-                aria-label={`Ativar ${row.key || kind}`}
+                aria-label={t('Ativar {0}', row.key || kind)}
               />
             </div>
             <div role="cell">
               <input
                 className="table-input mono"
                 value={row.key}
-                placeholder={variables ? 'nome_da_variavel' : 'Chave'}
-                aria-label={`${variables ? 'Nome da' : 'Nome do'} ${kind}`}
+                placeholder={variables ? t('nome_da_variavel') : t('Chave')}
+                aria-label={t('{0} {1}', variables ? t('Nome da') : t('Nome do'), kind)}
                 onChange={(event) => update(row.id, { key: event.target.value })}
                 spellCheck={false}
               />
@@ -59,8 +60,8 @@ export function PairEditor({
                     ? 'password'
                     : 'text'
                 }
-                placeholder={row.secret ? 'Segredo' : 'Valor'}
-                aria-label={`Valor de ${row.key || kind}`}
+                placeholder={row.secret ? t('Segredo') : t('Valor')}
+                aria-label={t('Valor de {0}', row.key || kind)}
                 onChange={(event) => update(row.id, { value: event.target.value })}
                 spellCheck={false}
                 autoComplete="off"
@@ -68,8 +69,8 @@ export function PairEditor({
               {row.secret && !maskValue && (
                 <button
                   className="inline-icon"
-                  aria-label={visible.includes(row.id) ? 'Ocultar valor' : 'Mostrar valor'}
-                  title={visible.includes(row.id) ? 'Ocultar valor' : 'Mostrar valor'}
+                  aria-label={visible.includes(row.id) ? t('Ocultar valor') : t('Mostrar valor')}
+                  title={visible.includes(row.id) ? t('Ocultar valor') : t('Mostrar valor')}
                   onClick={() =>
                     setVisible((current) =>
                       current.includes(row.id)
@@ -86,13 +87,17 @@ export function PairEditor({
               {(variables || markSecrets) && (
                 <button
                   className={`inline-icon ${row.secret ? 'secret-active' : ''}`}
-                  aria-label={`${row.secret ? 'Desmarcar' : 'Marcar'} ${row.key || 'variável'} como segredo`}
+                  aria-label={t(
+                    '{0} {1} como segredo',
+                    row.secret ? t('Desmarcar') : t('Marcar'),
+                    row.key || t('variável'),
+                  )}
                   title={
                     row.secret && variables
-                      ? 'Desmarcar segredo e limpar valor'
+                      ? t('Desmarcar segredo e limpar valor')
                       : row.secret
-                        ? 'Desmarcar como segredo'
-                        : 'Marcar como segredo'
+                        ? t('Desmarcar como segredo')
+                        : t('Marcar como segredo')
                   }
                   onClick={() =>
                     update(
@@ -108,7 +113,7 @@ export function PairEditor({
               )}
               <button
                 className="inline-icon delete-row"
-                aria-label={`Remover ${row.key || kind}`}
+                aria-label={t('Remover {0}', row.key || kind)}
                 onClick={() => onChange(rows.filter((p) => p.id !== row.id))}
               >
                 <Trash2 size={13} />
@@ -116,9 +121,7 @@ export function PairEditor({
             </div>
           </div>
         ))}
-        {rows.length === 0 && (
-          <div className="empty-table">Nenhum {kind} configurado. Adicione o primeiro abaixo.</div>
-        )}
+        {rows.length === 0 && <div className="empty-table">{t('Não há linhas configuradas.')}</div>}
       </div>
       <Button
         variant="ghost"
@@ -126,7 +129,9 @@ export function PairEditor({
         className="add-row"
         onClick={() => onChange([...rows, pair()])}
       >
-        <Plus size={14} /> Adicionar {kind}
+        <Plus size={14} />
+        {' ' + t('Adicionar') + ' '}
+        {kind}
       </Button>
     </div>
   );

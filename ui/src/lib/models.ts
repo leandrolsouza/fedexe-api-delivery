@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import { uid } from './utils';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
@@ -186,7 +187,7 @@ export const pair = (key = '', value = '', enabled = true): Pair => ({
 });
 export const newRequest = (folder = ''): RequestItem => ({
   id: uid(),
-  name: 'Nova requisição',
+  name: t('Nova requisição'),
   folder,
   method: 'GET',
   url: '{{base_url}}/',
@@ -215,15 +216,17 @@ export function createWorkspace(): Workspace {
       {
         id: 'acme',
         name: 'Acme API',
-        description: 'Um lugar para construir, explorar e testar sua API.',
-        folders: ['Autenticação', 'Usuários', 'Sistema'],
+        description: t('Um lugar para construir, explorar e testar sua API.'),
+        folders: [t('Autenticação'), t('Usuários'), t('Sistema')],
         variables: [pair('base_url', 'http://127.0.0.1:8787')],
         auth: emptyAuth(),
         requests: [
-          request('Obter token', 'GET', '/token', 'Autenticação', { extract: { token: '/token' } }),
-          request('Listar usuários', 'GET', '/users', 'Usuários', {
+          request(t('Obter token'), 'GET', '/token', t('Autenticação'), {
+            extract: { token: '/token' },
+          }),
+          request(t('Listar usuários'), 'GET', '/users', t('Usuários'), {
             id: 'list-users',
-            description: 'Retorna os usuários do workspace com paginação.',
+            description: t('Retorna os usuários do workspace com paginação.'),
             params: [pair('page', '1'), pair('limit', '10'), pair('search', '', false)],
             tests: [
               { type: 'status', equals: 200 },
@@ -231,8 +234,8 @@ export function createWorkspace(): Workspace {
               { type: 'json', pointer: '/success', equals: true },
             ],
           }),
-          request('Buscar usuário', 'GET', '/users/1', 'Usuários'),
-          request('Criar usuário', 'POST', '/users', 'Usuários', {
+          request(t('Buscar usuário'), 'GET', '/users/1', t('Usuários')),
+          request(t('Criar usuário'), 'POST', '/users', t('Usuários'), {
             bodyType: 'json',
             body: JSON.stringify(
               { name: 'Alex Morgan', email: 'alex@acme.dev', role: 'developer' },
@@ -241,17 +244,17 @@ export function createWorkspace(): Workspace {
             ),
             tests: [{ type: 'status', equals: 201 }],
           }),
-          request('Atualizar usuário', 'PATCH', '/users/1', 'Usuários', {
+          request(t('Atualizar usuário'), 'PATCH', '/users/1', t('Usuários'), {
             bodyType: 'json',
             body: '{\n  "name": "Alex Morgan"\n}',
           }),
-          request('Excluir usuário', 'DELETE', '/users/1', 'Usuários', {
+          request(t('Excluir usuário'), 'DELETE', '/users/1', t('Usuários'), {
             tests: [{ type: 'status', equals: 204 }],
           }),
-          request('Verificar autenticação', 'GET', '/private', 'Sistema', {
+          request(t('Verificar autenticação'), 'GET', '/private', t('Sistema'), {
             auth: { ...emptyAuth(), type: 'bearer', token: '{{token}}' },
           }),
-          request('Status da API', 'GET', '/health', 'Sistema'),
+          request(t('Status da API'), 'GET', '/health', t('Sistema')),
         ],
       },
     ],
@@ -264,20 +267,20 @@ export function createWorkspace(): Workspace {
       },
       {
         id: 'dev',
-        name: 'Desenvolvimento',
+        name: t('Desenvolvimento'),
         color: 'purple',
         variables: [pair('base_url', 'http://localhost:3000')],
       },
       {
         id: 'staging',
-        name: 'Homologação',
+        name: t('Homologação'),
         color: 'amber',
         variables: [pair('base_url', 'https://staging.example.com')],
       },
     ],
     activeEnvironment: 'local',
     history: [],
-    settings: { theme: 'light', compact: false, wrap: true, workspaceName: 'Meu workspace' },
+    settings: { theme: 'light', compact: false, wrap: true, workspaceName: t('Meu workspace') },
   };
 }
 
@@ -287,7 +290,9 @@ export function loadWorkspace(raw: string | null): Workspace {
   const parsed: unknown = JSON.parse(raw);
   if (!isWorkspace(parsed))
     throw new Error(
-      'O workspace salvo usa um formato inválido ou uma versão não suportada. Seus dados foram preservados.',
+      t(
+        'O workspace salvo usa um formato inválido ou uma versão não suportada. Seus dados foram preservados.',
+      ),
     );
   return parsed;
 }
@@ -513,10 +518,10 @@ export function expand(value: string, vars: Record<string, string>) {
   while (rest.includes('{{')) {
     const start = rest.indexOf('{{');
     const end = rest.indexOf('}}', start + 2);
-    if (end < 0) throw new Error('Variável sem fechamento. Use {{nome}}.');
+    if (end < 0) throw new Error(t('Variável sem fechamento. Use {{nome}}.'));
     const key = rest.slice(start + 2, end).trim();
     if (!Object.hasOwn(vars, key))
-      throw new Error(`Variável ausente: ${key}. Configure o valor no ambiente ativo.`);
+      throw new Error(t('Variável ausente: {0}. Configure o valor no ambiente ativo.', key));
     result += rest.slice(0, start) + vars[key];
     rest = rest.slice(end + 2);
   }
@@ -538,7 +543,7 @@ export function authHeaderConflict(item: RequestItem, collection: Collection): s
     name &&
     item.headers.some((row) => row.enabled && row.key.trim().toLowerCase() === name.toLowerCase())
   )
-    return `Header em conflito: ${name}. Desative a linha manual ou mude a autorização.`;
+    return t('Header em conflito: {0}. Desative a linha manual ou mude a autorização.', name);
 }
 
 export function headerEntries(headers: HttpRequest['headers']): [string, string][] {
@@ -549,9 +554,9 @@ export function generatedHeaders(item: RequestItem, collection: Collection) {
   const auth = effectiveAuth(item, collection);
   const headers: { name: string; value: string; secret: boolean; source: string }[] = [];
   if (auth.type === 'basic' || auth.type === 'bearer')
-    headers.push({ name: 'Authorization', value: '', secret: true, source: 'Autorização' });
+    headers.push({ name: 'Authorization', value: '', secret: true, source: t('Autorização') });
   if (auth.type === 'api-key' && auth.placement === 'header' && auth.key.trim())
-    headers.push({ name: auth.key.trim(), value: '', secret: true, source: 'Autorização' });
+    headers.push({ name: auth.key.trim(), value: '', secret: true, source: t('Autorização') });
   if (
     !item.headers.some((row) => row.enabled && row.key.trim().toLowerCase() === 'content-type') &&
     !headers.some(({ name }) => name.toLowerCase() === 'content-type') &&
@@ -562,11 +567,11 @@ export function generatedHeaders(item: RequestItem, collection: Collection) {
       value: {
         json: 'application/json',
         urlencoded: 'application/x-www-form-urlencoded',
-        multipart: 'multipart/form-data (boundary automático)',
+        multipart: t('multipart/form-data (boundary automático)'),
         binary: 'application/octet-stream',
       }[item.bodyType as 'json' | 'urlencoded' | 'multipart' | 'binary'],
       secret: false,
-      source: 'Corpo',
+      source: t('Corpo'),
     });
   return headers;
 }
@@ -594,7 +599,7 @@ export function compileRequest(
 ): HttpRequest {
   item = syncUrl(item);
   if (item.timeoutMs !== undefined && !validTimeout(item.timeoutMs))
-    throw new Error('O timeout deve ficar entre 1 e 600.000 ms.');
+    throw new Error(t('O timeout deve ficar entre 1 e 600.000 ms.'));
   const conflict = authHeaderConflict(item, collection);
   if (conflict) throw new Error(conflict);
   const expandValue = (value: string) => (resolve ? expand(value, vars) : value);
@@ -616,30 +621,31 @@ export function compileRequest(
   if (auth.type === 'bearer') addHeader('Authorization', `Bearer ${auth.token}`);
   if (auth.type === 'api-key') {
     const key = auth.key.trim();
-    if (!key) throw new Error('Informe o nome da chave da API.');
+    if (!key) throw new Error(t('Informe o nome da chave da API.'));
     if (auth.placement === 'header') addHeader(key, auth.value);
     else query.push([key, auth.value]);
   }
   const hasHeader = (name: string) => headers.some(([key]) => key.toLowerCase() === name);
   if (hasFileBody && (hasHeader('content-length') || hasHeader('transfer-encoding')))
-    throw new Error('Remova Content-Length e Transfer-Encoding manuais deste corpo.');
+    throw new Error(t('Remova Content-Length e Transfer-Encoding manuais deste corpo.'));
   if (item.bodyType === 'multipart' && hasHeader('content-type'))
-    throw new Error('Remova o Content-Type manual para gerar o boundary multipart.');
+    throw new Error(t('Remova o Content-Type manual para gerar o boundary multipart.'));
   const multipart =
     item.bodyType === 'multipart'
       ? (item.multipart ?? [])
           .filter((row) => row.enabled)
           .map((row): MultipartPart => {
             const name = expandValue(row.key.trim());
-            if (resolve && !name) throw new Error('Informe o nome de cada parte multipart ativa.');
+            if (resolve && !name)
+              throw new Error(t('Informe o nome de cada parte multipart ativa.'));
             if (row.kind === 'field') return { kind: 'field', name, value: expandValue(row.value) };
             if (resolve && !row.value)
-              throw new Error('Selecione o arquivo de cada parte multipart ativa.');
+              throw new Error(t('Selecione o arquivo de cada parte multipart ativa.'));
             return { kind: 'file', name, path: row.value };
           })
       : undefined;
   const binaryFile = item.bodyType === 'binary' ? (item.binaryFile ?? '') : undefined;
-  if (resolve && binaryFile === '') throw new Error('Selecione um arquivo binário.');
+  if (resolve && binaryFile === '') throw new Error(t('Selecione um arquivo binário.'));
   if (!defer) url = appendQuery(url, query, resolve ? vars : undefined);
   let body: string | null =
     item.bodyType === 'json' || item.bodyType === 'text' ? expandValue(item.body) : null;
@@ -648,7 +654,7 @@ export function compileRequest(
       try {
         JSON.parse(body || '');
       } catch {
-        throw new Error('O corpo não contém um JSON válido. Corrija antes de enviar.');
+        throw new Error(t('O corpo não contém um JSON válido. Corrija antes de enviar.'));
       }
     }
   }
@@ -672,7 +678,7 @@ export function compileRequest(
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password)
       throw new Error(
-        'Use uma URL HTTP(S) sem credenciais. Configure a autenticação na aba Autorização.',
+        t('Use uma URL HTTP(S) sem credenciais. Configure a autenticação na aba Autorização.'),
       );
   }
   return {
@@ -709,7 +715,7 @@ export function resolveHttpRequest(
   variables: Record<string, string>,
 ): HttpRequest {
   if (template.multipart !== undefined || template.binary_file !== undefined)
-    throw new Error('Corpos multipart e binários estão disponíveis no app desktop.');
+    throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
   const url = appendQuery(
     resolvePath(template.url, template.path_params ?? [], variables),
     template.query ?? [],
@@ -737,12 +743,12 @@ export function resolveHttpRequest(
     try {
       JSON.parse(body || '');
     } catch {
-      throw new Error('O corpo não contém um JSON válido. Corrija antes de enviar.');
+      throw new Error(t('O corpo não contém um JSON válido. Corrija antes de enviar.'));
     }
   }
   const parsed = new URL(url);
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password)
-    throw new Error('Use uma URL HTTP(S) sem credenciais.');
+    throw new Error(t('Use uma URL HTTP(S) sem credenciais.'));
   return {
     method: template.method,
     url,
@@ -809,12 +815,12 @@ function resolvePath(url: string, rows: [string, string][], variables?: Record<s
   const params = new Map(rows);
   const resolved = path.replace(/\{\{[\s\S]*?\}\}|\{([A-Za-z0-9_-]+)\}/g, (match, key) => {
     if (key === undefined) return match;
-    if (!params.has(key)) throw new Error(`Parâmetro de caminho ausente: ${key}.`);
+    if (!params.has(key)) throw new Error(t('Parâmetro de caminho ausente: {0}.', key));
     const template = params.get(key)!;
     if (!variables && template.includes('{{')) return template;
     const value = expandValue(template);
     if (!value || value === '.' || value === '..')
-      throw new Error(`Valor inválido para o parâmetro de caminho: ${key}.`);
+      throw new Error(t('Valor inválido para o parâmetro de caminho: {0}.', key));
     return encodeURIComponent(value).replace(
       /[!'()*]/g,
       (char) => '%' + char.charCodeAt(0).toString(16).toUpperCase(),
@@ -833,11 +839,11 @@ export function importCollection(value: unknown): Collection {
   };
   if (!native || !Array.isArray(native.requests))
     throw new Error(
-      'Formato não suportado. Confira se o arquivo é uma coleção, ambiente ou backup válido.',
+      t('Formato não suportado. Confira se o arquivo é uma coleção, ambiente ou backup válido.'),
     );
   const collection: Collection = {
     id: uid(),
-    name: native.name || 'Coleção importada',
+    name: native.name || t('Coleção importada'),
     description: '',
     folders: [],
     variables: Object.entries(native.variables || {}).map(([k, v]) => pair(k, v)),
@@ -857,6 +863,6 @@ export function importCollection(value: unknown): Collection {
     ),
   };
   if (!validCollection(collection))
-    throw new Error('A coleção contém campos inválidos. Confira o arquivo antes de importar.');
+    throw new Error(t('A coleção contém campos inválidos. Confira o arquivo antes de importar.'));
   return collection;
 }

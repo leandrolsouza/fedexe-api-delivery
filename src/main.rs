@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod credentials;
 mod http;
+#[cfg(windows)]
+mod updates;
 mod workspace;
 
 use http::{Collection, Request, Response, Run};
@@ -79,6 +81,7 @@ fn release_response_bodies(app: State<'_, App>, ids: Vec<String>) {
 #[tauri::command]
 async fn pick_body_file(
     window: tauri::WebviewWindow,
+    title: String,
 ) -> Result<Option<std::path::PathBuf>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (sender, receiver) = oneshot::channel();
@@ -86,6 +89,7 @@ async fn pick_body_file(
         .dialog()
         .file()
         .set_parent(&window)
+        .set_title(title)
         .pick_file(move |selection| {
             let _ = sender.send(selection);
         });
@@ -102,7 +106,8 @@ async fn save_response_body(
     window: tauri::WebviewWindow,
     app: State<'_, App>,
     id: String,
-    json: bool,
+    filename: String,
+    title: String,
 ) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -118,11 +123,8 @@ async fn save_response_body(
         .dialog()
         .file()
         .set_parent(&window)
-        .set_file_name(if json {
-            "resposta.json"
-        } else {
-            "resposta.bin"
-        })
+        .set_title(title)
+        .set_file_name(filename)
         .save_file(move |path| {
             let _ = sender.send(path);
         });
@@ -167,7 +169,10 @@ fn main() {
 
     let builder = tauri::Builder::default();
     #[cfg(windows)]
-    let builder = builder.plugin(tauri_plugin_dialog::init());
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::PendingUpdate::default());
     builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
@@ -204,6 +209,10 @@ fn main() {
             credentials::read_secret,
             #[cfg(windows)]
             credentials::write_secret,
+            #[cfg(windows)]
+            updates::check_update,
+            #[cfg(windows)]
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("Fedexe API");

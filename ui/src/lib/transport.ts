@@ -1,3 +1,5 @@
+import { localizeNativeMessage } from './native-messages';
+import { t } from './i18n';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { checkResponse, isJsonPointer, jsonPointer, responseJson } from './response-tests';
 import {
@@ -14,7 +16,11 @@ let controller: AbortController | undefined;
 export const native = isTauri();
 
 export async function saveResponseBody(id: string, json: boolean) {
-  return invoke<boolean>('save_response_body', { id, json });
+  return invoke<boolean>('save_response_body', {
+    id,
+    filename: t('resposta') + (json ? '.json' : '.bin'),
+    title: t('Salvar corpo completo'),
+  });
 }
 
 export async function releaseResponseBodies(ids: string[]) {
@@ -26,10 +32,10 @@ async function browserSend(
   limit: number | null = 256 * 1024,
 ): Promise<HttpResponse> {
   if (request.multipart !== undefined || request.binary_file !== undefined)
-    throw new Error('Corpos multipart e binários estão disponíveis no app desktop.');
+    throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
   const start = performance.now();
   if (request.redirect_policy === 'same_origin')
-    throw new Error('Para seguir redirecionamentos da mesma origem, execute no app desktop.');
+    throw new Error(t('Para seguir redirecionamentos da mesma origem, execute no app desktop.'));
   const timeout = AbortSignal.timeout(request.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   const response = await fetch(request.url, {
     method: request.method,
@@ -78,7 +84,7 @@ async function browserSend(
 }
 
 export async function pickBodyFile() {
-  return invoke<string | null>('pick_body_file');
+  return invoke<string | null>('pick_body_file', { title: t('Selecionar arquivo') });
 }
 
 export async function send(request: HttpRequest) {
@@ -104,9 +110,16 @@ export async function runCollection(
   onProgress: (event: RunProgress) => void,
 ): Promise<RunResult> {
   if (native) {
-    const progress = new Channel<RunProgress>(onProgress);
+    const localizeRow = (row: RunRow) => ({
+      ...row,
+      failures: row.failures.map(localizeNativeMessage),
+    });
+    const progress = new Channel<RunProgress>((event) =>
+      onProgress(event.type === 'finished' ? { ...event, row: localizeRow(event.row) } : event),
+    );
     try {
-      return await invoke<RunResult>('run', { collection, progress });
+      const result = await invoke<RunResult>('run', { collection, progress });
+      return { ...result, results: result.results.map(localizeRow) };
     } finally {
       progress.onmessage = () => {};
     }
@@ -153,14 +166,14 @@ export async function runCollection(
         Object.entries(step.extract).forEach(([key, path]) => {
           if (!isJsonPointer(path) || json?.error) {
             row.failures.push(
-              !isJsonPointer(path) ? `JSON Pointer inválido: ${path}.` : json!.error!,
+              !isJsonPointer(path) ? t('JSON Pointer inválido: {0}.', path) : json!.error!,
             );
             return;
           }
           const value = jsonPointer(json?.value, path);
           if (['string', 'number', 'boolean'].includes(typeof value))
             variables[key] = String(value);
-          else row.failures.push(`Extração exige um valor escalar em ${path}.`);
+          else row.failures.push(t('Extração exige um valor escalar em {0}.', path));
         });
         row.validation_ms = Math.round(performance.now() - validation);
       } catch (error) {
@@ -186,14 +199,16 @@ export async function runCollection(
 
 export function normalizeError(error: unknown): Error {
   if (error instanceof Error) {
-    if (error.name === 'AbortError') return new Error('Execução cancelada.');
+    if (error.name === 'AbortError') return new Error(t('Execução cancelada.'));
     if (error.name === 'TimeoutError')
-      return new Error('A requisição excedeu o timeout configurado.');
+      return new Error(t('A requisição excedeu o timeout configurado.'));
     if (error.message === 'Failed to fetch')
       return new Error(
-        'Não foi possível conectar. Confira a URL e se o servidor está ativo. No navegador, a API também precisa permitir CORS; no app desktop essa restrição não existe.',
+        t(
+          'Não foi possível conectar. Confira a URL e se o servidor está ativo. No navegador, a API também precisa permitir CORS; no app desktop essa restrição não existe.',
+        ),
       );
     return error;
   }
-  return new Error(String(error));
+  return new Error(localizeNativeMessage(String(error)));
 }

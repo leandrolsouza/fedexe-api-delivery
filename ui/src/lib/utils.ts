@@ -1,3 +1,4 @@
+import { formatNumber } from './i18n';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -8,7 +9,9 @@ export function uid() {
   return crypto.randomUUID();
 }
 export function formatBytes(bytes: number) {
-  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+  return bytes < 1024
+    ? `${formatNumber(bytes)} B`
+    : `${formatNumber(bytes / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB`;
 }
 
 export function jsonEqual(left: unknown, right: unknown): boolean {
