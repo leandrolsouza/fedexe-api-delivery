@@ -1,0 +1,78 @@
+name: Publish Fedexe API v1.3.0
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [codex/release-1.3.0]
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.actor == 'leandrolsouza' && github.repository == 'leandrolsouza/fedexe-api-delivery' && github.event.pull_request.head.repo.full_name == 'leandrolsouza/fedexe-api-delivery' && github.event.pull_request.head.ref == 'codex/publish-v1.3.0' && github.event.pull_request.base.sha == '1c72754aa59499ce620d1e53bc85754bc1da18c2'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: leandrolsouza/fedexe-api-delivery
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publish the verified build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $tag = 'v1.3.0'
+          $commit = '1c72754aa59499ce620d1e53bc85754bc1da18c2'
+          foreach ($id in @(43660741392,43660128733)) {
+            $run = gh run view $id --json conclusion,headSha,jobs | ConvertFrom-Json
+            if ($run.headSha -cne $commit -or $run.conclusion -cne 'success') { throw "Invalid run $id" }
+          }
+          gh run download 43660741392 --name fedexe-windows-nsis --dir candidate
+          gh run download 43660128733 --name fedexe-cli-windows-x64 --dir cli
+          $verified = @{
+            'candidate/Fedexe.API_1.3.0_x64-setup.exe' = 'd0fbe3106b1f8d4f8fc02de86d3dc2d2d09203f0cd19ae10465b49519bc138ba'
+            'candidate/Fedexe.API_1.3.0_x64-setup.exe.sha256' = 'd950bdd574404f158ad0c5464627505678272feb2dab8e0a64495c567d8ae81d'
+            'candidate/Fedexe.API_1.3.0_x64-setup.exe.sig' = '952b38f1990b32bd19ba6b8236113d3ddbd19e6fd4c7e673ee93c1045b76e2a5'
+            'candidate/latest.json' = '168d6a99b02d824726a200d87c5a511638707ae9330e0a01b04244c7d0b76399'
+            'cli/fedexe-runner.exe' = 'b084ae0f68763d72183e76d6619e18e48236fce93c09d6fd9b30c4a0f002c92a'
+            'cli/fedexe.mjs' = '9ce3ec46fff733e952a3cae5f0e0f8549325562485ac6f7e35b0d099ea15a4ad'
+          }
+          foreach ($file in $verified.Keys) {
+            if ((Get-FileHash -LiteralPath $file).Hash.ToLowerInvariant() -cne $verified[$file]) { throw "Artifact mismatch: $file" }
+          }
+          gh api "repos/$env:GH_REPO/contents/docs/CLI.md?ref=$commit" -H 'Accept: application/vnd.github.raw+json' | Set-Content -LiteralPath cli/CLI.md -Encoding utf8
+          gh api "repos/$env:GH_REPO/contents/LICENSE?ref=$commit" -H 'Accept: application/vnd.github.raw+json' | Set-Content -LiteralPath cli/LICENSE -Encoding utf8
+          $cli = 'Fedexe.API_1.3.0_cli_windows-x64.zip'
+          Compress-Archive -Path cli/* -DestinationPath "candidate/$cli"
+          $cliHash = (Get-FileHash -LiteralPath "candidate/$cli").Hash.ToLowerInvariant()
+          "$cliHash  $cli" | Set-Content -LiteralPath "candidate/$cli.sha256" -Encoding ascii
+          $installer = 'Fedexe.API_1.3.0_x64-setup.exe'
+          $names = @($installer, "$installer.sha256", "$installer.sig", 'latest.json', $cli, "$cli.sha256")
+          $assets = @($names | ForEach-Object { "candidate/$_" })
+          gh release create $tag @assets --target $commit --draft --title 'Fedexe API 1.3.0' --notes-file .release-notes.md
+          $draft = gh release view $tag --json isDraft,isPrerelease,targetCommitish,assets | ConvertFrom-Json
+          if (!$draft.isDraft -or $draft.isPrerelease -or $draft.targetCommitish -cne $commit -or (Compare-Object $names @($draft.assets.name))) { throw 'Invalid release draft' }
+          $remote = (gh api "repos/$env:GH_REPO/releases?per_page=30" | ConvertFrom-Json) | Where-Object tag_name -CEQ $tag
+          foreach ($asset in $remote.assets) {
+            $hash = (Get-FileHash -LiteralPath "candidate/$($asset.name)").Hash.ToLowerInvariant()
+            if ($asset.state -ne 'uploaded' -or $asset.digest -cne "sha256:$hash") { throw "Upload mismatch: $($asset.name)" }
+          }
+          gh release edit $tag --draft=false --latest
+          $latest = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+          if ($latest.tag_name -cne $tag -or $latest.draft -or $latest.prerelease) { throw 'Latest release mismatch' }
+          $ref = gh api "repos/$env:GH_REPO/git/ref/tags/$tag" | ConvertFrom-Json
+          if ($ref.object.type -ne 'commit' -or $ref.object.sha -cne $commit) { throw 'Tag mismatch' }
+          foreach ($asset in $latest.assets) {
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile download -TimeoutSec 30
+            $hash = (Get-FileHash -LiteralPath download).Hash.ToLowerInvariant()
+            if ($asset.digest -cne "sha256:$hash") { throw "Public download mismatch: $($asset.name)" }
+          }
+          Invoke-WebRequest -Uri "https://github.com/$env:GH_REPO/releases/latest/download/latest.json" -OutFile public-latest.json -TimeoutSec 30
+          if ((Get-FileHash -LiteralPath public-latest.json).Hash.ToLowerInvariant() -cne $verified['candidate/latest.json']) { throw 'Updater manifest mismatch' }
+          Write-Output $latest.html_url
