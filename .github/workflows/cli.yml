@@ -19,6 +19,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: npm run build
+      - run: npm test
       - run: npm run build:cli
       - run: node tools/test-cli.mjs
       - uses: actions/upload-artifact@v4
