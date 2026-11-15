@@ -288,15 +288,38 @@ export const messages = {
   'Salvar nome': 'Save name',
   Criar: 'Create',
   'Traga suas APIs para casa.': 'Import data',
-  'Importe um backup, uma coleção, um ambiente Postman ou uma requisição cURL.':
-    'Import a backup, collection, Postman environment, or cURL request.',
+  'Importe um backup, uma coleção, um ambiente Postman, OpenAPI ou cURL.':
+    'Import a backup, collection, Postman environment, OpenAPI specification, or cURL request.',
   'O arquivo excede o limite de importação de 10 MB.': 'The file exceeds the 10 MB import limit.',
   'Arraste seu arquivo ou clique para escolher': 'Drop a file here or click to browse',
-  'Arquivos .json · até 10 MB': 'JSON files · up to 10 MB',
-  'ou cole JSON ou cURL': 'or paste JSON or cURL',
-  'JSON da coleção para importar': 'Collection JSON to import',
+  'Arquivos .json, .yaml e .yml · até 10 MB': 'JSON and YAML files · up to 10 MB',
+  'ou cole JSON, YAML ou cURL': 'or paste JSON, YAML, or cURL',
+  'Conteúdo para importar': 'Content to import',
   'Importar cURL': 'Import cURL',
-  'Importar JSON': 'Import JSON',
+  'Informe um JSON válido ou uma especificação OpenAPI em YAML válida.':
+    'Enter valid JSON or a valid OpenAPI specification in YAML.',
+  'OpenAPI: {0}': 'OpenAPI: {0}',
+  'A importação requer OpenAPI 3.0 ou 3.1.': 'Import requires OpenAPI 3.0 or 3.1.',
+  '{0}: referência OpenAPI não resolvida ({1}).': '{0}: unresolved OpenAPI reference ({1}).',
+  '{0}: foi importado apenas o primeiro servidor.': '{0}: only the first server was imported.',
+  '{0}: configure uma URL HTTP(S) absoluta no ambiente.':
+    '{0}: set an absolute HTTP(S) URL in the environment.',
+  '{0}: foi importada apenas a primeira opção de autenticação.':
+    '{0}: only the first authentication option was imported.',
+  '{0}: configure a autenticação no Fedexe antes de enviar.':
+    '{0}: configure authentication in Fedexe before sending.',
+  '{0}: o esquema de autenticação exige configuração manual.':
+    '{0}: this authentication scheme requires manual setup.',
+  '{0}: revise os formatos e exemplos do corpo da requisição.':
+    '{0}: review request body formats and examples.',
+  '{0}: método HTTP sem suporte.': '{0}: unsupported HTTP method.',
+  '{0}: a requisição foi agrupada pela primeira tag.':
+    '{0}: the request was grouped under its first tag.',
+  '{0}: revise o parâmetro {1}.': '{0}: review parameter {1}.',
+  'Revise webhooks, callbacks ou operações que não puderam ser importadas.':
+    'Review webhooks, callbacks, or operations that could not be imported.',
+  'A especificação não contém operações HTTP compatíveis.':
+    'The specification contains no supported HTTP operations.',
   'Relatório de importação': 'Import report',
   'Nenhum ajuste identificado na importação.': 'No changes needed after import.',
   Concluir: 'Done',

@@ -5,6 +5,7 @@ import {
   importPostmanItems,
   itemKey,
   listPostmanWorkspaces,
+  loadPostmanSpecs,
   postmanError,
   readPostmanWorkspace,
   unsupportedPostmanIssues,
@@ -98,7 +99,13 @@ export function PostmanWorkspaceDialog({
     setWorkspaceId(id);
     if (!id) return;
     return perform(async () => {
-      const data = readPostmanWorkspace(await get({ kind: 'workspace', id }));
+      const legacy = readPostmanWorkspace(await get({ kind: 'workspace', id }));
+      let data = legacy;
+      try {
+        data = await loadPostmanSpecs(legacy, id, get);
+      } catch (failure) {
+        setError(t('OpenAPI: {0}', postmanError(failure)));
+      }
       setWorkspace(data);
       setSelected(new Set(data.items.map(itemKey)));
     });
@@ -220,7 +227,12 @@ export function PostmanWorkspaceDialog({
                             });
                           }}
                         />{' '}
-                        {item.kind === 'collection' ? t('Coleção') : t('Ambiente')} · {item.name}
+                        {item.kind === 'collection'
+                          ? t('Coleção')
+                          : item.kind === 'spec'
+                            ? 'OpenAPI'
+                            : t('Ambiente')}{' '}
+                        · {item.name}
                       </label>
                     </li>
                   );

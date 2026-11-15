@@ -13,18 +13,39 @@ const MAX_BYTES: usize = 10 * 1024 * 1024;
 pub enum Resource {
     Workspaces { cursor: Option<String> },
     Workspace { id: String },
+    Specs { id: String, cursor: Option<String> },
+    Spec { id: String },
     Collection { id: String },
     Environment { id: String },
 }
 
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
 fn resource_url(resource: Resource) -> Result<Url, String> {
     let mut page = None;
+    let mut workspace_id = None;
+    let mut definition = false;
     let (group, id) = match resource {
         Resource::Workspaces { cursor } => {
             page = Some(cursor);
             ("workspaces", None)
         }
         Resource::Workspace { id } => ("workspaces", Some(id)),
+        Resource::Specs { id, cursor } => {
+            workspace_id = Some(id);
+            page = Some(cursor);
+            ("specs", None)
+        }
+        Resource::Spec { id } => {
+            definition = true;
+            ("specs", Some(id))
+        }
         Resource::Collection { id } => ("collections", Some(id)),
         Resource::Environment { id } => ("environments", Some(id)),
     };
@@ -32,17 +53,21 @@ fn resource_url(resource: Resource) -> Result<Url, String> {
     let mut path = url.path_segments_mut().expect("Postman API path");
     path.pop_if_empty().push(group);
     if let Some(id) = id {
-        if id.is_empty()
-            || id.len() > 128
-            || !id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
+        if !valid_id(&id) {
             return Err("invalidId".into());
         }
         path.push(&id);
     }
+    if definition {
+        path.push("definitions");
+    }
     drop(path);
+    if let Some(id) = workspace_id {
+        if !valid_id(&id) {
+            return Err("invalidId".into());
+        }
+        url.query_pairs_mut().append_pair("workspaceId", &id);
+    }
     if let Some(cursor) = page {
         let mut query = url.query_pairs_mut();
         query.append_pair("limit", "100");
@@ -130,6 +155,33 @@ async fn get(resource: Resource, key: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builds_spec_routes() {
+        assert_eq!(
+            resource_url(Resource::Spec {
+                id: "spec-123".into()
+            })
+            .unwrap()
+            .as_str(),
+            "https://api.postman.com/specs/spec-123/definitions"
+        );
+        assert_eq!(
+            resource_url(Resource::Specs {
+                id: "workspace-456".into(),
+                cursor: Some("next+page".into()),
+            })
+            .unwrap()
+            .as_str(),
+            "https://api.postman.com/specs?workspaceId=workspace-456&limit=100&cursor=next%2Bpage"
+        );
+        assert!(
+            resource_url(Resource::Spec {
+                id: "../spec".into()
+            })
+            .is_err()
+        );
+    }
 
     #[test]
     fn accepts_postman_uids_and_rejects_paths() {

@@ -3,6 +3,7 @@ import { compileRequest, variablesFor } from './models';
 import {
   importPostmanItems,
   listPostmanWorkspaces,
+  loadPostmanSpecs,
   readPostmanWorkspace,
   unsupportedPostmanIssues,
   type PostmanGet,
@@ -112,4 +113,34 @@ describe('Postman workspace import', () => {
     expect(result.issues[0]).toContain('Orders');
     expect(result.issues[0]).toContain('no longer available');
   });
+});
+
+it('lists compatible specs across Postman pages and imports each definition with an environment', async () => {
+  const get: PostmanGet = vi.fn(async (resource) => {
+    if (resource.kind === 'specs' && !resource.cursor)
+      return {
+        specs: [{ id: 'async', name: 'Async', type: 'ASYNCAPI:2.0' }],
+        meta: { nextCursor: 'next' },
+      };
+    if (resource.kind === 'specs')
+      return { specs: [{ id: 'openapi', name: 'HTTP', type: 'OPENAPI:3.1' }] };
+    if (resource.kind === 'spec' && resource.id === 'openapi')
+      return {
+        openapi: '3.1.0',
+        info: { title: 'HTTP' },
+        servers: [{ url: 'https://example.test' }],
+        paths: { '/health': { get: {} } },
+      };
+    throw new Error('unexpected resource');
+  });
+  const listed = await loadPostmanSpecs(workspace, 'workspace', get);
+  const result = await importPostmanItems(
+    listed.items.filter((item) => item.kind === 'spec'),
+    get,
+    [],
+  );
+  expect(listed.unsupported).toContainEqual({ type: 'specs', count: 1 });
+  expect(result.collections[0].requests[0].url).toBe('{{base_url}}/health');
+  expect(result.environments[0].variables[0].value).toBe('https://example.test');
+  expect(result.issues).toEqual([]);
 });

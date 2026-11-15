@@ -1,10 +1,13 @@
 import { t } from './i18n';
 import type { Collection, Environment } from './models';
+import { importOpenApi } from './openapi';
 import { importPostman } from './postman';
 
-type Kind = 'collection' | 'environment';
+type Kind = 'collection' | 'environment' | 'spec';
 export type PostmanResource =
-  { kind: 'workspaces'; cursor?: string } | { kind: 'workspace' | Kind; id: string };
+  | { kind: 'workspaces'; cursor?: string }
+  | { kind: 'workspace' | Kind; id: string }
+  | { kind: 'specs'; id: string; cursor?: string };
 export type PostmanGet = (resource: PostmanResource) => Promise<unknown>;
 type Ref = { id: string; name: string };
 export type PostmanItem = Ref & { kind: Kind };
@@ -58,6 +61,42 @@ export function readPostmanWorkspace(response: unknown) {
     return Array.isArray(entries) && entries.length ? [{ type, count: entries.length }] : [];
   });
   return { name: workspace.name, items, unsupported };
+}
+
+export async function loadPostmanSpecs(
+  workspace: ReturnType<typeof readPostmanWorkspace>,
+  id: string,
+  get: PostmanGet,
+) {
+  const items = new Map<string, PostmanItem>();
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  let unsupported = 0;
+  do {
+    const page = object(await get({ kind: 'specs', id, cursor }));
+    if (!Array.isArray(page.specs)) throw new Error('invalidResponse');
+    for (const entry of page.specs) {
+      const spec = object(entry);
+      if (spec.type === 'OPENAPI:3.0' || spec.type === 'OPENAPI:3.1') {
+        const [ref] = refs([entry]);
+        items.set(ref.id, { ...ref, kind: 'spec' });
+      } else unsupported++;
+    }
+    const next = object(page.meta).nextCursor;
+    cursor = typeof next === 'string' && next ? next : undefined;
+    if (cursor) {
+      if (seen.has(cursor)) throw new Error('invalidResponse');
+      seen.add(cursor);
+    }
+  } while (cursor);
+  return {
+    ...workspace,
+    items: [...workspace.items, ...items.values()],
+    unsupported: [
+      ...workspace.unsupported.filter((entry) => entry.type !== 'specs'),
+      ...(unsupported ? [{ type: 'specs' as const, count: unsupported }] : []),
+    ],
+  };
 }
 
 export function itemKey(item: PostmanItem) {
@@ -115,8 +154,17 @@ export async function importPostmanItems(
       result.issues.push(t('{0}: {1}', item.name, postmanError(error)));
       continue;
     }
-    const data = object(object(response)[item.kind]);
+
     try {
+      if (item.kind === 'spec') {
+        const imported = importOpenApi(response);
+        if (!imported) throw new Error('invalidResponse');
+        result.collections.push(imported.collection);
+        result.environments.push(imported.environment);
+        result.issues.push(...imported.issues);
+        continue;
+      }
+      const data = object(object(response)[item.kind]);
       const imported = importPostman(
         item.kind === 'environment' ? { ...data, _postman_variable_scope: 'environment' } : data,
       );

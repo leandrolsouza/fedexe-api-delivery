@@ -104,6 +104,7 @@ import { CodeViewer } from './components/CodeViewer';
 import { PairEditor } from './components/PairEditor';
 import { AuthFields, AuthType } from './components/AuthFields';
 import { version } from '../../package.json';
+import { importOpenApi, parseImport } from './lib/openapi';
 import { importPostman } from './lib/postman';
 import { importCurl, isCurl } from './lib/curl';
 
@@ -909,7 +910,23 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setImportError('');
         return;
       }
-      const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
+      const parsed = parseImport(text);
+      const openApi = importOpenApi(parsed);
+      if (openApi) {
+        const { collection: imported, environment, issues } = openApi;
+        setWorkspace((current) => ({
+          ...current,
+          collections: [...current.collections, imported],
+          environments: [...current.environments, environment],
+          activeEnvironment: environment.id,
+        }));
+        openRequest(imported.id, imported.requests[0].id);
+        setImportReport({ name: imported.name, issues });
+        setImportOpen(false);
+        setImportText('');
+        setImportError('');
+        return;
+      }
       if (isWorkspace(parsed)) {
         setConfirmDialog({
           title: t('Restaurar backup?'),
@@ -1869,9 +1886,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         open={importOpen}
         onOpenChange={setImportOpen}
         title={t('Traga suas APIs para casa.')}
-        description={t(
-          'Importe um backup, uma coleção, um ambiente Postman ou uma requisição cURL.',
-        )}
+        description={t('Importe um backup, uma coleção, um ambiente Postman, OpenAPI ou cURL.')}
         className="import-dialog"
       >
         <button
@@ -1896,13 +1911,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             <Upload size={25} />
           </span>
           <strong>{t('Arraste seu arquivo ou clique para escolher')}</strong>
-          <small>{t('Arquivos .json · até 10 MB')}</small>
+          <small>{t('Arquivos .json, .yaml e .yml · até 10 MB')}</small>
         </button>
         <input
           ref={fileInput}
           hidden
           type="file"
-          accept=".json,application/json"
+          accept=".json,.yaml,.yml,application/json,application/yaml"
           onChange={async (e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -1922,11 +1937,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         />
         <div className="import-divider">
           <span />
-          {t('ou cole JSON ou cURL')}
+          {t('ou cole JSON, YAML ou cURL')}
           <span />
         </div>
         <textarea
-          aria-label={t('JSON da coleção para importar')}
+          aria-label={t('Conteúdo para importar')}
           className="input mono import-textarea"
           value={importText}
           onChange={(e) => {
@@ -1954,14 +1969,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span>
             <FileJson2 size={15} /> Fedexe JSON <Check size={12} />
           </span>
-          <span>Postman · cURL</span>
+          <span>Postman · OpenAPI · cURL</span>
         </div>
         <div className="dialog-footer">
           <Button variant="outline" onClick={() => setImportOpen(false)}>
             {t('Cancelar')}
           </Button>
           <Button disabled={!importText.trim()} onClick={() => importData(importText)}>
-            {isCurl(importText) ? t('Importar cURL') : t('Importar JSON')} <ArrowRight size={14} />
+            {isCurl(importText) ? t('Importar cURL') : t('Importar')} <ArrowRight size={14} />
           </Button>
         </div>
       </Dialog>

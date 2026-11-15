@@ -66,10 +66,16 @@ No executável de produção 1.0.0-rc.1, a API Windows UI Automation identificou
 
 1. Abra **Importar → Importar workspace do Postman**.
 2. Informe uma chave da API do Postman e selecione **Listar workspaces**. O app valida a chave e a guarda no Gerenciador de Credenciais do Windows. Nas próximas importações, use a chave salva ou informe outra. Use **Remover chave salva** para desconectar.
-3. Escolha um workspace. Todas as coleções e ambientes disponíveis ficam selecionados por padrão. Desmarque os itens que deseja deixar no Postman ou use **Desmarcar todos** para montar a sua seleção.
+3. Escolha um workspace. Todas as coleções, ambientes e especificações OpenAPI compatíveis ficam selecionados por padrão. Desmarque os itens que deseja deixar no Postman ou use **Desmarcar todos** para montar a sua seleção.
 4. Importe os itens selecionados e revise o relatório. A importação acrescenta cópias ao workspace local. Configure nele os valores secretos e os valores que não foram compartilhados no Postman, selecione um ambiente e execute a coleção.
 
-O relatório aponta itens que falharam no download, recursos sem suporte que o Postman retornou e ajustes detectados durante a conversão, como anexos, exemplos de resposta ou scripts incompatíveis. A importação de OpenAPI está prevista para a 1.7.
+O relatório aponta itens que falharam no download, recursos sem suporte que o Postman retornou e ajustes detectados durante a conversão, como anexos, exemplos de resposta ou scripts incompatíveis.
+
+### Importar OpenAPI
+
+Em **Importar**, escolha um arquivo OpenAPI 3.0 ou 3.1 em JSON ou YAML, ou cole a especificação. O Fedexe cria uma coleção editável, agrupa as requisições pela primeira tag e cria um ambiente com as URLs dos servidores. Revise as variáveis e preencha os segredos da autenticação antes de enviar as requisições ou executar o runner.
+
+A importação resolve referências internas e converte exemplos de corpo JSON, texto e formulário URL-encoded. O relatório aponta referências externas, URLs relativas, opções adicionais de servidor e recursos que precisam de configuração manual. Ao importar pelo Postman, selecione o ambiente criado para a especificação que deseja executar.
 
 ## OAuth 2.0
 
