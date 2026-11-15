@@ -195,8 +195,27 @@ pub struct ResultRow {
     validation_ms: u128,
     checks_passed: usize,
     failures: Vec<String>,
+    failure_reasons: Vec<FailureReason>,
     #[serde(skip)]
     execution_error: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum FailureReason {
+    Status,
+    Header,
+    Json,
+    Extraction,
+    Preparation,
+    Transport,
+}
+
+impl ResultRow {
+    fn add_failure(&mut self, reason: FailureReason, message: String) {
+        self.failure_reasons.push(reason);
+        self.failures.push(message);
+    }
 }
 
 #[derive(Serialize)]
@@ -303,9 +322,18 @@ fn expand_value(input: &str, variables: &BTreeMap<String, String>) -> Result<Str
 
 async fn perform(
     client: &Client,
-    mut request: Request,
+    request: Request,
     variables: &BTreeMap<String, String>,
 ) -> Result<reqwest::Response, String> {
+    let request = prepare_request(client, request, variables).await?;
+    execute_request(client, request).await
+}
+
+async fn prepare_request(
+    client: &Client,
+    mut request: Request,
+    variables: &BTreeMap<String, String>,
+) -> Result<reqwest::Request, String> {
     if console::active() {
         for template in std::mem::take(&mut request.console_masks.templates) {
             if let Ok(value) = expand_value(&template, variables) {
@@ -410,7 +438,13 @@ async fn perform(
         }
         builder = builder.body(body);
     }
-    let request = builder.build().map_err(http_error)?;
+    builder.build().map_err(http_error)
+}
+
+async fn execute_request(
+    client: &Client,
+    request: reqwest::Request,
+) -> Result<reqwest::Response, String> {
     console::request(&request);
     let response = client.execute(request).await.map_err(|error| {
         console::transport_error(&error);
@@ -554,13 +588,23 @@ async fn run_step(
     step: Step,
     variables: &mut BTreeMap<String, String>,
     row: &mut ResultRow,
-) -> Result<(), String> {
+) -> Result<(), (FailureReason, String)> {
+    use FailureReason::{Extraction, Header, Json, Preparation, Status, Transport};
     let start = Instant::now();
     let request = step.request.ok_or_else(|| {
-        step.preparation_error
-            .unwrap_or_else(|| "Requisição ausente.".into())
+        (
+            Preparation,
+            step.preparation_error
+                .unwrap_or_else(|| "Requisição ausente.".into()),
+        )
     })?;
-    let mut response = perform(clients.for_request(&request), request, variables).await?;
+    let client = clients.for_request(&request);
+    let request = prepare_request(client, request, variables)
+        .await
+        .map_err(|error| (Preparation, error))?;
+    let mut response = execute_request(client, request)
+        .await
+        .map_err(|error| (Transport, error))?;
     let status = response.status().as_u16();
     row.status = Some(status);
     let needs_json = !step.extract.is_empty()
@@ -569,9 +613,17 @@ async fn run_step(
             .iter()
             .any(|test| matches!(test, Test::Json { .. }));
     let body = if needs_json {
-        Some(read_limited(&mut response, VALIDATION_LIMIT).await?)
+        Some(
+            read_limited(&mut response, VALIDATION_LIMIT)
+                .await
+                .map_err(|error| (Transport, error))?,
+        )
     } else {
-        while let Some(chunk) = response.chunk().await.map_err(http_error)? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| (Transport, http_error(error)))?
+        {
             console::chunk(&chunk);
         }
         None
@@ -592,13 +644,14 @@ async fn run_step(
 
     for test in step.tests {
         let failure = match test {
-            Test::Status { equals } if status != equals => {
-                Some(format!("Status esperado {equals}, recebido {status}."))
-            }
+            Test::Status { equals } if status != equals => Some((
+                Status,
+                format!("Status esperado {equals}, recebido {status}."),
+            )),
             Test::Header { name, equals } => {
                 let name = name.trim();
                 if !response.headers().contains_key(name) {
-                    Some(format!("Header ausente: {name}"))
+                    Some((Header, format!("Header ausente: {name}")))
                 } else if equals.is_some_and(|expected| {
                     !response
                         .headers()
@@ -606,23 +659,23 @@ async fn run_step(
                         .iter()
                         .any(|value| value.as_bytes() == expected.as_bytes())
                 }) {
-                    Some(format!("Valor inesperado no header {name}."))
+                    Some((Header, format!("Valor inesperado no header {name}.")))
                 } else {
                     None
                 }
             }
             Test::Json { pointer, .. } if !valid_pointer(&pointer) => {
-                Some(format!("JSON Pointer inválido: {pointer}."))
+                Some((Json, format!("JSON Pointer inválido: {pointer}.")))
             }
             Test::Json { pointer, equals } => match &json {
                 Ok(Some(value)) if value.pointer(&pointer) == Some(&equals) => None,
-                Ok(_) => Some(format!("Valor inesperado em {pointer}.")),
-                Err(error) => Some(error.clone()),
+                Ok(_) => Some((Json, format!("Valor inesperado em {pointer}."))),
+                Err(error) => Some((Json, error.clone())),
             },
             _ => None,
         };
-        if let Some(failure) = failure {
-            row.failures.push(failure);
+        if let Some((reason, failure)) = failure {
+            row.add_failure(reason, failure);
         } else {
             row.checks_passed += 1;
         }
@@ -630,8 +683,7 @@ async fn run_step(
 
     for (name, pointer) in step.extract {
         if !valid_pointer(&pointer) {
-            row.failures
-                .push(format!("JSON Pointer inválido: {pointer}."));
+            row.add_failure(Extraction, format!("JSON Pointer inválido: {pointer}."));
             continue;
         }
         match &json {
@@ -645,11 +697,12 @@ async fn run_step(
                     console::extracted(&name, &value);
                     variables.insert(name, value);
                 }
-                _ => row
-                    .failures
-                    .push(format!("Extração exige um valor escalar em {pointer}.")),
+                _ => row.add_failure(
+                    Extraction,
+                    format!("Extração exige um valor escalar em {pointer}."),
+                ),
             },
-            Err(error) => row.failures.push(error.clone()),
+            Err(error) => row.add_failure(Extraction, error.clone()),
             Ok(None) => unreachable!("Extraction requires JSON"),
         }
     }
@@ -690,6 +743,7 @@ pub async fn run(
             validation_ms: 0,
             checks_passed: 0,
             failures: Vec::new(),
+            failure_reasons: Vec::new(),
             execution_error: false,
         };
         let step_start = Instant::now();
@@ -705,13 +759,16 @@ pub async fn run(
             result = run_step(clients, step, &mut collection.variables, &mut row) => result,
         };
         console::finish(
-            validation.as_ref().err().map(String::as_str),
+            validation
+                .as_ref()
+                .err()
+                .map(|(_, message)| message.as_str()),
             !row.failures.is_empty(),
         );
-        if let Err(error) = validation {
+        if let Err((reason, error)) = validation {
             row.execution_error = true;
             row.http_ms = step_start.elapsed().as_millis();
-            row.failures.push(error);
+            row.add_failure(reason, error);
         }
         report(RunProgress::Finished { index, row: &row });
         let stop = collection.stop_on_failure && !row.failures.is_empty();
@@ -813,11 +870,14 @@ mod tests {
                 panic!("Esperava cinco etapas");
             };
             assert!(network.status.is_none() && !network.failures.is_empty());
+            assert_eq!(network.failure_reasons, [FailureReason::Transport]);
             assert!(variable.failures[0].contains("Variável ausente: missing"));
+            assert_eq!(variable.failure_reasons, [FailureReason::Preparation]);
             assert_eq!(status.checks_passed, 1);
             assert!(status.failures.is_empty());
             assert_eq!(json.checks_passed, 1);
             assert!(json.failures[0].contains("limite de validação de 16 MiB"));
+            assert_eq!(json.failure_reasons, [FailureReason::Json]);
             assert!(final_row.failures.is_empty());
         });
         worker.join().unwrap();

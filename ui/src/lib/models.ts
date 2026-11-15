@@ -132,6 +132,8 @@ export type HistoryItem = {
   collectionId: string;
   error?: string;
 };
+export type RunFailureReason =
+  'status' | 'header' | 'json' | 'extraction' | 'preparation' | 'transport';
 export type RunRow = {
   name: string;
   status: number | null;
@@ -139,6 +141,7 @@ export type RunRow = {
   validation_ms: number;
   checks_passed: number;
   failures: string[];
+  failure_reasons: RunFailureReason[];
 };
 export type RunResult = {
   duration_ms: number;

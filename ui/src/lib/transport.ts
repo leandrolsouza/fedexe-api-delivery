@@ -9,6 +9,7 @@ import {
   type HttpRequest,
   type HttpResponse,
   type NativeCollection,
+  type RunFailureReason,
   type RunResult,
   type RunRow,
 } from './models';
@@ -28,15 +29,18 @@ export async function releaseResponseBodies(ids: string[]) {
   if (ids.length) await invoke('release_response_bodies', { ids });
 }
 
+function checkBrowserRequest(request: HttpRequest) {
+  if (request.multipart !== undefined || request.binary_file !== undefined)
+    throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
+  if (request.redirect_policy === 'same_origin')
+    throw new Error(t('Para seguir redirecionamentos da mesma origem, execute no app desktop.'));
+}
+
 async function browserSend(
   request: HttpRequest,
   limit: number | null = 256 * 1024,
 ): Promise<HttpResponse> {
-  if (request.multipart !== undefined || request.binary_file !== undefined)
-    throw new Error(t('Corpos multipart e binários estão disponíveis no app desktop.'));
   const start = performance.now();
-  if (request.redirect_policy === 'same_origin')
-    throw new Error(t('Para seguir redirecionamentos da mesma origem, execute no app desktop.'));
   const timeout = AbortSignal.timeout(request.timeout_ms ?? DEFAULT_TIMEOUT_MS);
   const response = await fetch(request.url, {
     method: request.method,
@@ -91,12 +95,13 @@ export async function pickBodyFile() {
 export async function send(request: HttpRequest) {
   controller = new AbortController();
   try {
-    return native
-      ? await invoke<HttpResponse>('send', {
-          request,
-          console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('editor', trace)),
-        })
-      : await browserSend(request);
+    if (native)
+      return await invoke<HttpResponse>('send', {
+        request,
+        console: new Channel<ConsoleTrace>((trace) => recordRequestTrace('editor', trace)),
+      });
+    checkBrowserRequest(request);
+    return await browserSend(request);
   } catch (error) {
     throw normalizeError(error);
   } finally {
@@ -156,13 +161,21 @@ export async function runCollection(
         validation_ms: 0,
         checks_passed: 0,
         failures: [],
+        failure_reasons: [],
       };
+      const addFailure = (reason: RunFailureReason, message: string) => {
+        row.failure_reasons.push(reason);
+        row.failures.push(message);
+      };
+      let errorReason: RunFailureReason = 'preparation';
       const tick = performance.now();
       try {
         if (!step.request) throw new Error(step.preparation_error);
         const request = resolveHttpRequest(step.request, variables);
+        checkBrowserRequest(request);
         const needsJson =
           step.tests.some((test) => test.type === 'json') || Object.keys(step.extract).length > 0;
+        errorReason = 'transport';
         const response = await browserSend(request, needsJson ? 16 * 1024 * 1024 : null);
         row.status = response.status;
         row.http_ms = response.duration_ms;
@@ -170,12 +183,13 @@ export async function runCollection(
         const json = needsJson ? responseJson(response) : undefined;
         step.tests.forEach((test) => {
           const failure = checkResponse(test, response, json);
-          if (failure) row.failures.push(failure);
+          if (failure) addFailure(test.type, failure);
           else row.checks_passed++;
         });
         Object.entries(step.extract).forEach(([key, path]) => {
           if (!isJsonPointer(path) || json?.error) {
-            row.failures.push(
+            addFailure(
+              'extraction',
               !isJsonPointer(path) ? t('JSON Pointer inválido: {0}.', path) : json!.error!,
             );
             return;
@@ -183,7 +197,7 @@ export async function runCollection(
           const value = jsonPointer(json?.value, path);
           if (['string', 'number', 'boolean'].includes(typeof value))
             variables[key] = String(value);
-          else row.failures.push(t('Extração exige um valor escalar em {0}.', path));
+          else addFailure('extraction', t('Extração exige um valor escalar em {0}.', path));
         });
         row.validation_ms = Math.round(performance.now() - validation);
       } catch (error) {
@@ -192,7 +206,7 @@ export async function runCollection(
           break;
         }
         row.http_ms = Math.round(performance.now() - tick);
-        row.failures.push(normalizeError(error).message);
+        addFailure(errorReason, normalizeError(error).message);
       }
       results.push(row);
       onProgress({ type: 'finished', index, row });

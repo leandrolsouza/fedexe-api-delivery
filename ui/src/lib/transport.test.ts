@@ -111,6 +111,7 @@ describe('adaptador HTTP para prévia no navegador', () => {
       () => {},
     );
     expect(result.results[0].failures[0]).toContain('received 404');
+    expect(result.results[0].failure_reasons).toEqual(['status']);
     expect(result.results[1].failures).toEqual([]);
   });
   it('cancela uma requisição em andamento', async () => {
@@ -147,6 +148,13 @@ describe('adaptador HTTP para prévia no navegador', () => {
     expect(results[2].failures).toEqual([]);
     expect(results[3].checks_passed).toBe(1);
     expect(results[3].failures[0]).toContain('JSON validation limit');
+    expect(results.map(({ failure_reasons }) => failure_reasons)).toEqual([
+      ['transport'],
+      ['preparation'],
+      [],
+      ['json'],
+      [],
+    ]);
     expect(results[4].failures).toEqual([]);
   });
 });

@@ -1,8 +1,17 @@
-import { formatDate, formatNumber, setLocale, t, useLocale, type Locale } from '../lib/i18n';
-import { useMemo, useState } from 'react';
+import {
+  formatDate,
+  formatNumber,
+  setLocale,
+  t,
+  useLocale,
+  type Locale,
+  type Message,
+} from '../lib/i18n';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   Check,
@@ -13,7 +22,6 @@ import {
   Copy,
   Database,
   FileJson2,
-  FlaskConical,
   Globe2,
   HardDrive,
   History,
@@ -44,7 +52,9 @@ import {
   exportableWorkspace,
   type Environment,
   type HistoryItem,
+  type RequestItem,
   type RunResult,
+  type RunFailureReason,
   type RunRow,
   type RunScope,
   type Workspace,
@@ -405,6 +415,79 @@ export function EnvironmentsView({
   );
 }
 
+const runFailureLabels = {
+  status: 'Status HTTP inesperado',
+  header: 'Validação de cabeçalhos',
+  json: 'Validação do corpo JSON',
+  extraction: 'Extração de variáveis',
+  preparation: 'Preparação da requisição',
+  transport: 'Falha de comunicação HTTP',
+  other: 'Outras falhas',
+} satisfies Record<RunFailureReason | 'other', Message>;
+
+function RunFailureGroups({
+  rows,
+  onOpenRequest,
+}: {
+  rows: RunRow[];
+  onOpenRequest: (index: number, source: HTMLButtonElement) => void;
+}) {
+  const groups = Object.entries(runFailureLabels).flatMap(([reason, label]) => {
+    const affected = rows.flatMap((row, index) => {
+      const failures = row.failures.filter(
+        (_, failureIndex) => (row.failure_reasons?.[failureIndex] ?? 'other') === reason,
+      );
+      return failures.length ? [{ index, name: row.name, failures }] : [];
+    });
+    return affected.length ? [{ reason, label, affected }] : [];
+  });
+
+  return (
+    <section className="runner-failure-groups">
+      <h4>{t('Falhas por motivo')}</h4>
+      {groups.length ? (
+        groups.map(({ reason, label, affected }) => (
+          <details key={reason} className="runner-failure-group">
+            <summary>
+              <ChevronRight size={14} aria-hidden="true" />
+              <span>{t(label)}</span>
+              <small>
+                {t(
+                  affected.length === 1 ? '{0} requisição afetada' : '{0} requisições afetadas',
+                  affected.length,
+                )}
+              </small>
+            </summary>
+            <ol>
+              {affected.map(({ index, name, failures }) => (
+                <li key={index}>
+                  <button
+                    type="button"
+                    className="runner-failure-request"
+                    onClick={(event) => onOpenRequest(index, event.currentTarget)}
+                  >
+                    <span>
+                      {formatNumber(index + 1)} · {name}
+                    </span>
+                    <ArrowRight size={13} aria-hidden="true" />
+                  </button>
+                  <ul>
+                    {failures.map((failure, failureIndex) => (
+                      <li key={failureIndex}>{failure}</li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </details>
+        ))
+      ) : (
+        <p className="runner-report-caption">{t('Nenhuma falha registrada.')}</p>
+      )}
+    </section>
+  );
+}
+
 export function RunnerView({
   workspace,
   busy,
@@ -425,7 +508,16 @@ export function RunnerView({
   const [scope, setScope] = useState<RunScope>('collection');
   const [folder, setFolder] = useState('');
   const [selection, setSelection] = useState<string[]>([]);
-  const [runRequestIds, setRunRequestIds] = useState<string[]>([]);
+  const [runPlan, setRunPlan] = useState<{ requests: RequestItem[]; context: string }>();
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<number[]>([]);
+  const [runnerTab, setRunnerTab] = useState<'results' | 'report'>('results');
+  const [targetIndex, setTargetIndex] = useState<number>();
+  const targetRow = useRef<HTMLTableRowElement>(null);
+  const [reportOrigin, setReportOrigin] = useState<HTMLButtonElement>();
+  const [inspectedRankIndex, setInspectedRankIndex] = useState<number>();
+  const reportReturnTarget = useRef<HTMLButtonElement>(null);
+  const reportTabButton = useRef<HTMLButtonElement>(null);
   const [activeStep, setActiveStep] = useState<number>();
   const [rows, setRows] = useState<RunRow[]>([]);
   const [result, setResult] = useState<RunResult>();
@@ -436,12 +528,12 @@ export function RunnerView({
   const environment = workspace.environments.find((env) => env.id === environmentId);
   const chosen = requestsForRun(collection, scope, folder, selection);
   const chosenIds = new Set(chosen.map(({ id }) => id));
-  const resultsById = new Map(rows.map((row, index) => [runRequestIds[index], row]));
-  const activeRequestId = activeStep === undefined ? undefined : runRequestIds[activeStep];
-  const activeRequest = collection?.requests.find(({ id }) => id === activeRequestId);
-  const totalSteps = runRequestIds.length;
-  const passed = rows.filter((r) => !r.failures.length).length;
+  const choosingRequests = scope === 'selection' && !runPlan;
+  const requests = runPlan?.requests ?? (choosingRequests ? (collection?.requests ?? []) : chosen);
+  const activeRequest = activeStep === undefined ? undefined : runPlan?.requests[activeStep];
+  const totalSteps = runPlan?.requests.length ?? 0;
   const failed = rows.filter((r) => r.failures.length).length;
+  const passed = rows.length - failed;
   const completedLabel = t(
     '{0} de {1} {2}',
     rows.length,
@@ -450,16 +542,90 @@ export function RunnerView({
   );
   const approvedLabel = passed === 1 ? t('aprovada') : t('aprovadas');
   const chosenLabel = t('{0} {1}', chosen.length, chosen.length === 1 ? t('etapa') : t('etapas'));
-  const latest = rows.at(-1);
   const outcomeLabel = {
     completed: t('Execução concluída'),
     cancelled: t('Execução cancelada'),
     stopped_on_failure: t('Execução interrompida na primeira falha'),
   };
-  const maxHttpTime = rows.reduce((max, row) => Math.max(max, row.http_ms), 1);
+  const duration =
+    result?.duration_ms ?? rows.reduce((sum, row) => sum + row.http_ms + row.validation_ms, 0);
+  const rankedRows = useMemo(
+    () =>
+      rows
+        .map((row, index) => ({ row, index, total: row.http_ms + row.validation_ms }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10),
+    [rows],
+  );
+  const rankScale = Math.max(rankedRows[0]?.total ?? 0, 1);
+  const inspectedRow = inspectedRankIndex === undefined ? undefined : rows[inspectedRankIndex];
+  const displayedRanks =
+    inspectedRankIndex !== undefined &&
+    inspectedRow &&
+    !rankedRows.some(({ index }) => index === inspectedRankIndex)
+      ? [
+          ...rankedRows,
+          {
+            index: inspectedRankIndex,
+            row: inspectedRow,
+            total: inspectedRow.http_ms + inspectedRow.validation_ms,
+          },
+        ]
+      : rankedRows;
+  useEffect(() => {
+    if (runnerTab !== 'results' || targetIndex === undefined) return;
+    targetRow.current?.focus({ preventScroll: true });
+    targetRow.current?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    setTargetIndex(undefined);
+  }, [runnerTab, targetIndex]);
+  useEffect(() => {
+    if (runnerTab !== 'report') return;
+    const target = reportReturnTarget.current;
+    if (target?.isConnected) {
+      target.focus({ preventScroll: true });
+      target.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } else if (target) {
+      reportTabButton.current?.focus();
+    }
+    reportReturnTarget.current = null;
+    setReportOrigin(undefined);
+  }, [runnerTab]);
+  const context = [
+    collection?.name,
+    scope === 'folder'
+      ? folder
+      : t(scope === 'selection' ? 'Requisições selecionadas' : 'Coleção inteira'),
+    environment?.name,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const notRunLabel =
+    result?.outcome === 'cancelled'
+      ? t('Não executada por cancelamento')
+      : result?.outcome === 'stopped_on_failure'
+        ? t('Não executada após falha')
+        : t('Não executada');
+  function showResult(index: number, source: HTMLButtonElement, openDetails = false) {
+    if (openDetails) {
+      setExpandedRows((current) => (current.includes(index) ? current : [...current, index]));
+    } else {
+      setFailuresOnly(false);
+    }
+    setReportOrigin(source);
+    setRunnerTab('results');
+    setTargetIndex(index);
+  }
+
   function clearRun() {
     setRows([]);
-    setRunRequestIds([]);
+    setRunPlan(undefined);
+    setFailuresOnly(false);
+    setExpandedRows([]);
+    setRunnerTab('results');
+    setTargetIndex(undefined);
+    setReportOrigin(undefined);
+    reportReturnTarget.current = null;
+    setInspectedRankIndex(undefined);
     setActiveStep(undefined);
     setResult(undefined);
     setError('');
@@ -470,7 +636,7 @@ export function RunnerView({
     setBusy(true);
     setRunning(true);
     clearRun();
-    setRunRequestIds(chosen.map(({ id }) => id));
+    setRunPlan({ requests: chosen, context });
     try {
       const snapshot = structuredClone({
         collection,
@@ -533,13 +699,7 @@ export function RunnerView({
       <div className="runner-layout">
         <section className="surface runner-configuration">
           <div className="surface-heading">
-            <div>
-              <h3>{t('Configurar execução')}</h3>
-              <p>{t('Um fluxo, do início ao fim.')}</p>
-            </div>
-            <span className="section-icon">
-              <FlaskConical size={20} />
-            </span>
+            <h3>{t('Configurar execução')}</h3>
           </div>
           <div className="runner-fields">
             <label className="field-label">
@@ -620,11 +780,6 @@ export function RunnerView({
                 </select>
               </label>
             )}
-            <div className="runner-mode">
-              <span className="status-dot dot-purple" />
-              <strong>{t('Sequencial')}</strong>
-              <span>{t('Uma requisição por vez')}</span>
-            </div>
             <label className="field-label">
               {t('Ao encontrar uma falha')}
               <select
@@ -670,190 +825,131 @@ export function RunnerView({
           </div>
         </section>
         <section className="surface runner-results">
-          <div className="surface-heading">
-            <div>
-              <h3>
-                {running
-                  ? t('Execução em andamento')
-                  : result
-                    ? outcomeLabel[result.outcome]
-                    : t('Requisições da coleção')}
-              </h3>
-              <p role="status" aria-atomic="true">
-                {running
-                  ? activeStep !== undefined && activeRequest
-                    ? t('Etapa {0} de {1} · {2}', activeStep + 1, totalSteps, activeRequest.name)
-                    : completedLabel
-                  : result
-                    ? t(
-                        '{0} · {1} · {2} {3} · {4} com falha',
-                        outcomeLabel[result.outcome],
-                        completedLabel,
-                        passed,
-                        approvedLabel,
-                        failed,
-                      )
-                    : t('{0} · na ordem definida na coleção', chosenLabel)}
-                {latest &&
-                  t(
-                    ' · Última etapa: {0} · {1} · {2} ms',
-                    latest.name,
-                    latest.failures.length ? t('Falhou') : t('Aprovada'),
-                    latest.http_ms + latest.validation_ms,
-                  )}
-              </p>
+          <div className="runner-results-header">
+            <div className="surface-heading">
+              <div>
+                <h3>
+                  {running
+                    ? t('Execução em andamento')
+                    : result
+                      ? outcomeLabel[result.outcome]
+                      : choosingRequests
+                        ? t('Selecione as requisições')
+                        : t('Requisições no escopo')}
+                </h3>
+                <p>{runPlan?.context ?? context}</p>
+                <p role="status" aria-atomic="true">
+                  {runPlan ? completedLabel : chosenLabel}
+                  {running && activeRequest && ` · ${activeRequest.name}`}
+                </p>
+              </div>
+              {running && <LoaderCircle className="spin purple-text" size={20} />}
+              {!running && runPlan && scope === 'selection' && (
+                <Button variant="outline" size="sm" disabled={busy} onClick={clearRun}>
+                  {t('Editar seleção')}
+                </Button>
+              )}
             </div>
-            {running ? (
-              <LoaderCircle className="spin purple-text" size={20} />
-            ) : (
-              <span className="subtle-badge">
-                {result
-                  ? t(
-                      '{0} {1}',
-                      rows.length,
-                      rows.length === 1 ? t('etapa concluída') : t('etapas concluídas'),
-                    )
-                  : chosenLabel}
-              </span>
-            )}
-          </div>
-          {(running || rows.length > 0 || result) && (
-            <div className="run-summary">
-              <span>
-                <CircleCheck size={15} className="green-text" />
-                <strong>{formatNumber(passed)}</strong> {approvedLabel}
-              </span>
-              <span>
-                <TriangleAlert size={15} className={failed ? 'red-text' : ''} />
-                <strong>{formatNumber(failed)}</strong>
-                {' ' + t('com falha')}
-              </span>
-              <span>
-                <Clock3 size={15} />
-                <strong>
-                  {formatNumber(
-                    result?.duration_ms ??
-                      rows.reduce((sum, row) => sum + row.http_ms + row.validation_ms, 0),
-                  )}
-                </strong>{' '}
-                ms
-              </span>
-            </div>
-          )}
-          {error && (
-            <div className="inline-error">
-              <TriangleAlert size={16} />
-              {error}
-            </div>
-          )}
-          <div className="runner-request-list">
-            {collection?.requests.map((request, index) => {
-              const row = resultsById.get(request.id);
-              const included = chosenIds.has(request.id);
-              const active = running && request.id === activeRequestId;
-              return (
-                <div
-                  className={cn('runner-request-row', !included && 'excluded', active && 'active')}
-                  aria-current={active ? 'step' : undefined}
-                  key={request.id}
-                >
-                  <input
-                    type="checkbox"
-                    aria-label={t('Executar {0}', request.name)}
-                    disabled={busy || scope !== 'selection'}
-                    checked={included}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setSelection((current) =>
-                        checked
-                          ? [...current, request.id]
-                          : current.filter((id) => id !== request.id),
-                      );
-                      clearRun();
-                    }}
-                  />
-                  <span className="step-number">
-                    {formatNumber(index + 1, { minimumIntegerDigits: 2 })}
-                  </span>
-                  <MethodBadge method={request.method} small />
-                  <div className="runner-request-name">
-                    <strong>{request.name}</strong>
-                    <code>{request.url.replace('{{base_url}}', '')}</code>
-                    {row?.failures.map((failure, i) => (
-                      <p className="run-failure" key={i}>
-                        {failure}
-                      </p>
-                    ))}
-                  </div>
-                  {row ? (
-                    <div className="run-row-result">
-                      <span className={row.failures.length ? 'red-text' : 'green-text'}>
-                        {row.failures.length ? <X size={14} /> : <Check size={14} />}
-                        {row.failures.length ? t('Falhou') : t('Aprovada')}
-                        {row.status !== null && ` · ${row.status}`}
-                      </span>
-                      <small>{formatNumber(row.http_ms + row.validation_ms)} ms</small>
-                    </div>
-                  ) : (
-                    <span className={cn('pending-label', active && 'purple-text')}>
-                      {!included
-                        ? t('Ignorada')
-                        : active
-                          ? t('Em execução')
-                          : running
-                            ? t('Pendente')
-                            : result
-                              ? t('Não executada')
-                              : t('{0} testes', request.tests.length)}
+            {(running || rows.length > 0 || result) && (
+              <div className="run-summary">
+                <span>
+                  <CircleCheck size={15} className="green-text" />
+                  <strong>{formatNumber(passed)}</strong> {approvedLabel}
+                </span>
+                <span>
+                  <Clock3 size={15} />
+                  <strong>{formatNumber(duration)}</strong> ms
+                </span>
+                {runnerTab === 'report' ? (
+                  <>
+                    <span>
+                      <strong>{formatNumber(failed)}</strong> {t('com falha')}
                     </span>
-                  )}
-                </div>
-              );
-            })}
-            {!collection?.requests.length && (
-              <div className="center-empty">
-                <Layers3 size={30} />
-                <h3>{t('Nenhuma requisição por aqui')}</h3>
-                <p>{t('Adicione endpoints à sua coleção para começar.')}</p>
+                    {result && (
+                      <span>
+                        <strong>{formatNumber(totalSteps - rows.length)}</strong>{' '}
+                        {t('não executadas')}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <div
+                    className="segmented-control runner-filters"
+                    role="group"
+                    aria-label={t('Filtrar resultados')}
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={!failuresOnly}
+                      className={cn(!failuresOnly && 'active')}
+                      onClick={() => setFailuresOnly(false)}
+                    >
+                      {t('Todas')}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={failuresOnly}
+                      className={cn(failuresOnly && 'active')}
+                      onClick={() => setFailuresOnly(true)}
+                    >
+                      {t('Falhas ({0})', formatNumber(failed))}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-          {running && (
-            <div
-              className="run-progress"
-              role="progressbar"
-              aria-label={t('Etapas concluídas')}
-              aria-valuenow={rows.length}
-              aria-valuemax={totalSteps || 1}
-            >
+            <div className="runner-view-bar">
               <div
-                style={{
-                  width: `${totalSteps ? (rows.length / totalSteps) * 100 : 0}%`,
-                }}
-              />
-            </div>
-          )}
-          {rows.length > 0 && (
-            <div className="run-timing">
-              <h4>
-                <Activity size={14} />
-                {' ' + t('Tempo por etapa')}
-              </h4>
-              <div className="timing-bars">
-                {rows.map((row, i) => (
-                  <div key={i} title={t('{0}: {1} ms', row.name, row.http_ms)}>
-                    <span
-                      style={{
-                        height: `${Math.max(8, (row.http_ms / maxHttpTime) * 100)}%`,
-                      }}
-                      className={row.failures.length ? 'failed' : ''}
-                    />
-                    <small>{i + 1}</small>
-                  </div>
+                className="runner-tabs"
+                role="tablist"
+                aria-label={t('Visualização da execução')}
+              >
+                {(['results', 'report'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    ref={tab === 'report' ? reportTabButton : undefined}
+                    id={`runner-tab-${tab}`}
+                    aria-controls={`runner-panel-${tab}`}
+                    aria-selected={runnerTab === tab}
+                    tabIndex={runnerTab === tab ? 0 : -1}
+                    onClick={() => setRunnerTab(tab)}
+                    onKeyDown={(event) => {
+                      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                      event.preventDefault();
+                      const next =
+                        event.key === 'Home'
+                          ? 'results'
+                          : event.key === 'End'
+                            ? 'report'
+                            : tab === 'results'
+                              ? 'report'
+                              : 'results';
+                      setRunnerTab(next);
+                      event.currentTarget.parentElement
+                        ?.querySelector<HTMLButtonElement>(`#runner-tab-${next}`)
+                        ?.focus();
+                    }}
+                  >
+                    {tab === 'results' ? t('Resultados') : t('Relatório')}
+                  </button>
                 ))}
               </div>
-              <div className="timing-caption">{t('Duração HTTP relativa por requisição')}</div>
-              {result && (
+              {runnerTab === 'results' && reportOrigin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    reportReturnTarget.current = reportOrigin;
+                    setRunnerTab('report');
+                  }}
+                >
+                  <ArrowLeft size={14} aria-hidden="true" />
+                  {t('Voltar ao relatório')}
+                </Button>
+              )}
+              {runnerTab === 'report' && result && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -869,7 +965,243 @@ export function RunnerView({
                 </Button>
               )}
             </div>
+            {running && (
+              <div
+                className="run-progress"
+                role="progressbar"
+                aria-label={t('Etapas concluídas')}
+                aria-valuenow={rows.length}
+                aria-valuemax={totalSteps || 1}
+              >
+                <div style={{ width: `${(rows.length / (totalSteps || 1)) * 100}%` }} />
+              </div>
+            )}
+          </div>
+          {error && (
+            <div className="inline-error">
+              <TriangleAlert size={16} />
+              {error}
+            </div>
           )}
+          <div
+            id="runner-panel-results"
+            role="tabpanel"
+            aria-labelledby="runner-tab-results"
+            hidden={runnerTab !== 'results'}
+          >
+            {requests.length > 0 && (!failuresOnly || failed > 0) && (
+              <div
+                className="runner-table-scroll"
+                tabIndex={0}
+                role="region"
+                aria-label={t('Resultados da execução')}
+              >
+                <table className="runner-table" aria-label={t('Resultados da execução')}>
+                  <thead>
+                    <tr>
+                      {choosingRequests && <th scope="col" aria-label={t('Seleção')} />}
+                      <th scope="col" aria-label={t('Etapa')}>
+                        #
+                      </th>
+                      <th scope="col">{t('Método')}</th>
+                      <th scope="col">{t('Requisição')}</th>
+                      <th scope="col">{t('Validação')}</th>
+                      <th scope="col">{t('Status HTTP')}</th>
+                      <th scope="col">{t('Duração')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {requests.map((request, index) => {
+                      const row = rows[index];
+                      const hasFailures = Boolean(row?.failures.length);
+                      if (failuresOnly && !hasFailures) return null;
+                      const active = running && index === activeStep;
+                      const expanded = expandedRows.includes(index);
+                      const detailsId = `runner-failures-${index}`;
+                      return (
+                        <Fragment key={request.id}>
+                          <tr
+                            className={cn('runner-request-row', active && 'active')}
+                            aria-current={active ? 'step' : undefined}
+                            ref={targetIndex === index ? targetRow : undefined}
+                            tabIndex={-1}
+                          >
+                            {choosingRequests && (
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  aria-label={t('Executar {0}', request.name)}
+                                  disabled={busy}
+                                  checked={chosenIds.has(request.id)}
+                                  onChange={(event) => {
+                                    const checked = event.target.checked;
+                                    setSelection((current) =>
+                                      checked
+                                        ? [...current, request.id]
+                                        : current.filter((id) => id !== request.id),
+                                    );
+                                    clearRun();
+                                  }}
+                                />
+                              </td>
+                            )}
+                            <td>{formatNumber(index + 1)}</td>
+                            <td>
+                              <MethodBadge method={request.method} small />
+                            </td>
+                            <th scope="row" className="runner-request-name">
+                              {hasFailures ? (
+                                <button
+                                  className="runner-disclosure"
+                                  type="button"
+                                  aria-expanded={expanded}
+                                  aria-controls={detailsId}
+                                  aria-label={t('Detalhes da falha em {0}', request.name)}
+                                  onClick={() =>
+                                    setExpandedRows((current) =>
+                                      current.includes(index)
+                                        ? current.filter((item) => item !== index)
+                                        : [...current, index],
+                                    )
+                                  }
+                                >
+                                  <ChevronRight size={14} aria-hidden="true" />
+                                  <span>{request.name}</span>
+                                </button>
+                              ) : (
+                                <strong>{request.name}</strong>
+                              )}
+                              <code>{request.url.replace('{{base_url}}', '')}</code>
+                            </th>
+                            <td>
+                              {row ? (
+                                <span
+                                  className={cn(
+                                    'runner-validation',
+                                    hasFailures ? 'red-text' : 'green-text',
+                                  )}
+                                >
+                                  {hasFailures ? (
+                                    <X size={14} aria-hidden="true" />
+                                  ) : (
+                                    <Check size={14} aria-hidden="true" />
+                                  )}
+                                  {hasFailures ? t('Falhou') : t('Aprovada')}
+                                </span>
+                              ) : (
+                                <span className={cn(active && 'purple-text')}>
+                                  {active
+                                    ? t('Em execução')
+                                    : running
+                                      ? t('Pendente')
+                                      : runPlan
+                                        ? notRunLabel
+                                        : t('{0} testes', request.tests.length)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="runner-number">{row?.status ?? '—'}</td>
+                            <td className="runner-number">
+                              {row ? `${formatNumber(row.http_ms + row.validation_ms)} ms` : '—'}
+                            </td>
+                          </tr>
+                          {hasFailures && (
+                            <tr id={detailsId} hidden={!expanded} className="runner-failure-row">
+                              <td colSpan={6}>
+                                <ul>
+                                  {row?.failures.map((failure, i) => (
+                                    <li key={i}>{failure}</li>
+                                  ))}
+                                </ul>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {failuresOnly && !failed && (
+              <p className="runner-empty">{t('Nenhuma falha registrada.')}</p>
+            )}
+            {!requests.length && (
+              <div className="center-empty">
+                <Layers3 size={30} />
+                <h3>
+                  {collection?.requests.length
+                    ? t('Nenhuma requisição no escopo')
+                    : t('Nenhuma requisição por aqui')}
+                </h3>
+                <p>
+                  {collection?.requests.length
+                    ? t('Selecione uma pasta com requisições para executar.')
+                    : t('Adicione endpoints à sua coleção para começar.')}
+                </p>
+              </div>
+            )}
+          </div>
+          <div
+            id="runner-panel-report"
+            role="tabpanel"
+            aria-labelledby="runner-tab-report"
+            hidden={runnerTab !== 'report'}
+            className="runner-report"
+          >
+            <RunFailureGroups
+              rows={rows}
+              onOpenRequest={(index, source) => showResult(index, source, true)}
+            />
+            <h4>{t('Requisições mais lentas')}</h4>
+            {rankedRows.length ? (
+              <>
+                <p className="runner-report-caption">
+                  {t('{0} de {1} requisições por duração total', rankedRows.length, rows.length)}
+                </p>
+                <ol className="runner-ranking">
+                  {displayedRanks.map(({ row, index, total }, position) => (
+                    <li key={index}>
+                      <button
+                        type="button"
+                        className="runner-ranking-item"
+                        onClick={(event) => {
+                          setInspectedRankIndex(index);
+                          showResult(index, event.currentTarget);
+                        }}
+                      >
+                        <span className="runner-ranking-heading">
+                          <span>{row.name}</span>
+                          <strong>{formatNumber(total)} ms</strong>
+                        </span>
+                        <span className="runner-ranking-track" aria-hidden="true">
+                          <span
+                            className="runner-ranking-http"
+                            style={{ width: `${(row.http_ms / rankScale) * 100}%` }}
+                          />
+                          <span
+                            className="runner-ranking-validation"
+                            style={{ width: `${(row.validation_ms / rankScale) * 100}%` }}
+                          />
+                        </span>
+                        <span className="runner-ranking-breakdown">
+                          <span>{t('HTTP {0} ms', row.http_ms)}</span>
+                          <span>{t('Validação {0} ms', row.validation_ms)}</span>
+                        </span>
+                        {position >= rankedRows.length && (
+                          <span className="runner-report-caption">{t('Fora do top 10')}</span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              </>
+            ) : (
+              <p className="runner-report-caption">
+                {t('Os tempos aparecem aqui quando uma requisição é concluída.')}
+              </p>
+            )}
+          </div>
         </section>
       </div>
       <div className="runner-footnote">
