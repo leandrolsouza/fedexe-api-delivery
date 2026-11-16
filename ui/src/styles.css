@@ -148,10 +148,57 @@ textarea {
 }
 select {
   cursor: pointer;
+  border-radius: 6px;
+}
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 select option {
   color: var(--text);
   background: var(--surface);
+}
+.method-select select {
+  appearance: none;
+}
+@supports (appearance: base-select) and selector(select::picker(select)) {
+  select,
+  .method-select select,
+  select::picker(select) {
+    appearance: base-select;
+  }
+  select::picker(select) {
+    max-width: calc(100vw - 16px);
+    margin-block: 4px;
+    padding: 4px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    box-shadow: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+  }
+  select option {
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: transparent;
+    overflow-wrap: anywhere;
+  }
+  select option:checked {
+    color: var(--accent-text);
+    background: var(--accent-soft);
+  }
+  select option:not(:disabled):is(:hover, :focus-visible) {
+    background: var(--hover);
+    outline-offset: -2px;
+  }
+  select::picker-icon {
+    color: var(--muted);
+  }
+  .method-select select::picker-icon {
+    display: none;
+  }
 }
 h1,
 h2,
@@ -1400,7 +1447,6 @@ kbd {
   background: none;
   border: none;
   padding: 8px 29px 8px 12px;
-  appearance: none;
   width: 89px;
 }
 .method-select > svg {

@@ -1,0 +1,1 @@
+Select controls and their menus, including the environment picker, now have rounded corners. Options follow the light or dark theme and highlight the selected item.

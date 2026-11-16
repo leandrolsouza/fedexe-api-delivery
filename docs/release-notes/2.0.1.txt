@@ -1,0 +1,1 @@
+Os campos de seleção e seus menus, incluindo o seletor de ambiente, agora têm cantos arredondados. As opções seguem as cores do tema claro ou escuro, com destaque para a opção selecionada.
