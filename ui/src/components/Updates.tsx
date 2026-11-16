@@ -1,5 +1,5 @@
 import { localizeNativeMessage } from '../lib/native-messages';
-import { t } from '../lib/i18n';
+import { t, useLocale, type Locale } from '../lib/i18n';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -9,9 +9,10 @@ import { Dialog } from './ui/dialog';
 
 type CheckResult =
   | { status: 'unconfigured' | 'current' }
-  | { status: 'available'; version: string; notes: string | null };
+  | { status: 'available'; version: string; localizedNotes: Record<Locale, string | null> };
 
 export function useUpdates() {
+  const locale = useLocale();
   const [result, setResult] = useState<CheckResult>();
   const [checking, setChecking] = useState(false);
   const [open, setOpen] = useState(false);
@@ -64,7 +65,7 @@ export function useUpdates() {
 
   return {
     version: result?.status === 'available' ? result.version : undefined,
-    notes: result?.status === 'available' ? result.notes?.trim() : undefined,
+    notes: result?.status === 'available' ? result.localizedNotes[locale]?.trim() : undefined,
     status: checking
       ? t('Verificando atualizações…')
       : error ||

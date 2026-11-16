@@ -8,6 +8,7 @@ import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 
 type Backup = { id: string; createdTime: string };
+type DriveStatus = { available: boolean; connected: boolean };
 type BackupPage = { files: Backup[]; nextPageToken: string | null };
 
 export function DriveBackups({
@@ -29,8 +30,7 @@ export function DriveBackups({
 }) {
   const locale = useLocale();
   const [connected, setConnected] = useState(false);
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
+  const [available, setAvailable] = useState(false);
   const [files, setFiles] = useState<Backup[]>([]);
   const [nextPage, setNextPage] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -48,10 +48,11 @@ export function DriveBackups({
   useEffect(() => {
     if (!active || started.current) return;
     started.current = true;
-    void invoke<boolean>('drive_status')
-      .then(async (configured) => {
-        setConnected(configured);
-        if (configured) await list();
+    void invoke<DriveStatus>('drive_status')
+      .then(async (status) => {
+        setAvailable(status.available);
+        setConnected(status.connected);
+        if (status.connected) await list();
       })
       .catch((failure) => setError(normalizeError(failure).message))
       .finally(() => {
@@ -76,63 +77,33 @@ export function DriveBackups({
     }
   }
 
+  async function connect() {
+    await invoke('drive_connect');
+    setConnected(true);
+    setFiles([]);
+    setNextPage(null);
+    await list();
+  }
+
   const date = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
 
   return (
     <div className="workspace-page">
       <PageHeading
         title={t('Backups no Google Drive')}
-        description={t(
-          'Transfira um workspace entre instalações usando a mesma conta e o mesmo projeto Google Cloud.',
-        )}
+        description={t('Use a mesma conta Google para acessar seus backups em outras instalações.')}
       />
       <section className="surface settings-surface" aria-busy={pending}>
         {!connected ? (
-          <form
-            className="drive-controls"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(async () => {
-                await invoke('drive_connect', {
-                  client: { clientId: clientId.trim(), clientSecret: clientSecret.trim() },
-                });
-                setClientSecret('');
-                setClientId('');
-                setConnected(true);
-                await list();
-              });
-            }}
-          >
-            <p className="field-hint">
-              {t(
-                'Ative a API Google Drive em um projeto Google Cloud e crie um cliente OAuth do tipo App para computador.',
-              )}
-            </p>
-            <label className="field">
-              <span>{t('Client ID')}</span>
-              <input
-                className="input"
-                value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
-                autoComplete="off"
-                required
-              />
-            </label>
-            <label className="field">
-              <span>{t('Client secret')}</span>
-              <input
-                className="input"
-                type="password"
-                value={clientSecret}
-                onChange={(event) => setClientSecret(event.target.value)}
-                autoComplete="off"
-                required
-              />
-            </label>
-            <Button disabled={pending || !clientId.trim() || !clientSecret.trim()} type="submit">
-              {t('Conectar no navegador')}
-            </Button>
-          </form>
+          <div className="drive-controls">
+            {available ? (
+              <Button disabled={pending} onClick={() => void run(connect)}>
+                {t('Conectar com Google')}
+              </Button>
+            ) : !pending && !error ? (
+              <p>{t('O acesso ao Google Drive não foi configurado nesta versão.')}</p>
+            ) : null}
+          </div>
         ) : (
           <div className="drive-controls">
             <div className="settings-backup-actions">
@@ -145,6 +116,9 @@ export function DriveBackups({
               <Button variant="outline" disabled={pending} onClick={() => void run(() => list())}>
                 {t('Recarregar backups')}
               </Button>
+              <Button variant="outline" disabled={pending} onClick={() => void run(connect)}>
+                {t('Reconectar conta Google')}
+              </Button>
               <Button
                 variant="ghost"
                 disabled={pending}
@@ -152,6 +126,7 @@ export function DriveBackups({
                   void run(async () => {
                     await invoke('drive_disconnect');
                     setConnected(false);
+                    setAvailable((await invoke<DriveStatus>('drive_status')).available);
                     setFiles([]);
                     setNextPage(null);
                   })

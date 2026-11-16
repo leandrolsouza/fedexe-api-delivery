@@ -14,8 +14,34 @@ pub(crate) enum CheckResult {
     Current,
     Available {
         version: String,
-        notes: Option<String>,
+        #[serde(rename = "localizedNotes")]
+        localized_notes: LocalizedNotes,
     },
+}
+
+#[derive(Serialize)]
+pub(crate) struct LocalizedNotes {
+    #[serde(rename = "en-US")]
+    english: Option<String>,
+    #[serde(rename = "pt-BR")]
+    portuguese: Option<String>,
+}
+
+impl LocalizedNotes {
+    fn from_update(update: &Update) -> Self {
+        let notes = &update.raw_json["localizedNotes"];
+        let note = |locale: &str| {
+            notes[locale]
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        Self {
+            english: note("en-US"),
+            portuguese: note("pt-BR").or_else(|| update.body.clone()),
+        }
+    }
 }
 
 fn stable_channel(builder: UpdaterBuilder) -> UpdaterBuilder {
@@ -58,9 +84,12 @@ pub(crate) async fn check_update(
     if let Some(mut update) = update {
         update.timeout = Some(Duration::from_secs(180));
         let version = update.version.clone();
-        let notes = update.body.clone();
+        let localized_notes = LocalizedNotes::from_update(&update);
         *slot = Some(update);
-        Ok(CheckResult::Available { version, notes })
+        Ok(CheckResult::Available {
+            version,
+            localized_notes,
+        })
     } else {
         Ok(CheckResult::Current)
     }
@@ -107,10 +136,21 @@ mod tests {
         let payload = b"Fedexe updater signature test fixture";
         let mut release = manifest("1.1.1");
         release["notes"] = json!("• Melhorias no console\n• Correções no runner");
-        let update = updater.restore_update(release).unwrap().unwrap();
+        let update = updater.restore_update(release.clone()).unwrap().unwrap();
         assert_eq!(
             update.body.as_deref(),
             Some("• Melhorias no console\n• Correções no runner")
+        );
+        let notes = LocalizedNotes::from_update(&update);
+        assert_eq!(notes.portuguese, update.body);
+        assert!(notes.english.is_none());
+        release["localizedNotes"] =
+            json!({ "en-US": "  English notes  ", "pt-BR": "Notas traduzidas" });
+        let localized = updater.restore_update(release).unwrap().unwrap();
+        let notes = serde_json::to_value(LocalizedNotes::from_update(&localized)).unwrap();
+        assert_eq!(
+            notes,
+            json!({ "en-US": "English notes", "pt-BR": "Notas traduzidas" })
         );
         update.verify(payload).unwrap();
         assert!(matches!(

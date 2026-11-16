@@ -3,7 +3,15 @@ import { Notifications, useNotifications, type Notice } from './components/Notif
 import { PostmanWorkspaceDialog } from './components/PostmanWorkspaceDialog';
 import type { PostmanImport } from './lib/postman-workspace';
 import { formatNumber, t, useLocale } from './lib/i18n';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -60,13 +68,10 @@ import {
   addConsoleMasks,
   compileRequest,
   emptyAuth,
-  importCollection,
-  isWorkspace,
-  isEnvironment,
   loadWorkspace,
   newRequest,
   RequestResolutionError,
-  redactSecrets,
+  redactValues,
   redactUrlCredentials,
   exportableCollection,
   exportableWorkspace,
@@ -82,7 +87,14 @@ import {
   type View,
   type Workspace,
 } from './lib/models';
-import { cancel, native, normalizeError, releaseResponseBodies, send } from './lib/transport';
+import {
+  cancel,
+  native,
+  normalizeError,
+  releaseResponseBodies,
+  send,
+  sendScriptRequest,
+} from './lib/transport';
 import { recordEditorPreparationFailure } from './lib/request-console';
 import { RequestConsole } from './components/RequestConsole';
 import { cn, download, uid } from './lib/utils';
@@ -101,16 +113,27 @@ import {
   HistoryView,
   RunnerView,
   SettingsView,
+  type RunnerFolder,
 } from './components/WorkspaceViews';
 import { CodeViewer } from './components/CodeViewer';
+import { runScripts, type ScriptResult } from './lib/scripts';
 import { PairEditor } from './components/PairEditor';
 import { AuthFields, AuthType } from './components/AuthFields';
 import { version } from '../../package.json';
-import { importOpenApi, parseImport } from './lib/openapi';
-import { importPostman } from './lib/postman';
+import { importDocument, importFileBatch, readImportFile } from './lib/import-files';
 import { importCurl, isCurl } from './lib/curl';
+import { navigateTabs } from './lib/keyboard';
+import {
+  FOLDER_SEPARATOR,
+  canRelocateFolder,
+  folderPath,
+  indexFolders,
+  isInFolder,
+} from './lib/folders';
 
 type OpenTab = { collectionId: string; requestId: string };
+const ScriptEditor = lazy(() => import('./components/ScriptEditor'));
+const collectionSettingsTabs = ['Variáveis', 'Autorização', 'Scripts'] as const;
 type EditDialog = {
   title: string;
   description: string;
@@ -118,6 +141,7 @@ type EditDialog = {
   action: (name: string) => void;
 };
 type ConfirmDialog = { title: string; description: string; label: string; action: () => void };
+const driveEnabled = native && import.meta.env.VITE_FEDEXE_GOOGLE_DRIVE === 'true';
 const navigationItems = [
   { id: 'collections', label: 'Coleções', icon: Layers3 },
   { id: 'environments', label: 'Ambientes', icon: Globe2 },
@@ -166,13 +190,16 @@ export function App() {
 
 function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
   const updates = useUpdates();
-  const { items: notices, markRead, add: addNotice } = useNotifications();
+  const { items, markRead, add: addNotice } = useNotifications();
+  const notices = driveEnabled
+    ? items
+    : items.filter(({ kind }) => kind !== 'backup' && kind !== 'backupFailed');
   const unread = notices.filter((notice) => !notice.read).length;
   useEffect(() => {
     if (updates.version) addNotice('update', updates.version);
   }, [updates.version, addNotice]);
   const navigation = navigationItems
-    .filter((item) => native || (item.id !== 'console' && item.id !== 'drive'))
+    .filter((item) => (item.id === 'drive' ? driveEnabled : item.id !== 'console' || native))
     .map((item) => ({ ...item, label: t(item.label) }));
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
@@ -206,11 +233,32 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       toast.error(normalizeError(error).message),
     );
   }, [responses]);
+  const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult[]>>({});
+  const scriptSessions = useRef(new Map<string, Map<string, string | null>>());
+  const manualExecution = useRef<AbortController>(undefined);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [sendingId, setSendingId] = useState('');
   const [sidebarHidden, setSidebarHidden] = useState(() => window.innerWidth <= 600);
+  const [sidebarWidth, setSidebarWidth] = useState<number>();
+  const sidebarDrag = useRef<{ x: number; width: number }>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const [renderedSidebarWidth, setRenderedSidebarWidth] = useState(252);
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const observer = new ResizeObserver(() => {
+      const width = sidebar.getBoundingClientRect().width;
+      if (width > 0) setRenderedSidebarWidth(Math.round(width));
+    });
+    observer.observe(sidebar);
+    return () => observer.disconnect();
+  }, []);
+  const resizeSidebar = (width: number) =>
+    setSidebarWidth(Math.round(Math.max(180, Math.min(440, window.innerWidth * 0.4, width))));
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [treeMenu, setTreeMenu] = useState<string>();
+  const [runnerFolder, setRunnerFolder] = useState<RunnerFolder>();
   const [treeSearch, setTreeSearch] = useState('');
   const [showTreeSearch, setShowTreeSearch] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -221,13 +269,14 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [postmanOpen, setPostmanOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
-  type ImportReport = { name: string; issues: string[] };
+  const [importingFiles, setImportingFiles] = useState(false);
+  type ImportReport = { name: string; issues: string[]; entries?: string[] };
   const [importReport, setImportReport] = useState<ImportReport>();
   const [importReports, setImportReports] = useState<Record<string, ImportReport>>({});
   const restoring = useRef(false);
 
-  function showImportReport(report: ImportReport) {
-    const id = addNotice('imported');
+  function showImportReport(report: ImportReport, failed = false) {
+    const id = addNotice(failed ? 'importFailed' : 'imported');
     setImportReports((current) =>
       Object.fromEntries([[id, report], ...Object.entries(current).slice(0, 99)]),
     );
@@ -238,8 +287,34 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [editName, setEditName] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog>();
   const [collectionSettings, setCollectionSettings] = useState<string>();
+  const [collectionSettingsTab, setCollectionSettingsTab] =
+    useState<(typeof collectionSettingsTabs)[number]>('Variáveis');
+  const [collectionScriptsExpanded, setCollectionScriptsExpanded] = useState(false);
   const [moveRequest, setMoveRequest] = useState<{ collectionId: string; requestId: string }>();
   const [moveTarget, setMoveTarget] = useState('');
+  const [moveFolder, setMoveFolder] = useState<{
+    collectionId: string;
+    path: string;
+    label: string;
+  }>();
+  const [moveFolderTarget, setMoveFolderTarget] = useState<string>();
+  const moveFolderCollection = workspace.collections.find((c) => c.id === moveFolder?.collectionId);
+  const moveFolderDestinations =
+    moveFolder && moveFolderCollection
+      ? ['', ...moveFolderCollection.folders].filter(
+          (parent) =>
+            !isInFolder(parent, moveFolder.path) &&
+            canRelocateFolder(
+              moveFolderCollection.folders,
+              moveFolder.path,
+              folderPath(parent, moveFolder.label),
+            ),
+        )
+      : [];
+  const moveFolderDestination =
+    moveFolderTarget !== undefined && moveFolderDestinations.includes(moveFolderTarget)
+      ? moveFolderTarget
+      : moveFolderDestinations[0];
   const [dragged, setDragged] = useState<OpenTab>();
   const [lastRun, setLastRun] = useState<RunResult>();
   const [theme, setTheme] = useState('light');
@@ -397,53 +472,111 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     if (!request || !collection || busy) return;
     const item = syncUrl(request);
     setBusy(true);
+    const execution = new AbortController();
+    manualExecution.current = execution;
+    const results: ScriptResult[] = [];
+    const sessionKey = JSON.stringify([collection.id, environment?.id]);
+    const changes = scriptSessions.current.get(sessionKey) ?? new Map<string, string | null>();
+    const secrets = [...collection.variables, ...(environment?.variables ?? [])]
+      .filter(({ secret }) => secret)
+      .map(({ value }) => value);
+    const redact = (message: string) => redactValues(message, [...secrets, ...changes.values()]);
     setSendingId(item.id);
+    setScriptResults((current) => ({ ...current, [item.id]: [] }));
     setErrors((current) => ({ ...current, [item.id]: '' }));
     let status: number | null = null;
     let duration = 0;
     let errorText: string | undefined;
     let prepared = false;
+    let skipped = false;
     const start = performance.now();
     try {
       const variables = variablesFor(collection, environment);
-      let compiled = compileRequest(item, collection, variables);
-      if (native) compiled = addConsoleMasks(compiled, item, collection, environment, variables);
+      for (const [key, value] of changes) {
+        if (value === null) delete variables[key];
+        else variables[key] = value;
+      }
+      const before = await runScripts(
+        'before',
+        collection,
+        item,
+        variables,
+        changes,
+        results,
+        redact,
+        undefined,
+        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+      );
+      execution.signal.throwIfAborted();
+      if (before.failed) throw new Error(t('Falha no script de pré-requisição.'));
+      if (before.skipped) {
+        skipped = true;
+        toast.info(t('Requisição ignorada pelo script.'));
+        return;
+      }
+      let compiled = compileRequest(before.item, collection, variables);
+      if (native) {
+        compiled = addConsoleMasks(compiled, before.item, collection, environment, variables);
+        for (const value of changes.values()) {
+          if (value !== null) compiled.console_masks?.values.push(value);
+        }
+      }
       prepared = true;
-      const response = await send(compiled, item.id);
+      const response = await send(
+        compiled,
+        item.id,
+        Boolean(collection.scripts?.after?.trim() || item.scripts?.after?.trim()),
+      );
       status = response.status;
       duration = response.duration_ms;
       setResponses((current) => ({ ...current, [item.id]: response }));
+      await runScripts(
+        'after',
+        collection,
+        before.item,
+        variables,
+        changes,
+        results,
+        redact,
+        response,
+        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+      );
     } catch (error) {
-      errorText = redactSecrets(normalizeError(error).message, environment);
+      errorText = redact(normalizeError(error).message);
       duration = Math.round(performance.now() - start);
       if (native && !prepared)
         recordEditorPreparationFailure(duration, error instanceof RequestResolutionError, item.id);
       setErrors((current) => ({ ...current, [item.id]: errorText! }));
     } finally {
-      setWorkspace((current) => ({
-        ...current,
-        history: [
-          {
-            id: uid(),
-            name: item.name,
-            method: item.method,
-            url: redactUrlCredentials(item.url),
-            status,
-            duration,
-            date: new Date().toISOString(),
-            requestId: item.id,
-            collectionId: collection.id,
-            error: errorText,
-          },
-          ...current.history,
-        ].slice(0, 300),
-      }));
+      if (changes.size) scriptSessions.current.set(sessionKey, changes);
+      setScriptResults((current) => ({ ...current, [item.id]: results }));
+      manualExecution.current = undefined;
+      if (!skipped)
+        setWorkspace((current) => ({
+          ...current,
+          history: [
+            {
+              id: uid(),
+              name: item.name,
+              method: item.method,
+              url: redactUrlCredentials(item.url),
+              status,
+              duration,
+              date: new Date().toISOString(),
+              requestId: item.id,
+              collectionId: collection.id,
+              error: errorText,
+            },
+            ...current.history,
+          ].slice(0, 300),
+        }));
       setBusy(false);
       setSendingId('');
     }
   }, [request, collection, environment, busy]);
 
   const cancelExecution = () => {
+    manualExecution.current?.abort();
     void cancel().catch((error) => toast.error(normalizeError(error).message));
   };
   const addRequest = useCallback(
@@ -529,19 +662,31 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       setView('collections');
     });
   }
-  function createFolder(c: Collection) {
+  function createFolder(c: Collection, parent = '') {
     askName(t('Nova pasta'), t('Organize as requisições de {0}.', c.name), '', (name) => {
-      if (c.folders.includes(name)) {
+      if (name.includes(FOLDER_SEPARATOR)) {
+        toast.error(t('O nome da pasta não pode conter “ / ”.'));
+        return;
+      }
+      const path = folderPath(parent, name);
+      if (c.folders.some((folder) => isInFolder(folder, path))) {
         toast.error(t('Já existe uma pasta com esse nome.'));
         return;
       }
-      updateCollection(c.id, (current) => ({ ...current, folders: [...current.folders, name] }));
+      updateCollection(c.id, (current) => ({ ...current, folders: [...current.folders, path] }));
+      setCollapsed((current) =>
+        current.filter((key) => key !== c.id && key !== `${c.id}:${parent}`),
+      );
     });
   }
   function toggleCollapsed(key: string) {
     setCollapsed((current) =>
       current.includes(key) ? current.filter((k) => k !== key) : [...current, key],
     );
+  }
+
+  function setTreeMenuOpen(key: string, open: boolean) {
+    setTreeMenu((current) => (open ? key : current === key ? undefined : current));
   }
   function setAllFoldersExpanded(expanded: boolean) {
     const folderKeys = workspace.collections.flatMap((c) => c.folders.map((f) => `${c.id}:${f}`));
@@ -554,6 +699,41 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     } else {
       setCollapsed((current) => [...new Set([...current, ...folderKeys])]);
     }
+  }
+
+  function relocateFolder(c: Collection, source: string, target: string) {
+    if (!canRelocateFolder(c.folders, source, target)) {
+      toast.error(t('Já existe uma pasta com esse nome.'));
+      return;
+    }
+    const relocatePath = (path: string) =>
+      isInFolder(path, source) ? target + path.slice(source.length) : path;
+    const relocateRequest = (request: RequestItem) =>
+      isInFolder(request.folder, source)
+        ? { ...request, folder: relocatePath(request.folder) }
+        : request;
+    updateCollection(c.id, (current) => ({
+      ...current,
+      folders: current.folders.map(relocatePath),
+      requests: current.requests.map(relocateRequest),
+    }));
+    const requestIds = new Set(c.requests.map(({ id }) => id));
+    setDrafts((current) =>
+      Object.fromEntries(
+        Object.entries(current).map(([id, request]) => [
+          id,
+          requestIds.has(id) ? relocateRequest(request) : request,
+        ]),
+      ),
+    );
+    const prefix = `${c.id}:`;
+    setCollapsed((current) =>
+      current.flatMap((key) => {
+        if (!key.startsWith(prefix)) return [key];
+        const path = relocatePath(key.slice(prefix.length));
+        return path !== target && isInFolder(target, path) ? [] : [prefix + path];
+      }),
+    );
   }
   function duplicateRequest(c: Collection, item: RequestItem) {
     const copy = {
@@ -640,9 +820,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           ),
       },
       {
-        label: t('Variáveis e autorização da coleção'),
+        label: t('Variáveis, autorização e scripts da coleção'),
         icon: <Braces size={14} />,
-        action: () => setCollectionSettings(c.id),
+        action: () => {
+          setCollectionSettingsTab('Variáveis');
+          setCollectionScriptsExpanded(false);
+          setCollectionSettings(c.id);
+        },
       },
       {
         label: t('Duplicar coleção'),
@@ -797,13 +981,33 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     );
   }
 
-  function renderFolder(c: Collection, folder: string) {
+  function renderCollectionFolders(c: Collection) {
+    const folders = indexFolders(c.folders);
+    return folders.get('')?.map((folder) => renderFolder(c, folder, '', folders));
+  }
+
+  function renderFolder(
+    c: Collection,
+    folder: string,
+    parent: string,
+    folders: ReturnType<typeof indexFolders>,
+  ) {
     const key = `${c.id}:${folder}`;
+    const menuKey = `folder:${key}`;
+    const label = parent ? folder.slice(parent.length + FOLDER_SEPARATOR.length) : folder;
+    const children = folders.get(folder) ?? [];
     const requests = c.requests.filter((r) => r.folder === folder);
+    const branchRequests = c.requests.filter((r) => isInFolder(r.folder, folder));
     const expanded = !!treeSearch || !collapsed.includes(key);
     return (
       <div className="tree-folder-group" key={folder}>
-        <div className="tree-folder">
+        <div
+          className="tree-folder"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setTreeMenuOpen(menuKey, true);
+          }}
+        >
           <button
             className="tree-folder-main"
             onClick={() => toggleCollapsed(key)}
@@ -811,10 +1015,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           >
             {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             {expanded ? <FolderOpen size={15} /> : <FolderClosed size={15} />}
-            <span>{folder}</span>
-            <span className="tree-count">{formatNumber(requests.length)}</span>
+            <span title={label}>{label}</span>
+            <span className="tree-count">{formatNumber(branchRequests.length)}</span>
           </button>
           <Dropdown
+            open={treeMenu === menuKey}
+            onOpenChange={(open) => setTreeMenuOpen(menuKey, open)}
             trigger={
               <button className="tree-more" aria-label={t('Ações da pasta {0}', folder)}>
                 <MoreHorizontal size={14} />
@@ -827,31 +1033,36 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 action: () => addRequest(c.id, folder),
               },
               {
+                label: t('Nova subpasta'),
+                icon: <FolderPlus size={14} />,
+                action: () => createFolder(c, folder),
+              },
+              {
+                label: t('Abrir no Runner'),
+                icon: <Play size={14} />,
+                separatorBefore: true,
+                disabled: busy || !branchRequests.length,
+                action: () => {
+                  setRunnerFolder({
+                    collectionId: c.id,
+                    folder,
+                    environmentId: workspace.activeEnvironment,
+                  });
+                  setView('runner');
+                },
+              },
+              {
                 label: t('Renomear pasta'),
                 icon: <Pencil size={14} />,
+                separatorBefore: true,
                 action: () =>
-                  askName(t('Renomear pasta'), '', folder, (name) => {
-                    if (c.folders.includes(name) && name !== folder) {
-                      toast.error(t('Já existe uma pasta com esse nome.'));
+                  askName(t('Renomear pasta'), '', label, (name) => {
+                    if (name === label) return;
+                    if (name.includes(FOLDER_SEPARATOR)) {
+                      toast.error(t('O nome da pasta não pode conter “ / ”.'));
                       return;
                     }
-                    updateCollection(c.id, (current) => ({
-                      ...current,
-                      folders: current.folders.map((f) => (f === folder ? name : f)),
-                      requests: current.requests.map((r) =>
-                        r.folder === folder ? { ...r, folder: name } : r,
-                      ),
-                    }));
-                    setDrafts((current) =>
-                      Object.fromEntries(
-                        Object.entries(current).map(([id, r]) => [
-                          id,
-                          c.requests.some((saved) => saved.id === id) && r.folder === folder
-                            ? { ...r, folder: name }
-                            : r,
-                        ]),
-                      ),
-                    );
+                    relocateFolder(c, folder, folderPath(parent, name));
                   }),
               },
               {
@@ -859,20 +1070,60 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                 icon: <Copy size={14} />,
                 action: () => {
                   let name = t('{0} (cópia)', folder);
-                  while (c.folders.includes(name)) name += t(' (cópia)');
+                  while (c.folders.some((f) => isInFolder(f, name))) name += t(' (cópia)');
+                  const copyPath = (value: string) => name + value.slice(folder.length);
                   updateCollection(c.id, (current) => ({
                     ...current,
-                    folders: [...current.folders, name],
+                    folders: [
+                      ...current.folders,
+                      ...current.folders.filter((f) => isInFolder(f, folder)).map(copyPath),
+                    ],
                     requests: [
                       ...current.requests,
-                      ...requests.map((r) => ({ ...structuredClone(r), id: uid(), folder: name })),
+                      ...branchRequests.map((r) => ({
+                        ...structuredClone(r),
+                        id: uid(),
+                        folder: copyPath(r.folder),
+                      })),
                     ],
                   }));
                 },
               },
               {
+                label: t('Mover pasta…'),
+                icon: <Folder size={14} />,
+                action: () => {
+                  setMoveFolderTarget(undefined);
+                  setMoveFolder({ collectionId: c.id, path: folder, label });
+                },
+              },
+              {
+                label: t('Expandir tudo nesta pasta'),
+                icon: <ChevronsDownUp size={14} />,
+                separatorBefore: true,
+                disabled: !!treeSearch,
+                action: () => {
+                  const keys = new Set(
+                    c.folders.filter((f) => isInFolder(f, folder)).map((f) => `${c.id}:${f}`),
+                  );
+                  setCollapsed((current) => current.filter((key) => !keys.has(key)));
+                },
+              },
+              {
+                label: t('Recolher tudo nesta pasta'),
+                icon: <ChevronsUpDown size={14} />,
+                disabled: !!treeSearch,
+                action: () => {
+                  const keys = c.folders
+                    .filter((f) => isInFolder(f, folder))
+                    .map((f) => `${c.id}:${f}`);
+                  setCollapsed((current) => [...new Set([...current, ...keys])]);
+                },
+              },
+              {
                 label: t('Excluir pasta'),
                 icon: <Trash2 size={14} />,
+                separatorBefore: true,
                 danger: true,
                 action: () =>
                   setConfirmDialog({
@@ -880,16 +1131,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                     description: t(
                       'A pasta “{0}” e suas {1} requisições serão removidas.',
                       folder,
-                      requests.length,
+                      branchRequests.length,
                     ),
                     label: t('Excluir pasta'),
                     action: () => {
                       updateCollection(c.id, (current) => ({
                         ...current,
-                        folders: current.folders.filter((f) => f !== folder),
-                        requests: current.requests.filter((r) => r.folder !== folder),
+                        folders: current.folders.filter((f) => !isInFolder(f, folder)),
+                        requests: current.requests.filter((r) => !isInFolder(r.folder, folder)),
                       }));
-                      removeTabs(requests.map((r) => r.id));
+                      removeTabs(branchRequests.map((r) => r.id));
                     },
                   }),
               },
@@ -899,7 +1150,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         {expanded && (
           <div className="folder-requests">
             {requests.map((item) => renderRequest(c, item))}
-            {!requests.length && (
+            {children.length > 0 && (
+              <div className="tree-subfolders">
+                {children.map((child) => renderFolder(c, child, folder, folders))}
+              </div>
+            )}
+            {!requests.length && !children.length && (
               <button className="empty-folder" onClick={() => addRequest(c.id, folder)}>
                 <Plus size={12} />
                 {' ' + t('Adicionar requisição')}
@@ -931,6 +1187,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setDrafts({});
         setResponses({});
         setErrors({});
+        setScriptResults({});
+        scriptSessions.current.clear();
         setLastRun(undefined);
         setTabs([]);
         setActive({ collectionId: snapshot.collections[0]?.id || '', requestId: '' });
@@ -950,22 +1208,20 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         };
       case 'backup':
       case 'backupFailed':
-        return native ? () => setView('drive') : undefined;
+        return driveEnabled ? () => setView('drive') : undefined;
       case 'restored':
         return () => setView('collections');
       case 'restoreFailed':
       case 'localBackup':
         return () => setView('settings');
       case 'imported':
-        return importReports[notice.id]
-          ? () => setImportReport(importReports[notice.id])
-          : undefined;
       case 'importFailed':
-        return () => setImportOpen(true);
+        if (importReports[notice.id]) return () => setImportReport(importReports[notice.id]);
+        return notice.kind === 'importFailed' ? () => setImportOpen(true) : undefined;
     }
   }
 
-  async function importData(text: string) {
+  function importData(text: string) {
     try {
       if (isCurl(text)) {
         const { request, issues } = importCurl(text);
@@ -997,10 +1253,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setImportError('');
         return;
       }
-      const parsed = parseImport(text);
-      const openApi = importOpenApi(parsed);
-      if (openApi) {
-        const { collection: imported, environment, issues } = openApi;
+      const result = importDocument(text);
+      if (result.kind === 'openapi') {
+        const { collection: imported, environment, issues } = result;
         setWorkspace((current) => ({
           ...current,
           collections: [...current.collections, imported],
@@ -1014,27 +1269,25 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setImportError('');
         return;
       }
-      if (isWorkspace(parsed)) {
-        confirmRestore(parsed);
+      if (result.kind === 'backup') {
+        confirmRestore(result.workspace);
         return;
       }
-      const postman = importPostman(parsed);
-      const environment =
-        postman?.environment ?? (isEnvironment(parsed) ? { ...parsed, id: uid() } : undefined);
-      if (environment) {
+      if (result.kind === 'environment') {
+        const { environment, issues } = result;
         setWorkspace((current) => ({
           ...current,
           environments: [...current.environments, environment],
         }));
-        showImportReport({ name: environment.name, issues: postman?.issues ?? [] });
+        showImportReport({ name: environment.name, issues });
         setImportOpen(false);
         setImportText('');
         setImportError('');
         setView('environments');
         return;
       }
-      const c = postman?.collection ?? importCollection(parsed);
-      if (postman) showImportReport({ name: c.name, issues: postman.issues });
+      const { collection: c, issues } = result;
+      if (issues) showImportReport({ name: c.name, issues });
       else addNotice('imported');
       setWorkspace((current) => ({ ...current, collections: [...current.collections, c] }));
       setImportOpen(false);
@@ -1046,6 +1299,50 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     } catch (error) {
       addNotice('importFailed');
       setImportError(normalizeError(error).message);
+    }
+  }
+
+  async function importFiles(files: File[]) {
+    if (!files.length || importingFiles) return;
+    setImportingFiles(true);
+    setImportError('');
+    try {
+      if (files.length === 1) {
+        const text = await readImportFile(files[0]);
+        setImportText(text);
+        importData(text);
+        return;
+      }
+
+      const result = await importFileBatch(files);
+      if (result.succeeded) {
+        setWorkspace((current) => ({
+          ...current,
+          collections: [...current.collections, ...result.collections],
+          environments: [...current.environments, ...result.environments],
+          activeEnvironment: result.activeEnvironment ?? current.activeEnvironment,
+        }));
+        const first = result.collections[0];
+        if (first?.requests[0]) openRequest(first.id, first.requests[0].id);
+        else if (first) {
+          setActive({ collectionId: first.id, requestId: '' });
+          setView('collections');
+        } else setView('environments');
+      }
+      setImportOpen(false);
+      setImportText('');
+      showImportReport(
+        {
+          name: t('{0} de {1} arquivos importados', result.succeeded, files.length),
+          entries: result.entries,
+          issues: result.issues,
+        },
+        result.succeeded === 0,
+      );
+    } catch (error) {
+      setImportError(normalizeError(error).message);
+    } finally {
+      setImportingFiles(false);
     }
   }
 
@@ -1143,6 +1440,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         sidebarHidden && 'sidebar-hidden',
         view !== 'collections' && 'wide-view',
       )}
+      style={
+        {
+          '--collections-width': sidebarWidth === undefined ? undefined : `${sidebarWidth}px`,
+        } as CSSProperties
+      }
     >
       <header className="app-header" data-tauri-drag-region="deep">
         <div className="header-brand">
@@ -1284,7 +1586,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </button>
         </div>
       </nav>
-      <aside className="collections-sidebar" aria-label={t('Árvore de coleções')}>
+      <aside
+        id="collections-sidebar"
+        ref={sidebarRef}
+        className="collections-sidebar"
+        aria-label={t('Árvore de coleções')}
+      >
         <div className="sidebar-heading">
           <h2>
             {t('Coleções') + ' '}
@@ -1386,7 +1693,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         <div className="collection-tree">
           {workspace.collections.map((c) => (
             <div className="tree-collection-group" key={c.id}>
-              <div className="tree-collection">
+              <div
+                className="tree-collection"
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setTreeMenuOpen(`collection:${c.id}`, true);
+                }}
+              >
                 <button
                   className="tree-collection-main"
                   aria-expanded={!!treeSearch || !collapsed.includes(c.id)}
@@ -1410,6 +1723,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   <span className="tree-count">{formatNumber(c.requests.length)}</span>
                 </button>
                 <Dropdown
+                  open={treeMenu === `collection:${c.id}`}
+                  onOpenChange={(open) => setTreeMenuOpen(`collection:${c.id}`, open)}
                   trigger={
                     <button className="tree-more" aria-label={t('Ações da coleção {0}', c.name)}>
                       <MoreHorizontal size={15} />
@@ -1423,7 +1738,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   {c.requests
                     .filter((r) => !r.folder || !c.folders.includes(r.folder))
                     .map((item) => renderRequest(c, item))}
-                  {c.folders.map((folder) => renderFolder(c, folder))}
+                  {renderCollectionFolders(c)}
                   <button className="add-tree-request" onClick={() => addRequest(c.id)}>
                     <Plus size={13} />
                     {' ' + t('Nova requisição')}
@@ -1479,6 +1794,36 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </span>
           <HardDrive size={13} />
         </div>
+        <div
+          className="collections-resizer"
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label={t('Redimensionar barra lateral')}
+          aria-controls="collections-sidebar"
+          aria-valuemin={180}
+          aria-valuemax={440}
+          aria-valuenow={renderedSidebarWidth}
+          onPointerDown={(event) => {
+            if (!event.isPrimary || event.button !== 0) return;
+            sidebarDrag.current = { x: event.clientX, width: renderedSidebarWidth };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const drag = sidebarDrag.current;
+            if (drag && event.currentTarget.hasPointerCapture(event.pointerId)) {
+              resizeSidebar(drag.width + event.clientX - drag.x);
+            }
+          }}
+          onLostPointerCapture={() => {
+            sidebarDrag.current = null;
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            resizeSidebar(renderedSidebarWidth + (event.key === 'ArrowLeft' ? -16 : 16));
+          }}
+        />
       </aside>
       <main className="main-area">
         <div className="main-toolbar" data-tauri-drag-region="deep">
@@ -1682,6 +2027,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   onCancel={cancelExecution}
                   response={responses[request.id]}
                   error={errors[request.id]}
+                  scriptResults={scriptResults[request.id]}
                   onSnippet={() => setSnippetOpen(true)}
                   wrap={workspace.settings.wrap}
                   layout={requestLayout}
@@ -1757,11 +2103,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onImport={() => setImportOpen(true)}
               onHelp={() => setHelpOpen(true)}
               onBackup={() => addNotice('localBackup')}
-              onDrive={native ? () => setView('drive') : undefined}
+              onDrive={driveEnabled ? () => setView('drive') : undefined}
               updates={<UpdateSettings updates={updates} />}
             />
           )}
-          {native && (
+          {driveEnabled && (
             <div hidden={view !== 'drive'}>
               <DriveBackups
                 active={view === 'drive'}
@@ -1779,6 +2125,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <div hidden={view !== 'runner'}>
             <RunnerView
               workspace={workspace}
+              initialFolder={runnerFolder}
               busy={busy}
               setBusy={setBusy}
               onCancel={cancelExecution}
@@ -1983,55 +2330,45 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       </Dialog>
       <Dialog
         open={importOpen}
-        onOpenChange={setImportOpen}
+        onOpenChange={(open) => {
+          if (!importingFiles) setImportOpen(open);
+        }}
         title={t('Traga suas APIs para casa.')}
         description={t('Importe um backup, uma coleção, um ambiente Postman, OpenAPI ou cURL.')}
         className="import-dialog"
       >
         <button
           className="import-dropzone"
+          disabled={importingFiles}
           onClick={() => fileInput.current?.click()}
           onDragOver={(e) => e.preventDefault()}
-          onDrop={async (e) => {
+          onDrop={(e) => {
             e.preventDefault();
-            const file = e.dataTransfer.files[0];
-            if (file) {
-              if (file.size > 10 * 1024 * 1024) {
-                setImportError(t('O arquivo excede o limite de importação de 10 MB.'));
-                return;
-              }
-              const text = await file.text();
-              setImportText(text);
-              await importData(text);
-            }
+            void importFiles(Array.from(e.dataTransfer.files));
           }}
         >
           <span>
             <Upload size={25} />
           </span>
-          <strong>{t('Arraste seu arquivo ou clique para escolher')}</strong>
-          <small>{t('Arquivos .json, .yaml e .yml · até 10 MB')}</small>
+          <strong>
+            {t(
+              importingFiles
+                ? 'Importando arquivos…'
+                : 'Arraste seus arquivos ou clique para selecionar',
+            )}
+          </strong>
+          <small>{t('Arquivos .json, .yaml e .yml · até 10 MB por arquivo')}</small>
         </button>
         <input
           ref={fileInput}
           hidden
           type="file"
+          multiple
           accept=".json,.yaml,.yml,application/json,application/yaml"
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (!file) return;
-            if (file.size > 10 * 1024 * 1024) {
-              setImportError(t('O arquivo excede o limite de importação de 10 MB.'));
-              return;
-            }
-            try {
-              const text = await file.text();
-              setImportText(text);
-              await importData(text);
-            } catch (error) {
-              setImportError(normalizeError(error).message);
-            }
+          onChange={(e) => {
+            const files = Array.from(e.currentTarget.files ?? []);
+            e.currentTarget.value = '';
+            void importFiles(files);
           }}
         />
         <div className="import-divider">
@@ -2043,6 +2380,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           aria-label={t('Conteúdo para importar')}
           className="input mono import-textarea"
           value={importText}
+          disabled={importingFiles}
           onChange={(e) => {
             setImportText(e.target.value);
             setImportError('');
@@ -2055,6 +2393,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         {native && (
           <Button
             variant="outline"
+            disabled={importingFiles}
             onClick={() => {
               setImportOpen(false);
               setPostmanOpen(true);
@@ -2071,10 +2410,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span>Postman · OpenAPI · cURL</span>
         </div>
         <div className="dialog-footer">
-          <Button variant="outline" onClick={() => setImportOpen(false)}>
+          <Button variant="outline" disabled={importingFiles} onClick={() => setImportOpen(false)}>
             {t('Cancelar')}
           </Button>
-          <Button disabled={!importText.trim()} onClick={() => importData(importText)}>
+          <Button
+            disabled={importingFiles || !importText.trim()}
+            onClick={() => importData(importText)}
+          >
             {isCurl(importText) ? t('Importar cURL') : t('Importar')} <ArrowRight size={14} />
           </Button>
         </div>
@@ -2094,10 +2436,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         title={t('Relatório de importação')}
         description={importReport?.name ?? ''}
       >
-        {importReport?.issues.length ? (
+        {importReport && (importReport.entries?.length || importReport.issues.length) ? (
           <ul className="import-report">
-            {importReport.issues.map((issue, index) => (
-              <li key={index}>{issue}</li>
+            {[...(importReport.entries ?? []), ...importReport.issues].map((entry, index) => (
+              <li key={index}>{entry}</li>
             ))}
           </ul>
         ) : (
@@ -2243,22 +2585,83 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         onOpenChange={(open) => {
           if (!open) setCollectionSettings(undefined);
         }}
-        title={t('Variáveis e autorização · {0}', settingsCollection?.name || '')}
-        description={t('Defina as variáveis e a autorização que os endpoints podem herdar.')}
-        className="collection-settings-dialog"
+        title={t('Configurações da coleção · {0}', settingsCollection?.name || '')}
+        description={t('Variáveis, autorização e scripts da coleção')}
+        className={cn(
+          'collection-settings-dialog',
+          collectionSettingsTab === 'Scripts' && collectionScriptsExpanded && 'expanded-scripts',
+        )}
       >
         {settingsCollection && (
           <>
-            <PairEditor
-              kind={t('variável')}
-              rows={settingsCollection.variables}
-              onChange={(variables) =>
-                updateCollection(settingsCollection.id, (current) => ({ ...current, variables }))
-              }
-            />
-            <div className="collection-auth-settings auth-fields">
-              <AuthType auth={settingsCollection.auth} onChange={updateCollectionAuth} />
-              <AuthFields auth={settingsCollection.auth} onChange={updateCollectionAuth} />
+            <div
+              className="collection-settings-tabs"
+              role="tablist"
+              aria-label={t('Configurações da coleção')}
+              onKeyDown={navigateTabs}
+            >
+              {collectionSettingsTabs.map((tab, index) => (
+                <button
+                  id={`collection-settings-tab-${index}`}
+                  key={tab}
+                  role="tab"
+                  aria-selected={collectionSettingsTab === tab}
+                  aria-controls={
+                    collectionSettingsTab === tab ? 'collection-settings-panel' : undefined
+                  }
+                  tabIndex={collectionSettingsTab === tab ? 0 : -1}
+                  className={cn('tab-button', collectionSettingsTab === tab && 'active')}
+                  onClick={() => setCollectionSettingsTab(tab)}
+                >
+                  {t(tab)}
+                </button>
+              ))}
+            </div>
+            <div
+              id="collection-settings-panel"
+              key={collectionSettingsTab}
+              className={cn(
+                'collection-settings-panel',
+                collectionSettingsTab === 'Variáveis' && 'collection-settings-variables',
+                collectionSettingsTab === 'Scripts' && 'collection-settings-scripts',
+              )}
+              role="tabpanel"
+              aria-labelledby={`collection-settings-tab-${collectionSettingsTabs.indexOf(collectionSettingsTab)}`}
+            >
+              {collectionSettingsTab === 'Variáveis' && (
+                <PairEditor
+                  searchable
+                  kind={t('variável')}
+                  rows={settingsCollection.variables}
+                  onChange={(variables) =>
+                    updateCollection(settingsCollection.id, (current) => ({
+                      ...current,
+                      variables,
+                    }))
+                  }
+                />
+              )}
+              {collectionSettingsTab === 'Autorização' && (
+                <div className="collection-auth-settings auth-fields">
+                  <AuthType auth={settingsCollection.auth} onChange={updateCollectionAuth} />
+                  <AuthFields auth={settingsCollection.auth} onChange={updateCollectionAuth} />
+                </div>
+              )}
+              {collectionSettingsTab === 'Scripts' && (
+                <Suspense fallback={<p role="status">{t('Carregando editor…')}</p>}>
+                  <ScriptEditor
+                    scripts={settingsCollection.scripts}
+                    expanded={collectionScriptsExpanded}
+                    onToggleExpanded={() => setCollectionScriptsExpanded((expanded) => !expanded)}
+                    onChange={(scripts) =>
+                      updateCollection(settingsCollection.id, (current) => ({
+                        ...current,
+                        scripts,
+                      }))
+                    }
+                  />
+                </Suspense>
+              )}
             </div>
             <div className="dialog-footer">
               <span className="muted">{t('Alterações salvas automaticamente')}</span>
@@ -2312,6 +2715,54 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             }}
           >
             {t('Mover requisição') + ' '}
+            <ArrowRight size={14} />
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog
+        open={!!moveFolder}
+        onOpenChange={(open) => {
+          if (!open) setMoveFolder(undefined);
+        }}
+        title={t('Mover pasta…')}
+        description={t('Escolha a pasta de destino dentro da coleção.')}
+      >
+        {moveFolderDestinations.length ? (
+          <label className="field-label">
+            {t('Pasta')}
+            <select
+              className="input"
+              value={moveFolderDestination}
+              onChange={(event) => setMoveFolderTarget(event.target.value)}
+            >
+              {moveFolderDestinations.map((path) => (
+                <option key={path} value={path}>
+                  {path || t('Raiz da coleção')}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <p>{t('Não há outro destino disponível para esta pasta.')}</p>
+        )}
+        <div className="dialog-footer">
+          <Button variant="outline" onClick={() => setMoveFolder(undefined)}>
+            {t('Cancelar')}
+          </Button>
+          <Button
+            disabled={moveFolderDestination === undefined}
+            onClick={() => {
+              if (!moveFolder || !moveFolderCollection || moveFolderDestination === undefined)
+                return;
+              relocateFolder(
+                moveFolderCollection,
+                moveFolder.path,
+                folderPath(moveFolderDestination, moveFolder.label),
+              );
+              setMoveFolder(undefined);
+            }}
+          >
+            {t('Mover pasta') + ' '}
             <ArrowRight size={14} />
           </Button>
         </div>

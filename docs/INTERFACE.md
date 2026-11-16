@@ -12,7 +12,7 @@ Visual: superfícies claras, acentos violeta, cores semânticas por método HTTP
 - **Editor:** método, URL, query ativável com chaves repetidas, autorização herdada/nenhuma/Basic/Bearer/API key, headers, JSON, texto, formulário URL-encoded, testes declarativos e extração por JSON Pointer. URLs coladas com query são sincronizadas com a tabela. O motor recusa colisões entre headers e autorização.
 - **Resposta:** status, duração, tamanho total no desktop, JSON formatado/original, números de linha, headers, testes e cópia da prévia. No Windows, o app grava o corpo completo em um arquivo temporário durante o recebimento e permite exportá-lo sem repetir a requisição. A prévia é limitada a 256 KiB e também pode ser baixada no navegador.
 - **Ambientes:** criação, duplicação, renomeação, seleção, exclusão e variáveis. Segredos ficam mascarados e são recuperados do Gerenciador de Credenciais no Windows. No navegador ficam na sessão. Ambiente substitui variáveis da coleção; extrações do runner têm prioridade durante uma rodada.
-- **Runner:** coleção inteira, pasta ou requisições selecionadas. Exige a escolha do ambiente e executa na ordem salva. Os testes verificam status, presença ou valor exato de header e campos JSON. No desktop, um valor igual em qualquer ocorrência de um header repetido satisfaz a regra. A extração por JSON Pointer disponibiliza strings, números e booleanos às etapas seguintes da rodada.
+- **Runner:** coleção inteira, pasta ou requisições selecionadas. Exige a escolha do ambiente e executa na ordem salva. Aceita de 1 a 100 iterações e um intervalo de até 60.000 ms entre requisições, inclusive entre iterações. A primeira etapa começa imediatamente e é possível cancelar durante a espera. Os testes verificam status, presença ou valor exato de header e campos JSON. No desktop, um valor igual em qualquer ocorrência de um header repetido satisfaz a regra. A extração por JSON Pointer disponibiliza strings, números e booleanos às etapas seguintes da mesma iteração. Cada iteração começa com as variáveis originais.
 - **Histórico:** até 300 metadados de envios avulsos, busca, filtros e reabertura da requisição original. Não persiste corpos de resposta nem headers de autorização.
 - **Console de requisições:** no desktop, reúne em memória os últimos 100 envios do editor e etapas do runner. Filtre pela origem ou por erro e abra um registro para conferir a requisição resolvida, os redirecionamentos e a resposta. A prévia tem até 8 KiB. JSON que não pode ser mascarado com segurança aparece como indisponível. O motor mascara credenciais, valores marcados como secretos e valores extraídos pelo runner antes de enviar os registros ao painel.
 - **Configurações:** tema, densidade, quebra de linha, nome do workspace, backup e restauração.
@@ -46,7 +46,7 @@ O timeout padrão é de 30 segundos. No desktop, o endpoint pode manter a respos
 
 ## Verificação
 
-O importador converte atribuições simples como `pm.environment.set('token', pm.response.json().token);` em extrações do runner. O valor extraído fica disponível nas etapas seguintes da rodada. O ambiente salvo mantém seus valores.
+A importação de uma coleção Postman por JSON ou por workspace copia os scripts de pré-requisição e pós-resposta da coleção e de cada requisição. Eventos desativados são ignorados. O relatório indica scripts de pasta, referências sem código no JSON e outros eventos que foram ignorados. Os scripts usam a API documentada na seção **Scripts de requisição** e rodam no editor e no runner da interface. A CLI executa as validações e extrações declarativas.
 
 Na versão publicada 1.0.0-rc.1, importamos pela interface uma coleção Postman e dois ambientes de teste no mesmo Windows. Cada ambiente apontava para um servidor local distinto, com seu próprio token. A mesma coleção executou três etapas em cada ambiente. O login e a consulta autenticada passaram, e a terceira etapa mostrou “Status esperado 200, recebido 409.” em ambas as execuções. Os logs dos servidores confirmaram a ordem e o destino de cada chamada. A extração usou a forma `pm.collectionVariables.set` compatível com o importador.
 
@@ -90,13 +90,45 @@ A sessão PKCE é compartilhada entre configurações com a mesma URL de autoriz
 
 Use HTTPS para o provedor e para as requisições protegidas. Para testes locais, HTTP é aceito em endereços IP de loopback. As exportações preservam a configuração e as referências a variáveis. Sessões e valores de Client secret ficam fora dos arquivos exportados.
 
-## Backup e restauração pelo Google Drive
+## Google Drive (desativado por padrão)
 
-No desktop, abra **Backups no Google Drive** no menu lateral ou em **Configurações**. Ative a API Google Drive em um projeto do Google Cloud, configure a tela de consentimento e crie um cliente OAuth do tipo **App para computador**. Se o projeto estiver em teste, inclua sua conta entre os usuários de teste. Informe o Client ID e o Client secret do cliente desktop no Fedexe e selecione **Conectar no navegador**.
+Em um build com a integração habilitada, abra **Backups no Google Drive** e selecione **Conectar com Google**. No navegador, entre na sua conta e autorize o Fedexe a acessar sua área privada de backups no Google Drive. Em outra instalação, use a mesma conta Google.
 
 - **Criar backup no Drive** mostra as coleções, pastas, requisições e ambientes que compõem o arquivo antes de enviá-lo. O arquivo inclui as configurações do workspace e tem limite de 5 MB. O histórico de execução, os valores secretos e as referências ao cofre ficam fora do arquivo. Se o corpo de uma requisição usa um arquivo local, selecione o arquivo novamente na instalação de destino.
-- Cada envio cria uma cópia distinta na área de dados privados do app no Drive. Conecte a mesma conta Google com credenciais do mesmo projeto para listar os arquivos em outra instalação.
+- Cada envio cria uma cópia distinta na área de dados privados do app no Drive. A aba lista as cópias da conta conectada.
 - **Restaurar backup** baixa e valida a cópia selecionada. A confirmação substitui as coleções, os ambientes e as configurações locais. Exporte os dados atuais antes de confirmar. Preencha novamente as credenciais necessárias às requisições após restaurar.
-- O Gerenciador de Credenciais do Windows armazena as credenciais do cliente desktop e os tokens OAuth. **Desconectar sessão** remove essa sessão do cofre local e preserva os arquivos no Drive.
+- O Gerenciador de Credenciais do Windows armazena a sessão OAuth. **Desconectar sessão** remove essa sessão do cofre local e preserva os arquivos no Drive.
+
+Se você já conectou um projeto próprio na 1.8.0, use **Reconectar conta Google** para renovar essa conexão. Para mudar para a conexão padrão do Fedexe, restaure os backups que queira transferir antes de desconectar. Depois, conecte-se novamente e crie um backup sob a nova conexão.
 
 Abra **Notificações** pelo sino no cabeçalho. O indicador mostra quando há avisos não lidos. A aba mantém os resultados recentes de importação, backup e restauração e os avisos de atualização. Os relatórios detalhados de importação podem ser reabertos durante a sessão.
+
+### Configuração do Google Drive para publicação
+
+No projeto Google Cloud do Fedexe, habilite a API Google Drive, configure o consentimento para a audiência que usará o app e crie um cliente OAuth do tipo **App para computador**. Configure a variável de repositório `FEDEXE_GOOGLE_OAUTH_CLIENT_ID` e o secret de repositório `FEDEXE_GOOGLE_OAUTH_CLIENT_SECRET` no GitHub Actions. Para habilitar a integração em uma publicação futura, defina também a variável de repositório `FEDEXE_GOOGLE_DRIVE_ENABLED=true`. Para testar localmente, defina `VITE_FEDEXE_GOOGLE_DRIVE=true` e as duas variáveis OAuth no processo que executa `npm run tauri dev`. Builds padrão deixam a integração desativada.
+
+O app solicita o escopo `drive.appdata`. Mantenha o mesmo projeto Google Cloud nas próximas versões para que os backups continuem acessíveis.
+
+## Scripts de requisição
+
+Use a aba **Scripts** da requisição ou abra **Variáveis, autorização e scripts da coleção** no menu da coleção. No envio manual e no runner, o script da coleção roda primeiro em cada fase. O runner usa os scripts salvos. Uma exceção no pré-envio impede o envio daquela requisição. O runner considera exceções de script e testes reprovados na opção **Parar na primeira falha**.
+
+```js
+// Pré-requisição
+const token = pm.environment.get('token');
+if (token) pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + token });
+
+// Pós-resposta
+pm.test('HTTP 200', () => pm.response.to.have.status(200));
+if (pm.response.code === 200) {
+  pm.environment.set('token', pm.response.json().token);
+}
+```
+
+`pm.variables`, `pm.environment` e `pm.collectionVariables` acessam as variáveis efetivas com `get`, `has`, `set` e `unset`. As alterações ficam em memória durante a sessão do editor, isoladas por coleção e ambiente, ou durante uma rodada do runner. Use `pm.request.headers.get/upsert/remove` para trabalhar com os cabeçalhos configurados na requisição. Ajuste a autenticação na aba **Autorização** se houver colisão com um cabeçalho criado pelo script.
+
+`pm.variables.replaceIn(texto)` substitui referências pelas variáveis efetivas, incluindo as escritas no próprio script. Referências ausentes permanecem no texto. No pré-envio, `pm.execution.skipRequest()` ignora o envio da etapa atual, inclusive quando chamado dentro de um callback de `pm.sendRequest`. As asserções que já falharam continuam no resultado.
+
+O JavaScript é síncrono e roda em uma VM com limites de tempo e memória. Use `pm.test`, `pm.expect`, `pm.response.headers.get(nome)`, `pm.response.text()` ou `pm.response.json()`. As asserções de `pm.expect` incluem `equal`, `eql` para valores JSON, `property`, `include`, `a/an`, `above`, `lengthOf`, `empty`, `null`, `undefined` e negação com `not`. O corpo disponível aos scripts tem o limite de 256 KiB no envio manual e 16 MiB no runner. Abra **Resultados dos testes** no editor ou expanda a etapa no runner para ver os resultados e erros. O console desktop oculta o corpo e os cabeçalhos da resposta quando um script de pós-resposta pode extrair credenciais.
+
+`pm.sendRequest(urlOuConfiguração, callback)` usa o transporte HTTP do Fedexe no editor e no runner. O callback síncrono recebe `(erro, resposta)` e pode ler status, headers e até 256 KiB do corpo. O Fedexe aguarda as chamadas e seus callbacks antes de avançar para a próxima etapa. A configuração aceita `url`, `method`, `header` e um corpo `raw` ou `urlencoded`. Há um limite de 10 chamadas por script. `pm.environment.name` fornece o nome do ambiente ativo, `pm.globals.get/has` consultam um escopo vazio e `atob` permite decodificar Base64. As chamadas a `console.log`, `console.warn` e `console.error` são aceitas e descartadas para evitar expor dados do script.

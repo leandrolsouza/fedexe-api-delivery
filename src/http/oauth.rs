@@ -20,7 +20,7 @@ const RECONNECT: &str = "Conecte a sessão OAuth 2.0 pelo editor de autorizaçã
 const BUSY: &str = "Já existe uma operação OAuth 2.0 em andamento.";
 const DESKTOP: &str = "Authorization Code com PKCE está disponível no app desktop.";
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Provider {
     pub authorization_url: String,
@@ -29,7 +29,7 @@ pub struct Provider {
     pub scope: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "grant", rename_all = "snake_case")]
 pub(crate) enum Authorization {
     ClientCredentials {

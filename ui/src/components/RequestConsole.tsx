@@ -163,8 +163,18 @@ export function RequestConsole({
                     <h2>{t('Headers da resposta')}</h2>
                     <Headers values={entry.response.headers} />
                     <h2>{t('Prévia da resposta')}</h2>
-                    {entry.response.preview && <pre>{entry.response.preview}</pre>}
-                    {entry.response.truncated && <p>{t('Prévia incompleta ou indisponível.')}</p>}
+                    {entry.response.status === 204 ? (
+                      <p>{t('Resposta sem corpo.')}</p>
+                    ) : entry.response.hiddenByPostResponseScript ? (
+                      <p>{t('Resposta ocultada por um script de pós-resposta.')}</p>
+                    ) : (
+                      <>
+                        {entry.response.preview && <pre>{entry.response.preview}</pre>}
+                        {entry.response.truncated && (
+                          <p>{t('Prévia incompleta ou indisponível.')}</p>
+                        )}
+                      </>
+                    )}
                   </section>
                 )}
               </div>

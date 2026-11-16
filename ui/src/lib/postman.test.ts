@@ -1,41 +1,90 @@
 import { describe, expect, it } from 'vitest';
 import { importCollection, isEnvironment, safeEnvironment, validCollection } from './models';
 import { importPostman } from './postman';
+import { indexFolders } from './folders';
 
 describe('migração do Postman', () => {
-  it('converte as regras simples do cenário de benchmark sem executar JavaScript', () => {
-    const status = "pm.test('Status 200', () => pm.response.to.have.status(200));";
-    const token = "pm.collectionVariables.set('token', pm.response.json().token);";
-    const endpoint = (name: string, exec: string[]) => ({
-      name,
-      request: 'https://example.test',
-      event: [{ listen: 'test', script: { exec } }],
-    });
+  it('reconstrói a hierarquia a partir dos caminhos salvos de pastas Postman', () => {
     const result = importPostman({
       info: {
-        name: 'Benchmark',
-        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+        name: 'API',
+        schema: 'https://schema.postman.com/json/collection/v2.1.0/collection.json',
       },
       item: [
-        endpoint('Login', [status, token]),
-        endpoint('Outro', [status, 'custom();']),
-        endpoint('Login por ambiente', [
-          status,
-          "pm.environment.set('qa_token', pm.response.json().token);",
-        ]),
+        {
+          name: 'Flows',
+          item: [
+            { name: 'Cadastro', item: [{ name: 'Listar', request: 'https://example.test' }] },
+            { name: 'Vazia', item: [] },
+          ],
+        },
       ],
     })!;
-    expect(result.collection?.requests[0]).toMatchObject({
-      tests: [{ type: 'status', equals: 200 }],
-      extract: { token: '/token' },
-    });
-    expect(result.collection?.requests[1].tests).toEqual([]);
-    expect(result.collection?.requests[2]).toMatchObject({
-      tests: [{ type: 'status', equals: 200 }],
-      extract: { qa_token: '/token' },
-    });
-    expect(result.issues).toEqual(['Outro: scripts were skipped.']);
+    const collection = importCollection(JSON.parse(JSON.stringify(result.collection)));
+    const folders = indexFolders(collection.folders);
+    expect(folders.get('')).toEqual(['Flows']);
+    expect(folders.get('Flows')).toEqual(['Flows / Cadastro', 'Flows / Vazia']);
+    expect(collection.requests[0].folder).toBe('Flows / Cadastro');
+    expect(result.issues).toEqual([]);
   });
+  it('copia scripts ativos da coleção e da requisição sem duplicar testes declarativos', () => {
+    const status = "pm.test('Status 200', () => pm.response.to.have.status(200));";
+    const token = "pm.collectionVariables.set('token', pm.response.json().token);";
+    const event = (listen: string, exec: unknown) => ({ listen, script: { exec } });
+    const result = importPostman({
+      info: {
+        name: 'Scripts',
+        schema: 'https://schema.postman.com/json/collection/v2.1.0/collection.json',
+      },
+      event: [
+        event('prerequest', ['// Prepare requests', 'pm.variables.set("scope", "collection");']),
+        event('prerequest', 'pm.variables.set("order", "second");'),
+        event('test', status),
+        { ...event('prerequest', 'disabled()'), disabled: true },
+      ],
+      item: [
+        {
+          name: 'Pasta',
+          event: [event('prerequest', 'folderScript();')],
+          item: [
+            {
+              name: 'Login',
+              request: 'https://example.test',
+              event: [
+                event('test', [status, '', token]),
+                event('prerequest', 'pm.variables.set("request", "login");'),
+                { listen: 'test', script: { exec: ['disabled()'], disabled: true } },
+                event('test', ['  ']),
+                event('test', ['broken();', 42]),
+              ],
+            },
+          ],
+        },
+      ],
+    })!;
+    const collection = result.collection!;
+    expect(collection.scripts).toEqual({
+      before:
+        '// Prepare requests\npm.variables.set("scope", "collection");\n;\npm.variables.set("order", "second");',
+      after: status,
+    });
+    expect(collection.requests[0]).toMatchObject({
+      scripts: {
+        before: 'pm.variables.set("request", "login");',
+        after: [status, '', token].join('\n'),
+      },
+      tests: [],
+      extract: {},
+    });
+    expect(result.issues).toEqual([
+      'Pasta: some scripts were skipped.',
+      'Login: some scripts were skipped.',
+    ]);
+    const imported = importCollection(JSON.parse(JSON.stringify(collection)));
+    expect(imported.scripts).toEqual(collection.scripts);
+    expect(imported.requests[0].scripts).toEqual(collection.requests[0].scripts);
+  });
+
   it('preserva ordem, parâmetros, cabeçalhos repetidos e autorização da pasta em um round-trip', () => {
     const result = importPostman({
       info: {
@@ -90,7 +139,7 @@ describe('migração do Postman', () => {
     expect(request.headers.map(({ value }) => value)).toEqual(['a', 'b']);
     expect(request.auth.token).toBe('{{token}}');
     expect(result.issues).toEqual([
-      'API: scripts were skipped.',
+      'API: some scripts were skipped.',
       'Upload: select the file for part upload.',
     ]);
     const imported = importCollection(JSON.parse(JSON.stringify(collection)));

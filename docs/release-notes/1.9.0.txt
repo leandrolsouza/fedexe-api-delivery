@@ -1,0 +1,5 @@
+• Adicione scripts JavaScript antes do envio e depois da resposta, por coleção ou requisição. Importe scripts de coleções Postman e veja os resultados dos testes no editor e no runner.
+• Configure até 100 iterações e um intervalo entre requisições no runner. Cada iteração começa com as variáveis originais.
+• Importe vários arquivos de uma vez e organize as requisições com os controles de pastas da coleção.
+• Leia as notas de atualização em português ou inglês conforme o idioma da interface.
+• A integração com o Google Drive passa a vir desativada por padrão nos builds padrão.

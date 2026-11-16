@@ -1,3 +1,5 @@
+import type { Scripts, ScriptResult } from './scripts';
+import { isInFolder } from './folders';
 import { t } from './i18n';
 import { uid } from './utils';
 
@@ -21,8 +23,8 @@ export function requestsForRun(
 ): RequestItem[] {
   if (!collection) return [];
   if (scope === 'folder')
-    return collection.folders.includes(folder)
-      ? collection.requests.filter((request) => request.folder === folder)
+    return folder && collection.folders.includes(folder)
+      ? collection.requests.filter((request) => isInFolder(request.folder, folder))
       : [];
   if (scope === 'selection') {
     const selected = new Set(selection);
@@ -77,6 +79,7 @@ export type Test =
   | { type: 'header'; name: string; equals?: string }
   | { type: 'json'; pointer: string; equals: unknown };
 export type RequestItem = {
+  scripts?: Scripts;
   timeoutMs?: number;
   redirectPolicy?: RedirectPolicy;
   id: string;
@@ -98,6 +101,7 @@ export type RequestItem = {
   extract: Record<string, string>;
 };
 export type Collection = {
+  scripts?: Scripts;
   id: string;
   name: string;
   description: string;
@@ -170,13 +174,15 @@ export type HistoryItem = {
   error?: string;
 };
 export type RunFailureReason =
-  'status' | 'header' | 'json' | 'extraction' | 'preparation' | 'transport';
+  'status' | 'header' | 'json' | 'extraction' | 'preparation' | 'transport' | 'script';
 export type RunRow = {
+  skipped?: true;
   name: string;
   status: number | null;
   http_ms: number;
   validation_ms: number;
   checks_passed: number;
+  scriptResults?: ScriptResult[];
   failures: string[];
   failure_reasons: RunFailureReason[];
 };
@@ -187,6 +193,8 @@ export type RunResult = {
 };
 export type NativeCollection = {
   stop_on_failure?: boolean;
+  iterations?: number;
+  delay_ms?: number;
   variables: Record<string, string>;
   requests: ({
     name: string;
@@ -452,10 +460,22 @@ function validAuth(value: unknown): value is Auth {
     ['header', 'query'].includes(a.placement)
   );
 }
+function validScripts(value: Scripts | undefined) {
+  return (
+    value === undefined ||
+    (value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      (value.before === undefined || typeof value.before === 'string') &&
+      (value.after === undefined || typeof value.after === 'string'))
+  );
+}
+
 export function validCollection(value: unknown): value is Collection {
   const c = value as Collection;
   return (
     !!c &&
+    validScripts(c.scripts) &&
     typeof c.id === 'string' &&
     typeof c.name === 'string' &&
     typeof c.description === 'string' &&
@@ -467,6 +487,7 @@ export function validCollection(value: unknown): value is Collection {
     c.requests.every(
       (r) =>
         r &&
+        validScripts(r.scripts) &&
         typeof r.id === 'string' &&
         typeof r.name === 'string' &&
         typeof r.folder === 'string' &&
@@ -752,17 +773,23 @@ export function driveBackupSnapshot(workspace: Workspace): Workspace {
 }
 
 export function redactSecrets(message: string, environment?: Environment): string {
-  const secrets =
-    environment?.variables
-      .filter(({ secret, value }) => secret && value)
-      .flatMap(({ value }) => {
-        try {
-          return [value, encodeURIComponent(value)];
-        } catch {
-          return [value];
-        }
-      })
-      .sort((left, right) => right.length - left.length) ?? [];
+  return redactValues(
+    message,
+    environment?.variables.filter(({ secret }) => secret).map(({ value }) => value) ?? [],
+  );
+}
+
+export function redactValues(message: string, values: Iterable<string | null>): string {
+  const secrets = [...values]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => {
+      try {
+        return [value, encodeURIComponent(value)];
+      } catch {
+        return [value];
+      }
+    })
+    .sort((left, right) => right.length - left.length);
   return secrets.reduce((text, secret) => text.replaceAll(secret, '[segredo]'), message);
 }
 function resolvedVariables(collection: Collection, environment?: Environment) {

@@ -11,11 +11,21 @@ import {
 
 const collection = (name: string) => ({
   info: { name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
+  event: [{ listen: 'prerequest', script: { exec: ['pm.variables.set("scope", "workspace");'] } }],
   item: [
     {
       name: 'Health',
       item: [
-        { name: 'First', request: { method: 'GET', url: '{{base_url}}/first' } },
+        {
+          name: 'First',
+          request: { method: 'GET', url: '{{base_url}}/first' },
+          event: [
+            {
+              listen: 'test',
+              script: { exec: 'pm.test("OK", () => pm.response.to.have.status(200));' },
+            },
+          ],
+        },
         { name: 'Second', request: { method: 'GET', url: '{{base_url}}/second' }, response: [{}] },
       ],
     },
@@ -78,6 +88,10 @@ describe('Postman workspace import', () => {
       { kind: 'environment', id: '123-dev' },
     ]);
     const imported = result.collections[0];
+    expect(imported.scripts?.before).toBe('pm.variables.set("scope", "workspace");');
+    expect(imported.requests[0].scripts?.after).toBe(
+      'pm.test("OK", () => pm.response.to.have.status(200));',
+    );
     expect(imported.folders).toEqual(['Health']);
     expect(imported.requests.map(({ name }) => name)).toEqual(['First', 'Second']);
     expect(

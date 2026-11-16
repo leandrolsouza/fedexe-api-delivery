@@ -1,9 +1,9 @@
 export const messages = {
   'Backups no Google Drive': 'Google Drive backups',
-  'Transfira um workspace entre instalações usando a mesma conta e o mesmo projeto Google Cloud.':
-    'Transfer a workspace between installations using the same account and Google Cloud project.',
-  'Ative a API Google Drive em um projeto Google Cloud e crie um cliente OAuth do tipo App para computador.':
-    'Enable the Google Drive API in a Google Cloud project and create a Desktop app OAuth client.',
+  'Use a mesma conta Google para acessar seus backups em outras instalações.':
+    'Use the same Google account to access your backups on other installations.',
+  'Conectar com Google': 'Connect with Google',
+  'Reconectar conta Google': 'Reconnect Google account',
   'Criar backup no Drive': 'Back up to Drive',
   'Recarregar backups': 'Refresh backups',
   'Conclua a execução e salve ou descarte os rascunhos antes de usar o backup.':
@@ -41,8 +41,10 @@ export const messages = {
     'Reconnect the Google account to access backups.',
   'Conecte uma conta Google para acessar os backups.':
     'Connect a Google account to access backups.',
-  'Informe as credenciais OAuth de um cliente desktop do Google.':
-    'Enter the OAuth credentials for a Google desktop client.',
+  'A configuração local do Google Drive está inválida.':
+    'The local Google Drive configuration is invalid.',
+  'O acesso ao Google Drive não foi configurado nesta versão.':
+    'Google Drive access is unavailable in this build.',
   'O snippet não inclui a autenticação OAuth 2.0. Exporte a coleção.':
     'Export the collection to share the OAuth 2.0 configuration.',
   'OAuth 2.0': 'OAuth 2.0',
@@ -170,6 +172,9 @@ export const messages = {
   'Headers da resposta': 'Response headers',
   'Prévia da resposta': 'Response preview',
   'Prévia incompleta ou indisponível.': 'Preview incomplete or unavailable.',
+  'Resposta sem corpo.': 'No response body.',
+  'Resposta ocultada por um script de pós-resposta.':
+    'Response hidden because of a post-response script.',
   'Carregando workspace…': 'Loading workspace…',
   'O workspace foi salvo, mas a limpeza das credenciais anteriores falhou. {0}':
     'The workspace was saved, but previous credentials could not be cleaned up. {0}',
@@ -184,6 +189,8 @@ export const messages = {
   'Nova coleção': 'New collection',
   'Um novo espaço para organizar suas APIs.': 'Create a space to organize your APIs.',
   'Nova pasta': 'New folder',
+  'Nova subpasta': 'New subfolder',
+  'O nome da pasta não pode conter “ / ”.': 'Folder names cannot contain “ / ”.',
   'Organize as requisições de {0}.': 'Organize requests in {0}.',
   'Já existe uma pasta com esse nome.': 'A folder with that name already exists.',
   '{0} (cópia)': '{0} (copy)',
@@ -210,6 +217,13 @@ export const messages = {
   'Renomear requisição': 'Rename request',
   Duplicar: 'Duplicate',
   'Mover para pasta': 'Move to folder',
+  'Mover pasta…': 'Move folder…',
+  'Mover pasta': 'Move folder',
+  'Não há outro destino disponível para esta pasta.':
+    'No other destination is available for this folder.',
+  'Abrir no Runner': 'Open in Runner',
+  'Expandir tudo nesta pasta': 'Expand all in this folder',
+  'Recolher tudo nesta pasta': 'Collapse all in this folder',
   'Mover para cima': 'Move up',
   'Mover para baixo': 'Move down',
   Excluir: 'Delete',
@@ -249,6 +263,7 @@ export const messages = {
   'Ajuda e primeiros passos': 'Help and getting started',
   Ajuda: 'Help',
   'Árvore de coleções': 'Collection tree',
+  'Redimensionar barra lateral': 'Resize sidebar',
   'Buscar nas coleções': 'Search collections',
   'Recolher painel de coleções': 'Collapse collections panel',
   'Expandir todas as pastas': 'Expand all folders',
@@ -335,8 +350,14 @@ export const messages = {
   'Importe um backup, uma coleção, um ambiente Postman, OpenAPI ou cURL.':
     'Import a backup, collection, Postman environment, OpenAPI specification, or cURL request.',
   'O arquivo excede o limite de importação de 10 MB.': 'The file exceeds the 10 MB import limit.',
-  'Arraste seu arquivo ou clique para escolher': 'Drop a file here or click to browse',
-  'Arquivos .json, .yaml e .yml · até 10 MB': 'JSON and YAML files · up to 10 MB',
+  'Arraste seus arquivos ou clique para selecionar': 'Drop files here or click to browse',
+  'Arquivos .json, .yaml e .yml · até 10 MB por arquivo':
+    'JSON and YAML files · up to 10 MB per file',
+  'Importando arquivos…': 'Importing files…',
+  '{0} de {1} arquivos importados': '{0} of {1} files imported',
+  '{0}: {1} importado com sucesso.': '{0}: imported {1}.',
+  'Selecione o backup sozinho para restaurar o workspace.':
+    'Select the backup on its own to restore the workspace.',
   'ou cole JSON, YAML ou cURL': 'or paste JSON, YAML, or cURL',
   'Conteúdo para importar': 'Content to import',
   'Importar cURL': 'Import cURL',
@@ -540,6 +561,65 @@ export const messages = {
   'Não foi dessa vez': 'Request failed',
   'Tentar novamente': 'Retry',
   'Visualização da resposta': 'Response view',
+  Scripts: 'Scripts',
+  'Pré-requisição': 'Pre-request',
+  'Pós-resposta': 'Post-response',
+  'Etapas do script': 'Script phases',
+  'Script configurado': 'Script present',
+  'Expandir editor': 'Expand editor',
+  'Reduzir editor': 'Reduce editor',
+  'Buscar no script': 'Find in script',
+  'Carregando editor…': 'Loading editor…',
+  'Erro de sintaxe na linha {0}.': 'Syntax error on line {0}.',
+  Substituir: 'Replace',
+  'Próxima ocorrência': 'Next match',
+  'Ocorrência anterior': 'Previous match',
+  'Diferenciar maiúsculas': 'Match case',
+  'Expressão regular': 'Regular expression',
+  'Palavra inteira': 'Whole word',
+  'Substituir tudo': 'Replace all',
+  Diagnósticos: 'Diagnostics',
+  'Sem diagnósticos': 'No diagnostics',
+  'Ir para a linha': 'Go to line',
+  Ir: 'Go',
+  'Ocorrência atual': 'Current match',
+  'na linha': 'on line',
+  'Ocorrência substituída na linha $': 'Replaced match on line $',
+  '$ ocorrências substituídas': 'Replaced $ matches',
+  'Configurações da coleção · {0}': 'Collection settings · {0}',
+  'Configurações da coleção': 'Collection settings',
+  Variáveis: 'Variables',
+  'Buscar variável pelo nome': 'Search variables by name',
+  'Nenhuma variável encontrada.': 'No variables found.',
+  'Variáveis, autorização e scripts da coleção': 'Collection variables, authorization, and scripts',
+  'Os scripts da coleção rodam antes dos scripts da requisição em cada fase.':
+    'Collection scripts run before request scripts in each phase.',
+  'Os cabeçalhos só podem ser alterados antes do envio.':
+    'Headers can only be changed before sending.',
+  'Informe o nome do cabeçalho.': 'Enter a header name.',
+  'Os scripts e testes devem ser síncronos.': 'Scripts and tests must be synchronous.',
+  'Passe um callback síncrono para pm.sendRequest.':
+    'Pass a synchronous callback to pm.sendRequest.',
+  'Limite de {0} chamadas a pm.sendRequest por script atingido.':
+    'Limit of {0} pm.sendRequest calls per script reached.',
+  'Não foi possível enviar a requisição de pm.sendRequest.':
+    'Could not send the pm.sendRequest request.',
+  'Configuração inválida em pm.sendRequest.': 'Invalid pm.sendRequest configuration.',
+  'A configuração de pm.sendRequest é grande demais.':
+    'The pm.sendRequest configuration is too large.',
+  'Cabeçalho ou campo inválido em pm.sendRequest.': 'Invalid header or field in pm.sendRequest.',
+  'Informe uma URL em pm.sendRequest.': 'Provide a URL in pm.sendRequest.',
+  'Método HTTP sem suporte em pm.sendRequest.': 'Unsupported HTTP method in pm.sendRequest.',
+  'Modo de corpo sem suporte em pm.sendRequest.': 'Unsupported body mode in pm.sendRequest.',
+  'Limite de 1.000 testes por script atingido.': 'The script reached the limit of 1,000 tests.',
+  'O valor recebido é diferente do esperado.': 'The actual value differs from the expected value.',
+  'O valor recebido não atende à asserção.': 'The actual value does not satisfy the assertion.',
+  'O script retornou dados inválidos.': 'The script returned invalid data.',
+  'O script excedeu o limite de tempo.': 'The script exceeded its time limit.',
+  'Não foi possível iniciar o JavaScript.': 'Could not start JavaScript.',
+  'Falha no script de pré-requisição.': 'Pre-request script failed.',
+  'Falha de script': 'Script failure',
+  'Detalhes dos testes em {0}': 'Test details for {0}',
   'Resultados dos testes': 'Test results',
   'Formato da resposta': 'Response format',
   Formatado: 'Formatted',
@@ -667,6 +747,11 @@ export const messages = {
   Sequencial: 'Sequential',
   'Uma requisição por vez': 'One request at a time',
   'Ao encontrar uma falha': 'On failure',
+  Iterações: 'Iterations',
+  'Intervalo entre requisições (ms)': 'Delay between requests (ms)',
+  'Iteração {0} de {1}': 'Iteration {0} of {1}',
+  'Use de 1 a 100 iterações e um intervalo de 0 a 60000 ms.':
+    'Enter 1 to 100 iterations and a delay of 0 to 60,000 ms.',
   'Continuar até o fim': 'Continue to the end',
   'Parar na primeira falha': 'Stop on first failure',
   'O runner usa as requisições salvas. Salve suas alterações no editor antes de executar.':
@@ -726,6 +811,9 @@ export const messages = {
   'com falha': 'failed',
   'Executar {0}': 'Run {0}',
   Ignorada: 'Skipped',
+  'pm.execution.skipRequest só está disponível antes do envio.':
+    'pm.execution.skipRequest is only available before sending.',
+  'Requisição ignorada pelo script.': 'Request skipped by the script.',
   'Em execução': 'Running',
   Pendente: 'Pending',
   'Não executada': 'Not run',
@@ -884,10 +972,9 @@ export const messages = {
   'A coleção Postman não contém uma lista de itens.': 'The Postman collection has no item list.',
   'Coleção Postman': 'Postman collection',
   '{0}: autorização {1} precisa ser configurada.': '{0}: configure {1} authorization.',
-  '{0}: scripts não importados.': '{0}: scripts were skipped.',
+  '{0}: alguns scripts não foram importados.': '{0}: some scripts were skipped.',
   '{0}: exemplos de resposta não importados.': '{0}: response examples were skipped.',
   'Item Postman': 'Postman item',
-  '{0}: pasta aninhada representada como pasta plana.': '{0}: nested folder was flattened.',
   '{0}: método ou URL sem suporte. Requisição ignorada.':
     '{0}: request skipped because its method or URL is unsupported.',
   '{0}: selecione o arquivo da parte {1}.': '{0}: select the file for part {1}.',

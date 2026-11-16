@@ -12,7 +12,7 @@ pub mod oauth;
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const VALIDATION_LIMIT: usize = 16 * 1024 * 1024;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Request {
     method: String,
     url: String,
@@ -37,7 +37,7 @@ pub struct Request {
     console_masks: console::Masks,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum RedirectPolicy {
     #[default]
@@ -113,7 +113,7 @@ fn same_origin_redirects() -> reqwest::redirect::Policy {
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum MultipartPart {
     Field {
@@ -150,7 +150,7 @@ async fn file_body(path: &std::path::Path) -> Result<(reqwest::Body, u64), Strin
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(untagged)]
 enum RequestHeaders {
     Entries(Vec<(String, String)>),
@@ -183,9 +183,12 @@ pub struct Collection {
     requests: Vec<Step>,
     #[serde(default)]
     stop_on_failure: bool,
+    iterations: Option<usize>,
+    #[serde(default)]
+    delay_ms: u64,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Step {
     name: String,
     request: Option<Request>,
@@ -196,7 +199,7 @@ struct Step {
     extract: BTreeMap<String, String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Test {
     Status {
@@ -623,6 +626,65 @@ pub async fn send(clients: &Clients, request: Request) -> Result<Response, Strin
     })
 }
 
+pub async fn send_runner_step(
+    clients: &Clients,
+    request: Request,
+    variables: BTreeMap<String, String>,
+    capture_body: bool,
+) -> Result<Response, String> {
+    let start = Instant::now();
+    let mut response = perform(clients, request, &variables).await?;
+    let (preview, truncated) = if capture_body {
+        read_limited(&mut response, VALIDATION_LIMIT).await?
+    } else {
+        while let Some(chunk) = response.chunk().await.map_err(http_error)? {
+            console::chunk(&chunk);
+        }
+        (Vec::new(), false)
+    };
+    Ok(Response {
+        status: response.status().as_u16(),
+        duration_ms: start.elapsed().as_millis(),
+        headers: response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect(),
+        size_bytes: preview.len() as u64,
+        preview: String::from_utf8_lossy(&preview).into_owned(),
+        truncated,
+        body_id: None,
+        body_file: None,
+    })
+}
+
+pub fn mask_runner_response(response: &Response, extract: &BTreeMap<String, String>) {
+    if response.truncated {
+        console::hide_response_details();
+        return;
+    }
+    let Ok(json) = serde_json::from_str::<Value>(&response.preview) else {
+        if !response.preview.is_empty() {
+            console::hide_response_details();
+        }
+        return;
+    };
+    for pointer in extract.values().filter(|pointer| valid_pointer(pointer)) {
+        match json.pointer(pointer) {
+            Some(Value::String(value)) => console::secret(value),
+            Some(value) if value.is_number() || value.is_boolean() => {
+                console::secret(&value.to_string());
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn save_body(source: &mut std::fs::File, path: &std::path::Path) -> std::io::Result<()> {
     use std::io::{Seek, SeekFrom};
     let directory = path.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
@@ -771,24 +833,49 @@ fn valid_pointer(pointer: &str) -> bool {
 
 pub async fn run(
     clients: &Clients,
-    mut collection: Collection,
+    collection: Collection,
     mut cancel: tokio::sync::oneshot::Receiver<()>,
     report: impl Fn(RunProgress<'_>),
 ) -> Result<Run, String> {
     if collection.requests.is_empty() {
         return Err("Adicione pelo menos uma requisição.".into());
     }
+    let iterations = collection.iterations.unwrap_or(1);
+    if !(1..=100).contains(&iterations) || collection.delay_ms > 60_000 {
+        return Err("Use de 1 a 100 iterações e um intervalo de 0 a 60000 ms.".into());
+    }
     let start = Instant::now();
-    let mut results = Vec::with_capacity(collection.requests.len());
+    let request_count = collection.requests.len();
+    let mut results = Vec::with_capacity(request_count);
     let mut outcome = RunOutcome::Completed;
-    for (index, mut step) in collection.requests.into_iter().enumerate() {
+    let mut variables = collection.variables.clone();
+    for (index, step) in collection
+        .requests
+        .iter()
+        .cycle()
+        .take(request_count * iterations)
+        .enumerate()
+    {
         if cancel.try_recv().is_ok() {
             outcome = RunOutcome::Cancelled;
             break;
         }
+        if index > 0 && collection.delay_ms > 0 {
+            tokio::select! {
+                biased;
+                _ = &mut cancel => {
+                    outcome = RunOutcome::Cancelled;
+                    break;
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(collection.delay_ms)) => {}
+            }
+        }
+        if index > 0 && index % request_count == 0 {
+            variables.clone_from(&collection.variables);
+        }
         report(RunProgress::Started { index });
         let mut row = ResultRow {
-            name: std::mem::take(&mut step.name),
+            name: step.name.clone(),
             status: None,
             http_ms: 0,
             validation_ms: 0,
@@ -807,7 +894,7 @@ pub async fn run(
                 console::finish(Some("Execução cancelada."), false);
                 break;
             }
-            result = run_step(clients, step, &mut collection.variables, &mut row) => result,
+            result = run_step(clients, step.clone(), &mut variables, &mut row) => result,
         };
         console::finish(
             validation
@@ -973,6 +1060,38 @@ mod tests {
     }
 
     #[test]
+    fn cancels_during_the_delay_between_iterations() {
+        tauri::async_runtime::block_on(async {
+            let clients = test_clients();
+            let collection = serde_json::from_value(json!({
+                "iterations": 2,
+                "delay_ms": 60_000,
+                "requests": [{ "name": "First", "preparation_error": "fixture" }]
+            }))
+            .unwrap();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let sender = std::cell::RefCell::new(Some(sender));
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                run(&clients, collection, receiver, |event| {
+                    if matches!(event, RunProgress::Finished { index: 0, .. }) {
+                        let sender = sender.borrow_mut().take().unwrap();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            let _ = sender.send(());
+                        });
+                    }
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.outcome, RunOutcome::Cancelled);
+            assert_eq!(result.results.len(), 1);
+        });
+    }
+
+    #[test]
     fn applies_redirect_policy_and_timeout_per_endpoint() {
         let source = TcpListener::bind("127.0.0.1:0").unwrap();
         let external = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1059,6 +1178,7 @@ mod tests {
                 "/login",
                 "/use/runner-secret",
                 "/slow",
+                "/extract",
             ] {
                 let (mut socket, _) = listener.accept().unwrap();
                 socket
@@ -1099,6 +1219,11 @@ mod tests {
                         assert!(headers.contains("x-observation: runner-secret"));
                         ("200 OK", "", long_preview.as_str())
                     }
+                    "/extract" => (
+                        "200 OK",
+                        "X-Observation: extracted-secret\r\n",
+                        r#"{"ticket":"extracted-secret","ok":true}"#,
+                    ),
                     _ => {
                         thread::sleep(Duration::from_millis(250));
                         ("200 OK", "", "")
@@ -1147,6 +1272,24 @@ mod tests {
             )
             .await
             .unwrap();
+            let recorded = entries.clone();
+            console::observe(move |entry| recorded.lock().unwrap().push(entry), async {
+                console::start(Some(1));
+                let request = serde_json::from_value(json!({
+                    "method": "GET",
+                    "url": format!("{base}/extract"),
+                }))
+                .unwrap();
+                let response = send_runner_step(&clients, request, BTreeMap::new(), true)
+                    .await
+                    .unwrap();
+                mask_runner_response(
+                    &response,
+                    &BTreeMap::from([("ticket".to_owned(), "/ticket".to_owned())]),
+                );
+                console::finish(None, false);
+            })
+            .await;
         });
         server.join().unwrap();
         let entries = serde_json::to_value(&*entries.lock().unwrap()).unwrap();
@@ -1161,10 +1304,21 @@ mod tests {
             "cookie-secret",
             "response-secret",
             "runner-secret",
+            "extracted-secret",
         ] {
             assert!(!text.contains(secret), "{text}");
         }
-        assert_eq!(entries.as_array().unwrap().len(), 5);
+        assert_eq!(entries.as_array().unwrap().len(), 6);
+        let extracted = &entries[5]["response"];
+        assert_eq!(extracted["truncated"], false);
+        let preview: Value = serde_json::from_str(extracted["preview"].as_str().unwrap()).unwrap();
+        assert_eq!(preview, json!({"ticket": "[***]", "ok": true}));
+        assert!(
+            extracted["headers"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(["x-observation", "[***]"]))
+        );
         assert_eq!(entries[0]["request"]["method"], "POST");
         let body = &entries[0]["request"]["body"];
         let preview: Value = serde_json::from_str(body["preview"].as_str().unwrap()).unwrap();
@@ -1365,7 +1519,7 @@ mod tests {
         );
         let large = large_body.clone();
         thread::spawn(move || {
-            for _ in 0..101 {
+            for _ in 0..102 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut reader = BufReader::new(&mut stream);
                 let mut headers = String::new();
@@ -1468,6 +1622,28 @@ mod tests {
                 "url": format!("{base_url}/preview")
             }))
             .unwrap();
+            let scripted_request = serde_json::from_value(json!({
+                "method": "GET",
+                "url": "{{base_url}}/large",
+                "headers": { "Authorization": "Bearer {{token}}" }
+            }))
+            .unwrap();
+            let scripted = send_runner_step(
+                &clients,
+                scripted_request,
+                BTreeMap::from([
+                    ("base_url".into(), base_url.clone()),
+                    ("token".into(), "local-test".into()),
+                ]),
+                true,
+            )
+            .await
+            .unwrap();
+            assert_eq!(scripted.status, 200);
+            assert_eq!(scripted.preview, large_body);
+            assert!(!scripted.truncated);
+            assert!(scripted.body_file.is_none());
+
             let mut response = send(&clients, request).await.unwrap();
             assert_eq!(response.preview.len(), PREVIEW_LIMIT);
             assert!(response.truncated);

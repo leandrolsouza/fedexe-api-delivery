@@ -1,6 +1,6 @@
 import { t } from '../lib/i18n';
-import { Eye, EyeOff, LockKeyhole, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { Eye, EyeOff, LockKeyhole, Plus, Search, Trash2 } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { pair, type Pair } from '../lib/models';
 import { Button } from './ui/button';
 
@@ -11,6 +11,7 @@ export function PairEditor({
   variables = false,
   maskValue,
   markSecrets = false,
+  searchable = false,
 }: {
   rows: Pair[];
   onChange: (rows: Pair[]) => void;
@@ -18,12 +19,32 @@ export function PairEditor({
   variables?: boolean;
   maskValue?: (row: Pair) => boolean;
   markSecrets?: boolean;
+  searchable?: boolean;
 }) {
   const [visible, setVisible] = useState<string[]>([]);
+  const [search, setSearch] = useState('');
+  const [focusedRow, setFocusedRow] = useState<string>();
+  const newRow = useRef<string>(undefined);
+  const query = search.trim().toLowerCase();
+  const displayed = query
+    ? rows.filter((row) => row.id === focusedRow || row.key.toLowerCase().includes(query))
+    : rows;
   const update = (id: string, patch: Partial<Pair>) =>
     onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   return (
     <div className="pair-editor">
+      {searchable && (
+        <label className="search-field">
+          <Search size={14} />
+          <input
+            type="search"
+            aria-label={t('Buscar variável pelo nome')}
+            placeholder={t('Buscar variável pelo nome')}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
+      )}
       <div className="pair-table" role="table" aria-label={t('Editor de {0}s', kind)}>
         <div className="pair-row pair-heading" role="row">
           <span />
@@ -31,8 +52,21 @@ export function PairEditor({
           <span role="columnheader">{t('Valor')}</span>
           <span />
         </div>
-        {rows.map((row) => (
-          <div className={`pair-row ${!row.enabled ? 'row-disabled' : ''}`} role="row" key={row.id}>
+        {displayed.map((row) => (
+          <div
+            className={`pair-row ${!row.enabled ? 'row-disabled' : ''}`}
+            role="row"
+            key={row.id}
+            onFocus={searchable ? () => setFocusedRow(row.id) : undefined}
+            onBlur={
+              searchable
+                ? (event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget))
+                      setFocusedRow(undefined);
+                  }
+                : undefined
+            }
+          >
             <div role="cell">
               <input
                 type="checkbox"
@@ -43,6 +77,16 @@ export function PairEditor({
             </div>
             <div role="cell">
               <input
+                ref={
+                  searchable
+                    ? (input) => {
+                        if (input && newRow.current === row.id) {
+                          newRow.current = undefined;
+                          input.focus();
+                        }
+                      }
+                    : undefined
+                }
                 className="table-input mono"
                 value={row.key}
                 placeholder={variables ? t('nome_da_variavel') : t('Chave')}
@@ -121,13 +165,24 @@ export function PairEditor({
             </div>
           </div>
         ))}
-        {rows.length === 0 && <div className="empty-table">{t('Não há linhas configuradas.')}</div>}
+        {displayed.length === 0 && (
+          <div className="empty-table">
+            {query ? t('Nenhuma variável encontrada.') : t('Não há linhas configuradas.')}
+          </div>
+        )}
       </div>
       <Button
         variant="ghost"
         size="sm"
         className="add-row"
-        onClick={() => onChange([...rows, pair()])}
+        onClick={() => {
+          const row = pair();
+          if (searchable) {
+            newRow.current = row.id;
+            setSearch('');
+          }
+          onChange([...rows, row]);
+        }}
       >
         <Plus size={14} />
         {' ' + t('Adicionar') + ' '}

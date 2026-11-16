@@ -2,7 +2,7 @@
 
 1. Gere uma chave de produção com `.\node_modules\.bin\tauri.cmd signer generate --write-keys <caminho-fora-do-repositório>`. Guarde a chave privada, a senha e uma cópia de segurança. As próximas versões precisam usar a mesma chave.
 2. Nas configurações do GitHub Actions, coloque o conteúdo do arquivo `.pub` na variável `FEDEXE_UPDATER_PUBLIC_KEY`. Configure os secrets `TAURI_SIGNING_PRIVATE_KEY` com o conteúdo da chave privada e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` com sua senha.
-3. Escreva um resumo das mudanças para quem usa o app em `docs/release-notes/<versão>.txt`, em texto simples UTF-8. Use a versão de `tauri.conf.json`, sem o prefixo `v`. Execute **Windows installer** nesse commit com `signed` ativado. A geração do manifesto exige notas e inclui o texto no campo `notes` de `latest.json`. Aguarde o smoke test, baixe o artefato `fedexe-windows-nsis` e confira o SHA-256.
+3. Escreva as notas em português em `docs/release-notes/<versão>.txt` e em inglês em `docs/release-notes/<versão>.en-US.txt`, em texto simples UTF-8. Use a versão de `tauri.conf.json`, sem o prefixo `v`. Execute **Windows installer** nesse commit com `signed` ativado. O manifesto `latest.json` exige as duas traduções no campo `localizedNotes` e mantém o texto em português no campo `notes` para versões antigas do app. Aguarde o smoke test, baixe o artefato `fedexe-windows-nsis` e confira o SHA-256.
 4. Crie um rascunho no GitHub Releases com a tag `v<versão>` no commit testado. Use o resumo das mudanças nas notas da release. Anexe o instalador, seu `.sha256`, seu `.sig` e `latest.json` do mesmo artefato, além dos arquivos de benchmark.
 5. Valide a matriz abaixo antes da publicação. Ao publicar, marque a release estável como **Latest** e confira se `releases/latest/download/latest.json` serve o manifesto esperado. Não marque uma versão preliminar ou sem manifesto como **Latest**.
 6. Depois de publicar a 1.1.0, adicione às notas da tag `v1.0.0`: “Para migrar da série 1.0.x, baixe e execute manualmente o [instalador da 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) sobre a instalação existente.”
@@ -15,7 +15,7 @@ Valide em uma VM Windows descartável. Use somente dados fictícios. Para não u
 | --- | --- |
 | Instalar a 1.1 sobre a 1.0.x | A coleção, os dois ambientes e os segredos no cofre continuam disponíveis. |
 | Abrir o primeiro build assinado | A versão mais nova aparece no aviso de atualização. |
-| Conferir as notas no aviso | A seção **O que mudou** mostra o texto antes da instalação. Em manifestos antigos sem notas, aparece uma mensagem de indisponibilidade. |
+| Conferir as notas no aviso em inglês e em português | A seção **O que mudou** segue o idioma da interface. Em manifestos antigos, o campo `notes` serve como texto em português. Quando falta texto para o idioma selecionado, aparece uma mensagem de indisponibilidade. |
 | Selecionar **Adiar** | A sessão continua aberta. É possível voltar ao aviso em **Configurações → Atualizações**. |
 | Tentar instalar com rascunhos, execução ou gravação pendente | A interface explica o que precisa ser concluído. |
 | Servir o instalador com assinatura inválida | A instalação é recusada e a sessão permanece aberta. |

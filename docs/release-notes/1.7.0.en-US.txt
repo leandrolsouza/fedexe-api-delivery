@@ -1,0 +1,3 @@
+• Import OpenAPI 3.0 and 3.1 in JSON or YAML to create editable collections organized by tag.
+• The importer turns servers into environment variables and imports path, query, and header parameters, body examples, and supported Basic, Bearer, API key, and OAuth 2.0 authentication.
+• Select OpenAPI specifications when importing a Postman workspace. Check the report for fields and features that require manual setup.

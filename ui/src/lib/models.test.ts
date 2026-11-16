@@ -142,6 +142,25 @@ describe('workspace e coleções', () => {
     expect(isWorkspace(workspace)).toBe(true);
     expect(workspace.collections[0].requests).toHaveLength(8);
   });
+  it('seleciona todos os flows da pasta pai na ordem salva', () => {
+    const collection = createWorkspace().collections[0];
+    const first = newRequest('Integração / Flow 1');
+    const outside = newRequest('Integração complementar / Flow 3');
+    const second = newRequest('Integração / Flow 2 / Cadastro');
+    collection.folders = [
+      'Integração',
+      first.folder,
+      'Integração / Flow 2',
+      second.folder,
+      'Integração complementar',
+      outside.folder,
+    ];
+    collection.requests = [first, outside, second];
+
+    expect(requestsForRun(collection, 'folder', 'Integração', [])).toEqual([first, second]);
+    expect(requestsForRun(collection, 'folder', 'Integração / Flow 2', [])).toEqual([second]);
+    expect(requestsForRun(collection, 'folder', '', [])).toEqual([]);
+  });
   it('rejeita versões futuras sem descartar dados', () => {
     expect(isWorkspace({ ...createWorkspace(), version: 100 })).toBe(false);
     expect(isWorkspace({ version: 1, collections: [null] })).toBe(false);

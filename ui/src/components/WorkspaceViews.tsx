@@ -7,7 +7,7 @@ import {
   type Locale,
   type Message,
 } from '../lib/i18n';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDownToLine,
@@ -61,6 +61,7 @@ import {
 } from '../lib/models';
 import { prepareCollection } from '../lib/collection-runner';
 import { cn, download, uid } from '../lib/utils';
+import { hasScripts } from '../lib/scripts';
 import { native, normalizeError, runCollection } from '../lib/transport';
 import { PairEditor } from './PairEditor';
 import { MethodBadge } from './RequestEditor';
@@ -426,6 +427,7 @@ const runFailureLabels = {
   extraction: 'Extração de variáveis',
   preparation: 'Preparação da requisição',
   transport: 'Falha de comunicação HTTP',
+  script: 'Falha de script',
   other: 'Outras falhas',
 } satisfies Record<RunFailureReason | 'other', Message>;
 
@@ -492,14 +494,18 @@ function RunFailureGroups({
   );
 }
 
+export type RunnerFolder = { collectionId: string; folder: string; environmentId: string };
+
 export function RunnerView({
   workspace,
+  initialFolder,
   busy,
   setBusy,
   onCancel,
   onResults,
 }: {
   workspace: Workspace;
+  initialFolder?: RunnerFolder;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   onCancel: () => void;
@@ -512,7 +518,12 @@ export function RunnerView({
   const [scope, setScope] = useState<RunScope>('collection');
   const [folder, setFolder] = useState('');
   const [selection, setSelection] = useState<string[]>([]);
-  const [runPlan, setRunPlan] = useState<{ requests: RequestItem[]; context: string }>();
+  const [runPlan, setRunPlan] = useState<{
+    requests: RequestItem[];
+    context: string;
+    iterations: number;
+    requestsPerIteration: number;
+  }>();
   const [failuresOnly, setFailuresOnly] = useState(false);
   const [expandedRows, setExpandedRows] = useState<number[]>([]);
   const [runnerTab, setRunnerTab] = useState<'results' | 'report'>('results');
@@ -528,16 +539,30 @@ export function RunnerView({
   const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
   const [stopOnFailure, setStopOnFailure] = useState(false);
+  const [iterationsInput, setIterationsInput] = useState('1');
+  const [delayInput, setDelayInput] = useState('0');
   const [cancelling, setCancelling] = useState(false);
   const environment = workspace.environments.find((env) => env.id === environmentId);
   const chosen = requestsForRun(collection, scope, folder, selection);
+  const iterations = Number(iterationsInput);
+  const delay = Number(delayInput);
+  const validOptions =
+    Number.isInteger(iterations) &&
+    iterations >= 1 &&
+    iterations <= 100 &&
+    delayInput !== '' &&
+    Number.isInteger(delay) &&
+    delay >= 0 &&
+    delay <= 60000;
+  const plannedSteps = chosen.length * (validOptions ? iterations : 1);
   const chosenIds = new Set(chosen.map(({ id }) => id));
   const choosingRequests = scope === 'selection' && !runPlan;
   const requests = runPlan?.requests ?? (choosingRequests ? (collection?.requests ?? []) : chosen);
   const activeRequest = activeStep === undefined ? undefined : runPlan?.requests[activeStep];
   const totalSteps = runPlan?.requests.length ?? 0;
+  const currentStep = activeStep ?? Math.min(rows.length, totalSteps - 1);
   const failed = rows.filter((r) => r.failures.length).length;
-  const passed = rows.length - failed;
+  const passed = rows.filter((row) => !row.skipped && !row.failures.length).length;
   const completedLabel = t(
     '{0} de {1} {2}',
     rows.length,
@@ -620,7 +645,7 @@ export function RunnerView({
     setTargetIndex(index);
   }
 
-  function clearRun() {
+  const clearRun = useCallback(() => {
     setRows([]);
     setRunPlan(undefined);
     setFailuresOnly(false);
@@ -634,13 +659,27 @@ export function RunnerView({
     setResult(undefined);
     setError('');
     setCancelling(false);
-  }
+  }, []);
+  useEffect(() => {
+    if (!initialFolder) return;
+    setCollectionId(initialFolder.collectionId);
+    setScope('folder');
+    setFolder(initialFolder.folder);
+    setEnvironmentId(initialFolder.environmentId);
+    setSelection([]);
+    clearRun();
+  }, [initialFolder, clearRun]);
   async function run() {
-    if (!collection || !chosen.length || !environment || busy) return;
+    if (!collection || !chosen.length || !environment || busy || !validOptions) return;
     setBusy(true);
     setRunning(true);
     clearRun();
-    setRunPlan({ requests: chosen, context });
+    setRunPlan({
+      requests: Array.from({ length: plannedSteps }, (_, index) => chosen[index % chosen.length]),
+      context,
+      iterations,
+      requestsPerIteration: chosen.length,
+    });
     try {
       const snapshot = structuredClone({
         collection,
@@ -660,7 +699,7 @@ export function RunnerView({
           failures: row.failures.map((message) => redactSecrets(message, snapshot.environment)),
         }));
       const outcome = await runCollection(
-        nativeCollection,
+        { ...nativeCollection, iterations, delay_ms: delay },
         (event) => {
           if (event.type === 'started') {
             setActiveStep(event.index);
@@ -671,6 +710,10 @@ export function RunnerView({
           }
         },
         snapshot.requests.map((request) => request.id),
+        hasScripts(snapshot.collection.scripts) ||
+          snapshot.requests.some((request) => hasScripts(request.scripts))
+          ? snapshot
+          : undefined,
       );
       const result = { ...outcome, results: redactRows(outcome.results) };
       setRows(result.results);
@@ -800,6 +843,41 @@ export function RunnerView({
                 <option value="stop">{t('Parar na primeira falha')}</option>
               </select>
             </label>
+            <div className="runner-timing-fields">
+              <label className="field-label">
+                {t('Iterações')}
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  required
+                  disabled={busy}
+                  value={iterationsInput}
+                  onChange={(event) => setIterationsInput(event.target.value)}
+                />
+              </label>
+              <label className="field-label">
+                {t('Intervalo entre requisições (ms)')}
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={60000}
+                  step={1}
+                  required
+                  disabled={busy}
+                  value={delayInput}
+                  onChange={(event) => setDelayInput(event.target.value)}
+                />
+              </label>
+            </div>
+            {!validOptions && (
+              <p className="field-hint" role="status">
+                {t('Use de 1 a 100 iterações e um intervalo de 0 a 60000 ms.')}
+              </p>
+            )}
             <p className="field-hint">
               {t(
                 'O runner usa as requisições salvas. Salve suas alterações no editor antes de executar.',
@@ -819,11 +897,14 @@ export function RunnerView({
                 <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
               </Button>
             ) : (
-              <Button onClick={run} disabled={busy || !chosen.length || !environment}>
+              <Button
+                onClick={run}
+                disabled={busy || !chosen.length || !environment || !validOptions}
+              >
                 <Play size={15} fill="currentColor" />
                 {' ' + t('Executar') + ' '}
-                {formatNumber(chosen.length)}{' '}
-                {chosen.length === 1 ? t('requisição') : t('requisições')}
+                {formatNumber(plannedSteps)}{' '}
+                {plannedSteps === 1 ? t('requisição') : t('requisições')}
               </Button>
             )}
             <span>
@@ -848,6 +929,10 @@ export function RunnerView({
                 <p>{runPlan?.context ?? context}</p>
                 <p role="status" aria-atomic="true">
                   {runPlan ? completedLabel : chosenLabel}
+                  {running &&
+                    runPlan &&
+                    runPlan.iterations > 1 &&
+                    ` · ${t('Iteração {0} de {1}', Math.floor(currentStep / runPlan.requestsPerIteration) + 1, runPlan.iterations)}`}
                   {running && activeRequest && ` · ${activeRequest.name}`}
                 </p>
               </div>
@@ -1022,12 +1107,13 @@ export function RunnerView({
                     {requests.map((request, index) => {
                       const row = rows[index];
                       const hasFailures = Boolean(row?.failures.length);
+                      const hasDetails = hasFailures || Boolean(row?.scriptResults?.length);
                       if (failuresOnly && !hasFailures) return null;
                       const active = running && index === activeStep;
                       const expanded = expandedRows.includes(index);
                       const detailsId = `runner-failures-${index}`;
                       return (
-                        <Fragment key={request.id}>
+                        <Fragment key={runPlan ? index : request.id}>
                           <tr
                             className={cn('runner-request-row', active && 'active')}
                             aria-current={active ? 'step' : undefined}
@@ -1058,13 +1144,18 @@ export function RunnerView({
                               <MethodBadge method={request.method} small />
                             </td>
                             <th scope="row" className="runner-request-name">
-                              {hasFailures ? (
+                              {hasDetails ? (
                                 <button
                                   className="runner-disclosure"
                                   type="button"
                                   aria-expanded={expanded}
                                   aria-controls={detailsId}
-                                  aria-label={t('Detalhes da falha em {0}', request.name)}
+                                  aria-label={t(
+                                    hasFailures
+                                      ? 'Detalhes da falha em {0}'
+                                      : 'Detalhes dos testes em {0}',
+                                    request.name,
+                                  )}
                                   onClick={() =>
                                     setExpandedRows((current) =>
                                       current.includes(index)
@@ -1080,9 +1171,25 @@ export function RunnerView({
                                 <strong>{request.name}</strong>
                               )}
                               <code>{request.url.replace('{{base_url}}', '')}</code>
+                              {runPlan && runPlan.iterations > 1 && (
+                                <code>
+                                  {t(
+                                    'Iteração {0} de {1}',
+                                    Math.floor(index / runPlan.requestsPerIteration) + 1,
+                                    runPlan.iterations,
+                                  )}
+                                </code>
+                              )}
                             </th>
                             <td>
-                              {row ? (
+                              {row?.skipped && !hasFailures ? (
+                                <span
+                                  className="muted"
+                                  title={t('Requisição ignorada pelo script.')}
+                                >
+                                  {t('Ignorada')}
+                                </span>
+                              ) : row ? (
                                 <span
                                   className={cn(
                                     'runner-validation',
@@ -1113,13 +1220,20 @@ export function RunnerView({
                               {row ? `${formatNumber(row.http_ms + row.validation_ms)} ms` : '—'}
                             </td>
                           </tr>
-                          {hasFailures && (
+                          {hasDetails && (
                             <tr id={detailsId} hidden={!expanded} className="runner-failure-row">
                               <td colSpan={6}>
                                 <ul>
                                   {row?.failures.map((failure, i) => (
                                     <li key={i}>{failure}</li>
                                   ))}
+                                  {row?.scriptResults
+                                    ?.filter((test) => test.passed)
+                                    .map((test, i) => (
+                                      <li key={`script-${i}`}>
+                                        {t('Aprovada')} · {test.label}
+                                      </li>
+                                    ))}
                                 </ul>
                               </td>
                             </tr>

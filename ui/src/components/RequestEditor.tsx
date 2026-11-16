@@ -1,5 +1,5 @@
 import { formatNumber, t } from '../lib/i18n';
-import { useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useState, type CSSProperties } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -59,14 +59,39 @@ import { Button } from './ui/button';
 import { Dropdown } from './ui/dropdown';
 import { PairEditor } from './PairEditor';
 import { CodeViewer } from './CodeViewer';
+import { hasScripts, type ScriptResult } from '../lib/scripts';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
 import { FileBodyEditor } from './FileBodyEditor';
 import { AuthFields, AuthType, authLabel } from './AuthFields';
 
 export type RequestLayout = 'request' | 'split' | 'response';
 
+const ScriptEditor = lazy(() => import('./ScriptEditor'));
 const minRequestShare = 25;
 const maxRequestShare = 75;
+
+function TestResultList({ results }: { results: ScriptResult[] }) {
+  return (
+    <div className="test-result-list">
+      {results.length ? (
+        results.map((test, index) => (
+          <div key={index}>
+            <span className={test.passed ? 'test-pass' : 'test-fail'}>
+              {test.passed ? <CheckCheck size={16} /> : <X size={16} />}
+              {t(test.scriptError ? 'Falha de script' : test.passed ? 'Aprovada' : 'Falhou')}
+            </span>
+            <code>
+              {test.label}
+              {test.error && ` · ${test.error}`}
+            </code>
+          </div>
+        ))
+      ) : (
+        <div className="small-empty">{t('Adicione testes na configuração da requisição.')}</div>
+      )}
+    </div>
+  );
+}
 
 export function MethodBadge({ method, small = false }: { method: string; small?: boolean }) {
   return (
@@ -88,6 +113,7 @@ export function RequestEditor({
   onCancel,
   response,
   error,
+  scriptResults = [],
   onSnippet,
   wrap,
   layout,
@@ -106,6 +132,7 @@ export function RequestEditor({
   onCancel: () => void;
   response?: HttpResponse;
   error?: string;
+  scriptResults?: ScriptResult[];
   onSnippet: () => void;
   wrap: boolean;
   layout: RequestLayout;
@@ -150,6 +177,7 @@ export function RequestEditor({
       count: request.headers.filter((p) => p.enabled && p.key).length,
     },
     { id: 'body', label: t('Corpo'), dot: request.bodyType !== 'none' },
+    { id: 'scripts', label: t('Scripts'), dot: hasScripts(request.scripts) },
     { id: 'tests', label: t('Testes'), count: request.tests.length },
     { id: 'settings', label: t('Configurações') },
   ];
@@ -198,7 +226,7 @@ export function RequestEditor({
     response && request.tests.some((test) => test.type === 'json')
       ? responseJson(response)
       : undefined;
-  const testResults = response
+  const testResults: ScriptResult[] = response
     ? request.tests.map((test) => {
         const label =
           test.type === 'status'
@@ -213,6 +241,7 @@ export function RequestEditor({
         return { label, passed: !checkResponse(test, response, jsonForTests) };
       })
     : [];
+  testResults.push(...scriptResults);
   return (
     <div className="request-page">
       <div className="request-heading">
@@ -574,6 +603,15 @@ export function RequestEditor({
                 )}
               </>
             )}
+            {tab === 'scripts' && (
+              <Suspense fallback={<p role="status">{t('Carregando editor…')}</p>}>
+                <ScriptEditor
+                  key={request.id}
+                  scripts={request.scripts}
+                  onChange={(scripts) => update({ scripts })}
+                />
+              </Suspense>
+            )}
             {tab === 'tests' && <TestEditor request={request} onChange={update} />}
             {tab === 'settings' && (
               <div className="network-settings">
@@ -866,6 +904,7 @@ export function RequestEditor({
                 <div>
                   <h3>{t('Não foi dessa vez')}</h3>
                   <p>{error}</p>
+                  {scriptResults.length > 0 && <TestResultList results={scriptResults} />}
                   <Button size="sm" variant="outline" onClick={onSend}>
                     {t('Tentar novamente') + ' '}
                     <ArrowRight size={13} />
@@ -884,7 +923,12 @@ export function RequestEditor({
                     {[
                       { id: 'body', label: t('Corpo') },
                       { id: 'headers', label: 'Headers', count: response.headers.length },
-                      { id: 'tests', label: t('Resultados dos testes'), count: testResults.length },
+                      {
+                        id: 'tests',
+                        label: t('Resultados dos testes'),
+                        count: testResults.length,
+                        failed: testResults.some((test) => !test.passed),
+                      },
                     ].map((t) => (
                       <button
                         id={`response-tab-${t.id}`}
@@ -898,7 +942,9 @@ export function RequestEditor({
                       >
                         {t.label}
                         {t.count !== undefined && (
-                          <span className="tab-count">{formatNumber(t.count)}</span>
+                          <span className={cn('tab-count', t.failed && 'red-text')}>
+                            {formatNumber(t.count)}
+                          </span>
                         )}
                       </button>
                     ))}
@@ -954,23 +1000,7 @@ export function RequestEditor({
                       ))}
                     </div>
                   ) : (
-                    <div className="test-result-list">
-                      {testResults.length ? (
-                        testResults.map((test, i) => (
-                          <div key={i}>
-                            <span className={test.passed ? 'test-pass' : 'test-fail'}>
-                              {test.passed ? <CheckCheck size={16} /> : <X size={16} />}
-                              {test.passed ? 'PASSOU' : 'FALHOU'}
-                            </span>
-                            <code>{test.label}</code>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="small-empty">
-                          {t('Adicione testes na configuração da requisição.')}
-                        </div>
-                      )}
-                    </div>
+                    <TestResultList results={testResults} />
                   )}
                 </div>
               </>

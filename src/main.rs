@@ -12,7 +12,7 @@ mod workspace;
 
 use fedexe_api_delivery::http::{self, Collection, Request, Response, Run};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs::File,
     sync::{
         Arc, Mutex,
@@ -49,10 +49,21 @@ impl App {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct RunnerStep {
+    index: usize,
+    variables: BTreeMap<String, String>,
+    capture_body: bool,
+    #[serde(default)]
+    extract: BTreeMap<String, String>,
+}
+
 #[tauri::command]
 async fn send(
     app: State<'_, App>,
     request: Request,
+    runner_step: Option<RunnerStep>,
+    hide_response_details: Option<bool>,
     console: tauri::ipc::Channel<http::console::Entry>,
 ) -> Result<Response, String> {
     let mut response = app
@@ -62,12 +73,33 @@ async fn send(
                     let _ = console.send(entry);
                 },
                 async {
-                    http::console::start(None);
+                    http::console::start(runner_step.as_ref().map(|step| step.index + 1));
                     let result = tokio::select! {
                         biased;
                         _ = receiver => Err("Execução cancelada.".into()),
-                        result = http::send(&app.client, request) => result,
+                        result = async {
+                            match runner_step {
+                                Some(step) => {
+                                    let response = http::send_runner_step(
+                                        &app.client, request, step.variables, step.capture_body,
+                                    ).await;
+                                    if !step.extract.is_empty() {
+                                        match &response {
+                                            Ok(response) => {
+                                                http::mask_runner_response(response, &step.extract);
+                                            }
+                                            Err(_) => http::console::hide_response_details(),
+                                        }
+                                    }
+                                    response
+                                }
+                                None => http::send(&app.client, request).await,
+                            }
+                        } => result,
                     };
+                    if hide_response_details.unwrap_or_default() {
+                        http::console::hide_response_details();
+                    }
                     http::console::finish(result.as_ref().err().map(String::as_str), false);
                     result
                 },

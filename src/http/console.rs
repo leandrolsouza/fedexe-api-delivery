@@ -8,7 +8,7 @@ const PREVIEW_LIMIT: usize = 8 * 1024;
 const FIELD_LIMIT: usize = 2048;
 const HEADER_LIMIT: usize = 64;
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub(super) struct Masks {
     pub(super) values: Vec<String>,
     pub(super) templates: Vec<String>,
@@ -576,6 +576,16 @@ fn remember_json_secrets(value: &Value, secrets: &mut Vec<String>) {
             .for_each(|value| remember_json_secrets(value, secrets)),
         _ => {}
     }
+}
+
+pub fn hide_response_details() {
+    update(|trace| {
+        trace.preview.clear();
+        if let Some(response) = &mut trace.entry.response {
+            response.headers.clear();
+            response.truncated = true;
+        }
+    });
 }
 
 pub fn finish(error: Option<&str>, failed_validation: bool) {

@@ -1,0 +1,5 @@
+• Add JavaScript scripts before a request and after its response at the collection or request level. Import Postman collection scripts and see test results in the editor and runner.
+• Configure up to 100 runner iterations and a delay between requests. Each iteration starts with the original variables.
+• Import multiple files at once and organize requests with collection folder controls.
+• Read update notes in English or Portuguese according to the interface language.
+• Google Drive integration is now disabled by default in standard builds.

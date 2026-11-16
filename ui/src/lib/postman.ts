@@ -1,4 +1,5 @@
 import { t } from './i18n';
+import { folderPath } from './folders';
 import {
   emptyAuth,
   newRequest,
@@ -9,6 +10,7 @@ import {
   type Method,
   type Pair,
 } from './models';
+import type { Scripts } from './scripts';
 import { uid } from './utils';
 
 function object(value: unknown): Record<string, unknown> {
@@ -65,7 +67,8 @@ export function importPostman(value: unknown) {
     return { environment, issues };
   }
   const info = object(data.info);
-  if (!str(info.schema).includes('schema.getpostman.com/json/collection/')) return;
+  if (!/^https?:\/\/schema\.(?:getpostman|postman)\.com\/json\/collection\//.test(str(info.schema)))
+    return;
   if (!Array.isArray(data.item))
     throw new Error(t('A coleção Postman não contém uma lista de itens.'));
   const name = str(info.name) || t('Coleção Postman');
@@ -111,56 +114,45 @@ export function importPostman(value: unknown) {
     );
     return emptyAuth();
   }
-  function report(
+  function importEvents(
     value: Record<string, unknown>,
     label: string,
-    endpoint?: Collection['requests'][number],
+    target?: Collection | Collection['requests'][number],
   ) {
-    let unsupported = false;
+    const sources: Record<keyof Scripts, string[]> = { before: [], after: [] };
+    let skipped = false;
     for (const raw of list(value.event)) {
       const event = object(raw);
-      if (event.disabled === true) continue;
-      const exec = object(event.script).exec;
-      if (!endpoint || event.listen !== 'test' || !Array.isArray(exec) || !exec.length) {
-        unsupported = true;
+      const script = object(event.script);
+      if (event.disabled === true || script.disabled === true) continue;
+      const phase =
+        event.listen === 'prerequest' ? 'before' : event.listen === 'test' ? 'after' : undefined;
+      const { exec } = script;
+      const source =
+        typeof exec === 'string'
+          ? exec
+          : Array.isArray(exec) && exec.every((line) => typeof line === 'string')
+            ? exec.join('\n')
+            : undefined;
+      if (source === undefined) {
+        skipped = true;
         continue;
       }
-      const tests: typeof endpoint.tests = [];
-      const extract: typeof endpoint.extract = Object.create(null);
-      let supported = true;
-      for (const line of exec) {
-        if (typeof line !== 'string') {
-          supported = false;
-          break;
-        }
-        if (!line.trim()) continue;
-        const status = line
-          .trim()
-          .match(
-            /^pm\.test\('Status ([1-5]\d\d)', \(\) => pm\.response\.to\.have\.status\(\1\)\);$/,
-          );
-        const extraction = line
-          .trim()
-          .match(
-            /^pm\.(?:collectionVariables|environment)\.set\('([\w-]+)', pm\.response\.json\(\)\.([\w$]+)\);$/,
-          );
-        if (status) tests.push({ type: 'status', equals: Number(status[1]) });
-        else if (extraction) extract[extraction[1]] = '/' + extraction[2];
-        else {
-          supported = false;
-          break;
-        }
-      }
-      if (supported) {
-        endpoint.tests.push(...tests);
-        endpoint.extract = { ...endpoint.extract, ...extract };
-      } else unsupported = true;
+      if (!source.trim()) continue;
+      if (phase && target) sources[phase].push(source);
+      else skipped = true;
     }
-    if (unsupported) issues.push(t('{0}: scripts não importados.', label));
+    if (target && (sources.before.length || sources.after.length)) {
+      target.scripts = {
+        ...(sources.before.length ? { before: sources.before.join('\n;\n') } : {}),
+        ...(sources.after.length ? { after: sources.after.join('\n;\n') } : {}),
+      };
+    }
+    if (skipped) issues.push(t('{0}: alguns scripts não foram importados.', label));
     if (list(value.response).length)
       issues.push(t('{0}: exemplos de resposta não importados.', label));
   }
-  report(data, name);
+  importEvents(data, name, collection);
   collection.auth = auth(data.auth, name);
   function visit(
     items: unknown[],
@@ -171,13 +163,12 @@ export function importPostman(value: unknown) {
       const item = object(raw);
       const label = str(item.name) || t('Item Postman');
       if (Array.isArray(item.item)) {
-        report(item, label);
-        const base = folder ? `${folder} / ${label}` : label;
+        importEvents(item, label);
+        const base = folderPath(folder, label);
         let path = base;
         for (let suffix = 2; collection.folders.includes(path); suffix++)
           path = `${base} (${suffix})`;
         collection.folders.push(path);
-        if (folder) issues.push(t('{0}: pasta aninhada representada como pasta plana.', path));
         visit(item.item, path, auth(item.auth, path, parentAuth));
         continue;
       }
@@ -200,7 +191,7 @@ export function importPostman(value: unknown) {
         auth: auth(request.auth, label, parentAuth),
         headers: variables(request.header, label),
       });
-      report(item, label, endpoint);
+      importEvents(item, label, endpoint);
       if (Array.isArray(url.query)) endpoint.params = variables(url.query, label);
       endpoint.pathParams = variables(url.variable, label);
       if (endpoint.pathParams.length) {

@@ -96,7 +96,7 @@ O teste de integração do workflow cobre a reutilização do token extraído no
 
 Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e timeout, com registros do editor e do runner. A verificação também cobriu filtros, limpeza do console e mascaramento dos segredos do cenário.
 
-### 1.5 — Importação direta de workspaces do Postman
+### 1.5 — Importação direta de workspaces do Postman  (implementado)
 
 - Conectar à API do Postman com uma chave guardada no cofre do Windows. Listar os workspaces acessíveis e permitir importar todos os itens compatíveis de um workspace ou selecionar o que trazer.
 - Reaproveitar a importação de coleções e ambientes. Preservar pastas, ordem das requisições e vínculos que o Fedexe representa. Importar especificações OpenAPI compatíveis quando o suporte da 1.7 estiver disponível.
@@ -104,7 +104,7 @@ Um cenário local no desktop confirmou envio bem-sucedido, redirecionamento e ti
 
 **Pronto quando** um workspace com várias coleções e ambientes puder ser migrado em uma operação, as coleções compatíveis rodarem no Fedexe e o relatório identificar itens omitidos ou parcialmente convertidos.
 
-### 1.6 — OAuth 2.0
+### 1.6 — OAuth 2.0  (implementado)
 
 - Começar com Authorization Code com PKCE no navegador do sistema e Client Credentials. Definir suporte por cliente: PKCE no desktop e Client Credentials no desktop e na CLI.
 - Guardar tokens persistidos no cofre do Windows e prever expiração, renovação quando disponível e limpeza ao desconectar. Documentar a configuração de credenciais em CI.

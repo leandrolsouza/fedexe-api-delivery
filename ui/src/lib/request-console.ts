@@ -16,6 +16,7 @@ export type ConsoleTrace = {
     headers: Headers;
     preview: string;
     truncated: boolean;
+    hiddenByPostResponseScript?: boolean;
   } | null;
   redirects: { status: number; url: string; followed: boolean }[];
   failure:

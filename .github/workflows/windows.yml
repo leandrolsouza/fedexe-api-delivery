@@ -50,6 +50,9 @@ jobs:
       - name: Build signed installer
         if: ${{ inputs.signed }}
         env:
+          VITE_FEDEXE_GOOGLE_DRIVE: ${{ vars.FEDEXE_GOOGLE_DRIVE_ENABLED }}
+          FEDEXE_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.FEDEXE_GOOGLE_OAUTH_CLIENT_ID }}
+          FEDEXE_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.FEDEXE_GOOGLE_OAUTH_CLIENT_SECRET }}
           FEDEXE_UPDATER_PUBLIC_KEY: ${{ vars.FEDEXE_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -57,6 +60,11 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:FEDEXE_UPDATER_PUBLIC_KEY) -or
               [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
             throw 'Configure as chaves do atualizador antes de gerar uma release assinada.'
+          }
+          if ($env:VITE_FEDEXE_GOOGLE_DRIVE -ceq 'true' -and
+              ([string]::IsNullOrWhiteSpace($env:FEDEXE_GOOGLE_OAUTH_CLIENT_ID) -or
+              [string]::IsNullOrWhiteSpace($env:FEDEXE_GOOGLE_OAUTH_CLIENT_SECRET))) {
+            throw 'Configure o cliente OAuth desktop do Fedexe para habilitar Conectar com Google.'
           }
           $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
           if ($version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
