@@ -1,0 +1,5 @@
+O Runner de coleções agora gera carga com usuários virtuais que repetem fluxos autenticados e usam os dados extraídos nas etapas seguintes.
+
+Configure perfis constante, rampa gradual, pico repentino e longa duração. Acompanhe vazão, média, p95, p99 e erros durante a execução.
+
+Exporte o cenário para o CLI e use limites de p99 e taxa de erros para aprovar ou reprovar o pipeline. O desktop e o CLI exportam o relatório agregado em JSON.

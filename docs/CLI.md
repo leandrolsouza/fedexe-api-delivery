@@ -24,6 +24,42 @@ Use referências a variáveis nos campos de autenticação e configure os valore
 
 Por padrão a execução continua após uma falha. Com `--stop-on-failure`, o relatório inclui as etapas concluídas até a primeira falha.
 
+## Testes de carga
+
+No desktop, abra o **Runner de coleções**, selecione **Teste de carga** e escolha a coleção ou pasta e o ambiente. Use requisições salvas na ordem em que o usuário as executaria. Para encadear autenticação e dados, configure extrações JSON Pointer e use as variáveis extraídas nas etapas seguintes. Cada VU recomeça com as variáveis originais em cada rodada. Uma falha declarativa, de extração ou de transporte encerra a rodada daquele VU. O modo de carga aceita testes e extrações declarativos e exige um fluxo sem scripts JavaScript.
+
+Use **Exportar cenário** para gerar o arquivo do CLI. Exemplo de rampa de 2 a 20 VUs em 30 segundos, seguida de 90 segundos com 20 VUs:
+
+```json
+{
+  "profile": "ramp",
+  "base_vus": 2,
+  "vus": 20,
+  "phase_seconds": 30,
+  "duration_seconds": 120,
+  "think_ms": 100,
+  "max_p99_ms": 500,
+  "max_error_percent": 1
+}
+```
+
+```powershell
+node dist-cli/fedexe.mjs load --collection ./ci/collection.json --environment ./ci/environment.json --folder 'Integração' --scenario ./ci/load.json --secret 'password=API_TEST_PASSWORD' --report ./fedexe-load.json
+```
+
+| Perfil | Agenda de usuários virtuais |
+| --- | --- |
+| `constant` | Inicia todos os VUs e mantém a concorrência até o fim. |
+| `ramp` | Inicia com `base_vus`, adiciona VUs gradualmente durante `phase_seconds` e mantém o total até o fim. |
+| `spike` | Mantém `base_vus` antes e depois de um pico central de `phase_seconds` com o total de VUs. Reserve pelo menos dois segundos fora do pico. |
+| `soak` | Mantém os VUs durante uma janela prolongada. Cruze as métricas de latência e erros com o consumo de memória do serviço sob teste. |
+
+Configure de 1 a 500 VUs e de 1 a 86.400 segundos de carga. A pausa opcional `think_ms` vai de 0 a 60.000 ms. Ao fim da janela de um VU, o runner permite que a requisição em andamento termine, respeitando seu timeout. Cancelar pelo desktop interrompe as requisições pendentes e conserva as métricas já coletadas.
+
+O CLI emite uma amostra JSON por segundo em stderr, com RPS da janela mais recente. O resultado final em stdout e no arquivo de relatório contém RPS médio, latência média, p95 e p99, contagem de HTTP 4xx/5xx, erros de transporte, timeouts e falhas de validação. Cada requisição entra uma vez na taxa de erros, mesmo que pertença a mais de uma categoria. A taxa inclui HTTP 4xx/5xx e erros de transporte. Os percentis usam o método de posto mais próximo com histogramas de memória limitada. Latências acima de 10 s têm resolução reduzida no relatório. A comparação com o limite de p99 usa as amostras em milissegundos sem o arredondamento do histograma.
+
+O passo de CI pode executar o comando `load` diretamente. O código `0` indica uma execução concluída com amostras e todos os limites configurados atendidos. O código `1` indica limite excedido e reprova o passo. O código `2` cobre configuração inválida, erro de preparação, cancelamento ou falta de amostras. Os dois limites são opcionais e aceitam igualdade. O cenário e o relatório exportados contêm configurações numéricas e métricas agregadas.
+
 ## GitHub Actions
 
 Exemplo para um checkout do Fedexe com os arquivos exportados em `ci/`. Configure `API_TEST_PASSWORD` nos segredos do repositório.

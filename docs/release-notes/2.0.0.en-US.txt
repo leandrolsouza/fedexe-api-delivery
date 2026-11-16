@@ -1,0 +1,5 @@
+The collection runner now generates load with virtual users that repeat authenticated workflows and pass extracted data to subsequent requests.
+
+Configure constant, ramp-up, spike, and soak profiles. Track throughput, mean latency, p95, p99, and errors live.
+
+Export the scenario to the CLI and use p99 and error-rate thresholds to pass or fail your pipeline. Both desktop and CLI can export the aggregate report as JSON.

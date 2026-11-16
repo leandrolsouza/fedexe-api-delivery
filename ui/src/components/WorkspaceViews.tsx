@@ -64,6 +64,7 @@ import { cn, download, uid } from '../lib/utils';
 import { hasScripts } from '../lib/scripts';
 import { native, normalizeError, runCollection } from '../lib/transport';
 import { PairEditor } from './PairEditor';
+import { LoadRunner } from './LoadRunner';
 import { MethodBadge } from './RequestEditor';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -511,6 +512,7 @@ export function RunnerView({
   onCancel: () => void;
   onResults: (result: RunResult) => void;
 }) {
+  const [loadMode, setLoadMode] = useState(false);
   const [collectionId, setCollectionId] = useState(workspace.collections[0]?.id || '');
   const collection =
     workspace.collections.find((c) => c.id === collectionId) ?? workspace.collections[0];
@@ -662,6 +664,7 @@ export function RunnerView({
   }, []);
   useEffect(() => {
     if (!initialFolder) return;
+    setLoadMode(false);
     setCollectionId(initialFolder.collectionId);
     setScope('folder');
     setFolder(initialFolder.folder);
@@ -754,6 +757,25 @@ export function RunnerView({
           </div>
           <div className="runner-fields">
             <label className="field-label">
+              {t('Tipo de execução')}
+              <select
+                className="input"
+                disabled={busy}
+                value={loadMode ? 'load' : 'functional'}
+                onChange={(event) => {
+                  const next = event.target.value === 'load';
+                  if (next && scope === 'selection') {
+                    setScope('collection');
+                    clearRun();
+                  }
+                  setLoadMode(next);
+                }}
+              >
+                <option value="functional">{t('Teste funcional')}</option>
+                <option value="load">{t('Teste de carga')}</option>
+              </select>
+            </label>
+            <label className="field-label">
               {t('Coleção')}
               <select
                 aria-label={t('Coleção')}
@@ -809,7 +831,7 @@ export function RunnerView({
               >
                 <option value="collection">{t('Coleção inteira')}</option>
                 <option value="folder">{t('Pasta')}</option>
-                <option value="selection">{t('Requisições selecionadas')}</option>
+                {!loadMode && <option value="selection">{t('Requisições selecionadas')}</option>}
               </select>
             </label>
             {scope === 'folder' && (
@@ -831,52 +853,56 @@ export function RunnerView({
                 </select>
               </label>
             )}
-            <label className="field-label">
-              {t('Ao encontrar uma falha')}
-              <select
-                className="input"
-                disabled={busy}
-                value={stopOnFailure ? 'stop' : 'continue'}
-                onChange={(event) => setStopOnFailure(event.target.value === 'stop')}
-              >
-                <option value="continue">{t('Continuar até o fim')}</option>
-                <option value="stop">{t('Parar na primeira falha')}</option>
-              </select>
-            </label>
-            <div className="runner-timing-fields">
-              <label className="field-label">
-                {t('Iterações')}
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  max={100}
-                  step={1}
-                  required
-                  disabled={busy}
-                  value={iterationsInput}
-                  onChange={(event) => setIterationsInput(event.target.value)}
-                />
-              </label>
-              <label className="field-label">
-                {t('Intervalo entre requisições (ms)')}
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={60000}
-                  step={1}
-                  required
-                  disabled={busy}
-                  value={delayInput}
-                  onChange={(event) => setDelayInput(event.target.value)}
-                />
-              </label>
-            </div>
-            {!validOptions && (
-              <p className="field-hint" role="status">
-                {t('Use de 1 a 100 iterações e um intervalo de 0 a 60000 ms.')}
-              </p>
+            {!loadMode && (
+              <>
+                <label className="field-label">
+                  {t('Ao encontrar uma falha')}
+                  <select
+                    className="input"
+                    disabled={busy}
+                    value={stopOnFailure ? 'stop' : 'continue'}
+                    onChange={(event) => setStopOnFailure(event.target.value === 'stop')}
+                  >
+                    <option value="continue">{t('Continuar até o fim')}</option>
+                    <option value="stop">{t('Parar na primeira falha')}</option>
+                  </select>
+                </label>
+                <div className="runner-timing-fields">
+                  <label className="field-label">
+                    {t('Iterações')}
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      required
+                      disabled={busy}
+                      value={iterationsInput}
+                      onChange={(event) => setIterationsInput(event.target.value)}
+                    />
+                  </label>
+                  <label className="field-label">
+                    {t('Intervalo entre requisições (ms)')}
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={60000}
+                      step={1}
+                      required
+                      disabled={busy}
+                      value={delayInput}
+                      onChange={(event) => setDelayInput(event.target.value)}
+                    />
+                  </label>
+                </div>
+                {!validOptions && (
+                  <p className="field-hint" role="status">
+                    {t('Use de 1 a 100 iterações e um intervalo de 0 a 60000 ms.')}
+                  </p>
+                )}
+              </>
             )}
             <p className="field-hint">
               {t(
@@ -884,36 +910,54 @@ export function RunnerView({
               )}
             </p>
           </div>
-          <div className="runner-start">
-            {running ? (
-              <Button
-                variant="secondary"
-                disabled={cancelling}
-                onClick={() => {
-                  setCancelling(true);
-                  onCancel();
-                }}
-              >
-                <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
-              </Button>
-            ) : (
-              <Button
-                onClick={run}
-                disabled={busy || !chosen.length || !environment || !validOptions}
-              >
-                <Play size={15} fill="currentColor" />
-                {' ' + t('Executar') + ' '}
-                {formatNumber(plannedSteps)}{' '}
-                {plannedSteps === 1 ? t('requisição') : t('requisições')}
-              </Button>
-            )}
-            <span>
-              <LockKeyhole size={11} />
-              {' ' + t('Variáveis isoladas por rodada')}
-            </span>
-          </div>
+          {!loadMode && (
+            <div className="runner-start">
+              {running ? (
+                <Button
+                  variant="secondary"
+                  disabled={cancelling}
+                  onClick={() => {
+                    setCancelling(true);
+                    onCancel();
+                  }}
+                >
+                  <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
+                </Button>
+              ) : (
+                <Button
+                  onClick={run}
+                  disabled={busy || !chosen.length || !environment || !validOptions}
+                >
+                  <Play size={15} fill="currentColor" />
+                  {' ' + t('Executar') + ' '}
+                  {formatNumber(plannedSteps)}{' '}
+                  {plannedSteps === 1 ? t('requisição') : t('requisições')}
+                </Button>
+              )}
+              <span>
+                <LockKeyhole size={11} />
+                {' ' + t('Variáveis isoladas por rodada')}
+              </span>
+            </div>
+          )}
         </section>
-        <section className="surface runner-results">
+        {loadMode && (
+          <section className="surface load-panel">
+            <div className="surface-heading">
+              <h3>{t('Teste de carga')}</h3>
+            </div>
+            <LoadRunner
+              context={context}
+              collection={collection}
+              environment={environment}
+              requests={chosen}
+              busy={busy}
+              setBusy={setBusy}
+              onCancel={onCancel}
+            />
+          </section>
+        )}
+        <section className="surface runner-results" hidden={loadMode}>
           <div className="runner-results-header">
             <div className="surface-heading">
               <div>

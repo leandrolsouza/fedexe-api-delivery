@@ -7,10 +7,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub mod console;
 #[cfg(windows)]
 pub mod drive;
+pub mod load;
 pub mod oauth;
 
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const VALIDATION_LIMIT: usize = 16 * 1024 * 1024;
+const TIMEOUT_MESSAGE: &str = "A requisição excedeu o timeout configurado.";
 
 #[derive(Clone, Deserialize)]
 pub struct Request {
@@ -240,6 +242,19 @@ enum FailureReason {
 }
 
 impl ResultRow {
+    fn new(step: &Step) -> Self {
+        Self {
+            name: step.name.clone(),
+            status: None,
+            http_ms: 0,
+            validation_ms: 0,
+            checks_passed: 0,
+            failures: Vec::new(),
+            failure_reasons: Vec::new(),
+            execution_error: false,
+        }
+    }
+
     fn add_failure(&mut self, reason: FailureReason, message: String) {
         self.failure_reasons.push(reason);
         self.failures.push(message);
@@ -311,7 +326,7 @@ pub enum RunProgress<'a> {
 
 fn http_error(error: reqwest::Error) -> String {
     if error.is_timeout() {
-        return "A requisição excedeu o timeout configurado.".into();
+        return TIMEOUT_MESSAGE.into();
     }
     use std::error::Error;
     let error = error.without_url();
@@ -874,16 +889,7 @@ pub async fn run(
             variables.clone_from(&collection.variables);
         }
         report(RunProgress::Started { index });
-        let mut row = ResultRow {
-            name: step.name.clone(),
-            status: None,
-            http_ms: 0,
-            validation_ms: 0,
-            checks_passed: 0,
-            failures: Vec::new(),
-            failure_reasons: Vec::new(),
-            execution_error: false,
-        };
+        let mut row = ResultRow::new(step);
         let step_start = Instant::now();
         console::start(Some(index + 1));
         let validation = tokio::select! {

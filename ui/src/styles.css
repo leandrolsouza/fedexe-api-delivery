@@ -2902,6 +2902,32 @@ kbd {
   width: 100%;
   min-width: 0;
 }
+.load-fields,
+.load-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 155px), 1fr));
+  gap: 14px;
+}
+.load-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.load-metrics > div {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.load-metrics dt {
+  font-size: 11px;
+  color: var(--secondary);
+}
+.load-metrics dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
 .runner-start {
   border-top: 1px solid var(--border);
   padding: 21px 23px 19px;

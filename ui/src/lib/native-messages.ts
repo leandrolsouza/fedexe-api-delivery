@@ -3,6 +3,7 @@ import { t, type Message } from './i18n';
 // Tauri returns application errors as strings. Keep the accepted templates explicit so
 // system diagnostics and text supplied by the user pass through untouched.
 const templates = [
+  'Configuração de carga inválida.',
   'Não foi possível concluir a operação no Google Drive.',
   'O backup excede o limite de 5 MB.',
   'Reconecte a conta Google para acessar os backups.',

@@ -40,7 +40,7 @@ Para publicar uma versão estável com o atualizador habilitado, siga o [procedi
 
 ### Runner por CLI
 
-O Fedexe 1.3 executa coleções ou pastas exportadas a partir de um terminal no Windows. Veja o [guia do runner para CI](docs/CLI.md) para compilar, configurar segredos e gerar relatórios.
+O Fedexe executa testes funcionais e de carga a partir de coleções ou pastas exportadas. Veja o [guia do runner para CI](docs/CLI.md) para compilar, configurar segredos e aplicar limites de desempenho no pipeline.
 
 ### Validar a instalação em outro Windows
 
@@ -56,6 +56,7 @@ O Fedexe 1.3 executa coleções ou pastas exportadas a partir de um terminal no 
 - Respostas formatadas, cópia da prévia e download do corpo completo no desktop.
 - Ambientes, variáveis e segredos no Gerenciador de Credenciais do Windows.
 - Runner sequencial com diagnóstico por etapa e relatório exportável.
+- Testes de carga no desktop com usuários virtuais, quatro perfis, métricas ao vivo e exportação do cenário para o CLI.
 - Histórico, busca global, atalhos, importação/exportação JSON e backup.
 - Temas claro/escuro/sistema, modo compacto e controles nativos de janela.
 

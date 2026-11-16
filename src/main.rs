@@ -211,6 +211,21 @@ async fn run(
 }
 
 #[tauri::command]
+async fn run_load(
+    app: State<'_, App>,
+    collection: Collection,
+    options: http::load::Options,
+    progress: tauri::ipc::Channel<http::load::Metrics>,
+) -> Result<http::load::Report, String> {
+    app.execute(|receiver| {
+        http::load::run(&app.client, collection, options, receiver, move |metrics| {
+            let _ = progress.send(metrics);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 fn cancel(app: State<'_, App>) {
     // Keep the slot occupied until the running future exits.
     if let Some(sender) = app.active.lock().unwrap().as_mut() {
@@ -291,6 +306,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             send,
             run,
+            run_load,
             cancel,
             release_response_bodies,
             #[cfg(windows)]
