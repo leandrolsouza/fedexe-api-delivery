@@ -26,7 +26,7 @@ jobs:
           npm ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $key = Join-Path $env:RUNNER_TEMP 'qa-updater.key'
-          .\node_modules\.bin\tauri.cmd signer generate --ci -w $key *> $null
+          .\node_modules\.bin\tauri.cmd signer generate --ci -p disposable-ci-fixture -w $key *> $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $config = @{
             plugins = @{ updater = @{ pubkey = (Get-Content "$key.pub" -Raw).Trim(); endpoints = @('https://localhost:4231/latest.json') } }
@@ -46,6 +46,7 @@ jobs:
           gh run download 44075862577 --name fedexe-windows-nsis --dir candidate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Exercise update, app restart, and data preservation
+        timeout-minutes: 6
         shell: pwsh
         run: |
           $key = Join-Path $env:RUNNER_TEMP 'qa-updater.key'
@@ -53,18 +54,22 @@ jobs:
           $expected = ((Get-Content "$installer.sha256" -Raw) -split '\s+')[0]
           if ((Get-FileHash $installer).Hash -ne $expected) { throw 'Candidate checksum mismatch' }
           Move-Item -LiteralPath "$installer.sig" -Destination "$installer.production.sig"
-          & .\previous\node_modules\.bin\tauri.cmd signer sign --private-key-path $key --app-version 2.1.0 $installer *> $null
+          Write-Output 'Signing candidate with the disposable test key'
+          & .\previous\node_modules\.bin\tauri.cmd signer sign --private-key-path $key --password disposable-ci-fixture --app-version 2.1.0 $installer *> $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output 'Creating the loopback HTTPS certificate'
           $cert = New-SelfSignedCertificate -DnsName localhost -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.19={critical}{text}ca=true')
           $password = ConvertTo-SecureString 'disposable-ci-fixture' -AsPlainText -Force
           $pfx = Join-Path $env:RUNNER_TEMP 'qa-localhost.pfx'
           $public = Join-Path $env:RUNNER_TEMP 'qa-localhost.cer'
           Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password -CryptoAlgorithmOption AES256_SHA256 | Out-Null
           Export-Certificate -Cert $cert -FilePath $public | Out-Null
-          Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          Import-Certificate -FilePath $public -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
           $previous = (Get-ChildItem 'previous/target/release/bundle/nsis' -Filter '*-setup.exe').FullName
           $dir = Join-Path $env:RUNNER_TEMP 'fedexe-updater-qa'
-          $setup = Start-Process -FilePath $previous -ArgumentList "/S /D=$dir" -WindowStyle Hidden -Wait -PassThru
+          Write-Output 'Installing the previous version'
+          $setup = Start-Process -FilePath $previous -ArgumentList "/S /D=$dir" -WindowStyle Hidden -PassThru
+          if (!$setup.WaitForExit(60000)) { $setup.Kill(); throw 'Previous setup did not finish in 60 seconds' }
           if ($setup.ExitCode -ne 0) { throw 'Previous setup failed' }
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
           Write-Output "Windows build $([Environment]::OSVersion.Version)"
