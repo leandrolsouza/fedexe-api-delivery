@@ -20,7 +20,6 @@ import {
   ArrowUp,
   ArrowUpRight,
   Bell,
-  BookOpen,
   Box,
   Braces,
   Check,
@@ -64,6 +63,15 @@ import { Toaster, toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
 import { createWorkspaceAutosave } from './lib/workspace-autosave';
 import {
+  lastActiveWorkspace,
+  listLocalWorkspaces,
+  originalWorkspaceId,
+  readLocalWorkspace,
+  rememberActiveWorkspace,
+  writeLocalWorkspace,
+  type WorkspaceSummary,
+} from './lib/local-workspaces';
+import {
   inspectRestoredBackup,
   replaceBackupAttachment,
   type BackupAttachment,
@@ -71,6 +79,7 @@ import {
 } from './lib/backup-restore';
 import { loadSecrets, type StoredSecrets } from './lib/credentials';
 import {
+  createEmptyWorkspace,
   createWorkspace,
   addConsoleMasks,
   compileRequest,
@@ -82,7 +91,6 @@ import {
   redactUrlCredentials,
   exportableCollection,
   exportableWorkspace,
-  STORAGE_KEY,
   syncUrl,
   variablesFor,
   type Auth,
@@ -104,7 +112,11 @@ import {
   send,
   sendScriptRequest,
 } from './lib/transport';
-import { recordEditorPreparationFailure } from './lib/request-console';
+import {
+  consoleAttemptFactory,
+  postResponseTrace,
+  selectRequestConsole,
+} from './lib/request-console';
 import { RequestConsole } from './components/RequestConsole';
 import { cn, download, uid } from './lib/utils';
 import { Button } from './components/ui/button';
@@ -180,15 +192,23 @@ const navigationItems = [
   { id: 'drive', label: 'Backups no Google Drive', icon: HardDrive },
 ] as const;
 
-async function initialState() {
+async function initialState(workspaceId: string) {
   let workspace: Workspace | undefined;
   try {
-    const raw = native ? await invoke<string | null>('load_workspace') : null;
-    workspace = loadWorkspace(raw ?? localStorage.getItem(STORAGE_KEY));
-    return { ...(await loadSecrets(workspace, native)), error: '', recovery: undefined };
+    const raw = await readLocalWorkspace(workspaceId, native);
+    if (raw === null && workspaceId !== originalWorkspaceId)
+      throw new Error(t('O workspace selecionado não foi encontrado.'));
+    workspace = loadWorkspace(raw);
+    return {
+      ...(await loadSecrets(workspace, native)),
+      workspaceId,
+      error: '',
+      recovery: undefined,
+    };
   } catch (error) {
     return {
-      workspace: createWorkspace(),
+      workspace: workspaceId === originalWorkspaceId ? createWorkspace() : createEmptyWorkspace(''),
+      workspaceId,
       storedSecrets: new Map() as StoredSecrets,
       retiredSecrets: [],
       error: normalizeError(error).message,
@@ -197,27 +217,102 @@ async function initialState() {
   }
 }
 
+type InitialWorkspace = Awaited<ReturnType<typeof initialState>>;
+
 export function App() {
   const locale = useLocale();
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
-  const [initial, setInitial] = useState<Awaited<ReturnType<typeof initialState>>>();
+  const [initial, setInitial] = useState<InitialWorkspace>();
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [switching, setSwitching] = useState(false);
+  const switchPending = useRef(false);
   useEffect(() => {
     let disposed = false;
-    void initialState().then((state) => {
-      if (!disposed) setInitial(state);
-    });
+    async function openLastWorkspace() {
+      const available = await listLocalWorkspaces(native).catch(() => [
+        { id: originalWorkspaceId, name: null },
+      ]);
+      const preferred = lastActiveWorkspace();
+      const id = available.some((entry) => entry.id === preferred)
+        ? preferred
+        : originalWorkspaceId;
+      const state = await initialState(id);
+      if (disposed) return;
+      selectRequestConsole(id);
+      setWorkspaces(available);
+      setInitial(state);
+    }
+    void openLastWorkspace();
     return () => {
       disposed = true;
     };
   }, []);
 
+  async function changeWorkspace(
+    current: WorkspaceSummary,
+    next: WorkspaceSummary,
+    create = false,
+  ) {
+    if (switchPending.current || current.id === next.id) return;
+    switchPending.current = true;
+    setSwitching(true);
+    try {
+      if (create) {
+        const workspace = createEmptyWorkspace(next.name ?? '');
+        await writeLocalWorkspace(next.id, JSON.stringify(workspace), native);
+      }
+      const state = await initialState(next.id);
+      if (state.error) throw new Error(state.error);
+      try {
+        rememberActiveWorkspace(next.id);
+      } catch (error) {
+        toast.error(
+          t('Não foi possível lembrar o workspace ativo. {0}', normalizeError(error).message),
+        );
+      }
+      selectRequestConsole(next.id);
+      setWorkspaces((entries) => [
+        ...entries.map((entry) => (entry.id === current.id ? current : entry)),
+        ...(create ? [next] : []),
+      ]);
+      setInitial(state);
+    } catch (error) {
+      toast.error(t('Não foi possível abrir o workspace. {0}', normalizeError(error).message));
+    } finally {
+      switchPending.current = false;
+      setSwitching(false);
+    }
+  }
+
   if (!initial) return <p role="status">{t('Carregando workspace…')}</p>;
-  return <WorkspaceApp initial={initial} />;
+  return (
+    <WorkspaceApp
+      key={initial.workspaceId}
+      initial={initial}
+      workspaces={workspaces}
+      switching={switching}
+      changeWorkspace={changeWorkspace}
+    />
+  );
 }
 
-function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialState>> }) {
+function WorkspaceApp({
+  initial,
+  workspaces,
+  switching,
+  changeWorkspace,
+}: {
+  initial: InitialWorkspace;
+  workspaces: WorkspaceSummary[];
+  switching: boolean;
+  changeWorkspace: (
+    current: WorkspaceSummary,
+    next: WorkspaceSummary,
+    create?: boolean,
+  ) => Promise<void>;
+}) {
   const updates = useUpdates();
   const { items, markRead, add: addNotice } = useNotifications();
   const notices = driveEnabled
@@ -234,6 +329,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const { defaultTimeoutMs, defaultRedirectPolicy } = workspace.settings;
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
   const [storageError, setStorageError] = useState(initial.error);
+  useEffect(() => {
+    if (storageError)
+      toast.error(storageError, { id: 'workspace-storage-error', duration: Infinity });
+    return () => {
+      toast.dismiss('workspace-storage-error');
+    };
+  }, [storageError]);
   const [saveAttempt, setSaveAttempt] = useState(0);
   const [persisted, setPersisted] = useState<Workspace>();
   const [autosave] = useState(() => createWorkspaceAutosave({ ...initial, native }));
@@ -281,10 +383,18 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       toast.error(normalizeError(error).message),
     );
   }, [responses]);
+  useEffect(
+    () => () => {
+      void releaseResponseBodies(responseBodies.current).catch((error) =>
+        toast.error(normalizeError(error).message),
+      );
+    },
+    [],
+  );
   const [scriptResults, setScriptResults] = useState<Record<string, ScriptResult[]>>({});
   const scriptSessions = useRef(new Map<string, Map<string, string | null>>());
   const manualExecution = useRef<AbortController>(undefined);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [sendingId, setSendingId] = useState('');
   const [sidebarHidden, setSidebarHidden] = useState(() => window.innerWidth <= 600);
@@ -316,7 +426,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [importOpen, setImportOpen] = useState(false);
   const [postmanOpen, setPostmanOpen] = useState(false);
   const [importText, setImportText] = useState('');
-  const [importError, setImportError] = useState('');
   const [importingFiles, setImportingFiles] = useState(false);
   type ImportReport = { name: string; issues: string[]; entries?: string[] };
   const [importReport, setImportReport] = useState<ImportReport>();
@@ -405,6 +514,27 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const saving = !storageBlocked && workspace !== persisted && !storageError;
   const hasPendingStorage =
     workspace !== persisted && (!storageBlocked || workspace !== initial.workspace);
+  const workspaceSummary = { id: initial.workspaceId, name: workspace.settings.workspaceName };
+
+  function canChangeWorkspace() {
+    if (switching) return false;
+    if (backupBlocked || hasPendingStorage || importingFiles || updates.progress) {
+      toast.error(
+        t(
+          'Salve ou descarte os rascunhos e aguarde as operações em andamento antes de trocar de workspace.',
+        ),
+      );
+      return false;
+    }
+    return true;
+  }
+
+  function createLocalWorkspace() {
+    if (!canChangeWorkspace()) return;
+    askName(t('Novo workspace'), t('Dê um nome ao workspace.'), '', (name) => {
+      if (canChangeWorkspace()) void changeWorkspace(workspaceSummary, { id: uid(), name }, true);
+    });
+  }
 
   useEffect(() => {
     if (storageBlocked) return;
@@ -460,11 +590,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
-      if (Object.keys(drafts).length || busy || hasPendingStorage) event.preventDefault();
+      if (Object.keys(drafts).length || busy || hasPendingStorage || switching)
+        event.preventDefault();
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [drafts, busy, hasPendingStorage]);
+  }, [drafts, busy, hasPendingStorage, switching]);
 
   useEffect(() => {
     if (!native) return;
@@ -473,6 +604,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     void import('@tauri-apps/api/window')
       .then(async ({ getCurrentWindow }) => {
         const stop = await getCurrentWindow().onCloseRequested((event) => {
+          if (switching) {
+            event.preventDefault();
+            return;
+          }
           if (!Object.keys(drafts).length && !busy && !hasPendingStorage) return;
           event.preventDefault();
           setConfirmDialog({
@@ -494,7 +629,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       disposed = true;
       unlisten?.();
     };
-  }, [drafts, busy, hasPendingStorage]);
+  }, [drafts, busy, hasPendingStorage, switching]);
 
   const updateCollection = (id: string, update: (c: Collection) => Collection) =>
     setWorkspace((current) => ({
@@ -566,6 +701,16 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     const execution = new AbortController();
     manualExecution.current = execution;
     const results: ScriptResult[] = [];
+    const attempt = native ? consoleAttemptFactory('editor')(item.id) : undefined;
+    const hasPostScript = Boolean(collection.scripts?.after?.trim() || item.scripts?.after?.trim());
+    const deferredTrace =
+      attempt && hasPostScript ? postResponseTrace(attempt.trace, attempt.script) : undefined;
+    const scriptContext = {
+      environmentName: environment?.name,
+      signal: execution.signal,
+      send: sendScriptRequest,
+      record: attempt?.script,
+    };
     const sessionKey = JSON.stringify([collection.id, environment?.id]);
     const changes = scriptSessions.current.get(sessionKey) ?? new Map<string, string | null>();
     const secrets = [...collection.variables, ...(environment?.variables ?? [])]
@@ -574,7 +719,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     const redact = (message: string) => redactValues(message, [...secrets, ...changes.values()]);
     setSendingId(item.id);
     setScriptResults((current) => ({ ...current, [item.id]: [] }));
-    setErrors((current) => ({ ...current, [item.id]: '' }));
+    setErrors((current) => ({ ...current, [item.id]: false }));
     let status: number | null = null;
     let duration = 0;
     let errorText: string | undefined;
@@ -596,12 +741,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         results,
         redact,
         undefined,
-        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+        scriptContext,
       );
       execution.signal.throwIfAborted();
       if (before.failed) throw new Error(t('Falha no script de pré-requisição.'));
       if (before.skipped) {
         skipped = true;
+        attempt?.skip();
         toast.info(t('Requisição ignorada pelo script.'));
         return;
       }
@@ -616,15 +762,11 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         }
       }
       prepared = true;
-      const response = await send(
-        compiled,
-        item.id,
-        Boolean(collection.scripts?.after?.trim() || item.scripts?.after?.trim()),
-      );
+      const response = await send(compiled, deferredTrace?.trace ?? attempt?.trace);
       status = response.status;
       duration = response.duration_ms;
       setResponses((current) => ({ ...current, [item.id]: response }));
-      await runScripts(
+      const after = await runScripts(
         'after',
         collection,
         before.item,
@@ -633,14 +775,30 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         results,
         redact,
         response,
-        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+        {
+          ...scriptContext,
+          record: deferredTrace?.script ?? attempt?.script,
+          protectWrite: deferredTrace?.protect,
+        },
       );
+      deferredTrace?.finish(!after.failed);
     } catch (error) {
+      deferredTrace?.finish(false);
       errorText = redact(normalizeError(error).message);
       duration = Math.round(performance.now() - start);
-      if (native && !prepared)
-        recordEditorPreparationFailure(duration, error instanceof RequestResolutionError, item.id);
-      setErrors((current) => ({ ...current, [item.id]: errorText! }));
+      attempt?.failure(
+        duration,
+        execution.signal.aborted
+          ? 'cancelled'
+          : error instanceof RequestResolutionError
+            ? 'resolution'
+            : prepared
+              ? 'transmission'
+              : 'preparation',
+      );
+      if (execution.signal.aborted) toast.info(errorText);
+      else toast.error(errorText);
+      setErrors((current) => ({ ...current, [item.id]: true }));
     } finally {
       if (changes.size) scriptSessions.current.set(sessionKey, changes);
       setScriptResults((current) => ({ ...current, [item.id]: results }));
@@ -704,7 +862,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
-      if (updates.progress) return;
+      if (updates.progress || switching) return;
       if (event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setCommandOpen((current) => !current);
@@ -729,7 +887,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [save, sendRequest, addRequest, view, updates.progress]);
+  }, [save, sendRequest, addRequest, view, updates.progress, switching]);
 
   function askName(
     title: string,
@@ -1290,7 +1448,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setActive({ collectionId: snapshot.collections[0]?.id || '', requestId: '' });
         setImportOpen(false);
         setImportText('');
-        setImportError('');
       },
     });
   }
@@ -1348,7 +1505,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         showImportReport({ name: request.name, issues });
         setImportOpen(false);
         setImportText('');
-        setImportError('');
         return;
       }
       const result = importDocument(text);
@@ -1364,7 +1520,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         showImportReport({ name: imported.name, issues });
         setImportOpen(false);
         setImportText('');
-        setImportError('');
         return;
       }
       if (result.kind === 'backup') {
@@ -1380,7 +1535,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         showImportReport({ name: environment.name, issues });
         setImportOpen(false);
         setImportText('');
-        setImportError('');
         setView('environments');
         return;
       }
@@ -1390,20 +1544,18 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       setWorkspace((current) => ({ ...current, collections: [...current.collections, c] }));
       setImportOpen(false);
       setImportText('');
-      setImportError('');
       if (c.requests[0]) openRequest(c.id, c.requests[0].id);
       else setActive({ collectionId: c.id, requestId: '' });
       toast.success(t('{0}: {1} requisições importadas', c.name, c.requests.length));
     } catch (error) {
       addNotice('importFailed');
-      setImportError(normalizeError(error).message);
+      toast.error(normalizeError(error).message);
     }
   }
 
   async function importFiles(files: File[]) {
     if (!files.length || importingFiles) return;
     setImportingFiles(true);
-    setImportError('');
     try {
       if (files.length === 1) {
         const text = await readImportFile(files[0]);
@@ -1438,7 +1590,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         result.succeeded === 0,
       );
     } catch (error) {
-      setImportError(normalizeError(error).message);
+      addNotice('importFailed');
+      toast.error(normalizeError(error).message);
     } finally {
       setImportingFiles(false);
     }
@@ -1532,6 +1685,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
 
   return (
     <div
+      inert={switching}
       className={cn(
         'app-shell',
         workspace.settings.compact && 'compact',
@@ -1554,19 +1708,46 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
         <div className="header-workspace">
           <span className="header-divider" />
-          <Box size={15} />
-          <span>{workspace.settings.workspaceName || t('Meu workspace')}</span>
           <Dropdown
             trigger={
-              <button className="inline-icon" aria-label={t('Opções do workspace')}>
+              <button
+                className="inline-icon workspace-selector"
+                aria-label={t('Selecionar workspace')}
+                title={workspaceSummary.name || t('Meu workspace')}
+              >
+                <Box size={15} />
+                <span>{workspaceSummary.name || t('Meu workspace')}</span>
                 <ChevronsUpDown size={12} />
               </button>
             }
             items={[
+              ...workspaces.map((entry) => {
+                const active = entry.id === workspaceSummary.id;
+                const label =
+                  (active ? workspaceSummary.name : entry.name) ||
+                  (entry.id === originalWorkspaceId
+                    ? t('Meu workspace')
+                    : t('Workspace {0}', entry.id.slice(0, 8)));
+                return {
+                  label: active ? t('{0} (ativo)', label) : label,
+                  icon: active ? <Check size={14} /> : <Box size={14} />,
+                  disabled: active,
+                  action: () => {
+                    if (canChangeWorkspace()) void changeWorkspace(workspaceSummary, entry);
+                  },
+                };
+              }),
+              {
+                label: t('Novo workspace'),
+                icon: <Plus size={14} />,
+                action: createLocalWorkspace,
+                separatorBefore: true,
+              },
               {
                 label: t('Configurar workspace'),
                 icon: <Settings2 size={14} />,
                 action: () => setView('settings'),
+                separatorBefore: true,
               },
               {
                 label: t('Exportar backup'),
@@ -1586,12 +1767,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <kbd>Ctrl K</kbd>
         </button>
         <div className="header-right">
-          <button className="documentation-button" onClick={() => setHelpOpen(true)}>
-            <BookOpen size={14} />
-            <span>{t('Guia rápido')}</span>
-            <ArrowUpRight size={12} />
-          </button>
-          <span className="header-divider" />
           <button
             className="header-help"
             aria-label={
@@ -1753,7 +1928,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             size="sm"
             onClick={() => {
               setImportOpen(true);
-              setImportError('');
             }}
           >
             <Upload size={13} />
@@ -1859,33 +2033,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           </div>
           <ArrowUpRight size={15} />
         </button>
-        <div className="sidebar-local-card">
-          <span className="local-card-art">
-            <ShieldCheck size={21} />
-          </span>
-          <span className="local-card-label">{t('SEU CÓDIGO. SEU ESPAÇO.')}</span>
-          <h3>
-            {t('Local por natureza.')}
-            <br />
-            {t('Livre por escolha.')}
-          </h3>
-          <p>
-            {t('Sem conta, sem nuvem obrigatória.')}
-            <br />
-            {t('Só você e suas APIs.')}
-          </p>
-          <div>
-            <span className="status-dot dot-green" />
-            {' ' + t('Sempre no seu dispositivo')} <ArrowUpRight size={12} />
-          </div>
-        </div>
-        <div className="sidebar-bottom">
-          <span>
-            <span className="status-dot dot-green" />
-            {' ' + t('Workspace local')}
-          </span>
-          <HardDrive size={13} />
-        </div>
         <div
           className="collections-resizer"
           role="separator"
@@ -1969,10 +2116,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             )}
           </div>
           <div className="main-toolbar-actions">
-            <span className="local-first">
-              <span className="status-dot dot-green" /> Local-first
-            </span>
-            <span className="toolbar-divider" />
             <div className="environment-picker" data-tauri-drag-region="false">
               <Globe2 size={14} />
               <select
@@ -2004,8 +2147,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         </div>
         {storageError && (
           <div className="storage-warning">
-            <InfoIcon />
-            <span>{storageError}</span>
+            <ShieldCheck size={16} />
+            <span>{t('Verifique o armazenamento')}</span>
             {!storageBlocked && (
               <button onClick={() => setSaveAttempt((attempt) => attempt + 1)}>
                 {t('Tentar salvar novamente')}
@@ -2188,9 +2331,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
                   </div>
                   <div className="welcome-features">
                     <span>
-                      <ShieldCheck size={15} /> Local-first
-                    </span>
-                    <span>
                       <Zap size={15} />
                       {' ' + t('Feito para ser leve')}
                     </span>
@@ -2219,7 +2359,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               workspace={workspace}
               onChange={setWorkspace}
               onImport={() => setImportOpen(true)}
-              onHelp={() => setHelpOpen(true)}
               onBackup={() => addNotice('localBackup')}
               onDrive={driveEnabled ? () => setView('drive') : undefined}
               updates={<UpdateSettings updates={updates} />}
@@ -2258,17 +2397,15 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           <span className="statusbar-brand">
             <img src="/favicon.svg" width={12} height={12} alt="" /> Fedexe API
           </span>
-          <span className="statusbar-separator" />
-          <span>
-            <span
-              className={cn('status-dot', storageError || saving ? 'dot-amber' : 'dot-green')}
-            />
-            {storageError
-              ? t('Verifique o armazenamento')
-              : saving
-                ? t('Salvando workspace…')
-                : t('Todos os dados neste dispositivo')}
-          </span>
+          {(storageError || saving) && (
+            <>
+              <span className="statusbar-separator" />
+              <span>
+                <span className="status-dot dot-amber" />
+                {storageError ? t('Verifique o armazenamento') : t('Salvando workspace…')}
+              </span>
+            </>
+          )}
         </div>
         <div>
           {busy ? (
@@ -2290,12 +2427,12 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             {formatNumber(totalRequests)}
             {' ' + t('requisições')}
           </span>
-          <span className="statusbar-separator" />
-          <span>{native ? 'Rust + Tauri' : t('Modo navegador')}</span>
-          <button onClick={() => setShortcutsOpen(true)}>
-            <Keyboard size={12} />
-            {' ' + t('Atalhos')}
-          </button>
+          {!native && (
+            <>
+              <span className="statusbar-separator" />
+              <span>{t('Modo navegador')}</span>
+            </>
+          )}
         </div>
       </footer>
 
@@ -2502,7 +2639,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           disabled={importingFiles}
           onChange={(e) => {
             setImportText(e.target.value);
-            setImportError('');
           }}
           placeholder={
             '{\n  "variables": { "base_url": "http://localhost:3000" },\n  "requests": []\n}'
@@ -2521,7 +2657,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
             {t('Importar workspace do Postman')}
           </Button>
         )}
-        {importError && <div className="inline-error">{importError}</div>}
         <div className="import-formats">
           <span>
             <FileJson2 size={15} /> Fedexe JSON <Check size={12} />
@@ -2952,8 +3087,4 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       />
     </div>
   );
-}
-
-function InfoIcon() {
-  return <ShieldCheck size={16} />;
 }

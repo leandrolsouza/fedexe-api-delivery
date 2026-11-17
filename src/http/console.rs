@@ -154,6 +154,14 @@ pub(super) fn secret(value: &str) {
     update(|trace| remember(&mut trace.masks.values, value));
 }
 
+pub(super) fn cookie(value: &header::HeaderValue, set_cookie: bool) {
+    update(|trace| {
+        if let Ok(value) = value.to_str() {
+            remember_cookie(&mut trace.masks.values, value, set_cookie);
+        }
+    });
+}
+
 fn remember(values: &mut Vec<String>, value: &str) {
     if !value.is_empty() && !values.iter().any(|known| known == value) {
         values.push(value.to_owned());
@@ -285,17 +293,22 @@ fn register_headers(headers: &header::HeaderMap, masks: &mut Masks) {
                     }
                 }
                 "cookie" | "set-cookie" => {
-                    for pair in value
-                        .split(';')
-                        .take(if name == "cookie" { usize::MAX } else { 1 })
-                    {
-                        if let Some((_, value)) = pair.split_once('=') {
-                            remember(&mut masks.values, value.trim().trim_matches('"'));
-                        }
-                    }
+                    remember_cookie(&mut masks.values, value, name == "set-cookie")
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+fn remember_cookie(values: &mut Vec<String>, header: &str, set_cookie: bool) {
+    remember(values, header);
+    for pair in header
+        .split(';')
+        .take(if set_cookie { 1 } else { usize::MAX })
+    {
+        if let Some((_, value)) = pair.split_once('=') {
+            remember(values, value.trim().trim_matches('"'));
         }
     }
 }
@@ -522,6 +535,14 @@ pub(super) fn redirect(status: StatusCode, url: &Url, followed: bool) {
             });
         }
     });
+}
+
+pub(super) fn redirect_headers(headers: &header::HeaderMap) {
+    update(|trace| register_headers(headers, &mut trace.masks));
+}
+
+pub(super) fn redirect_error() {
+    update(|trace| trace.entry.failure = Some("redirect"));
 }
 
 pub(super) fn chunk(chunk: &[u8]) {

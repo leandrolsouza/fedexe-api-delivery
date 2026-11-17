@@ -89,7 +89,11 @@ export async function prepareLoadVariables(
     results,
     (message) => redactSecrets(message, environment),
     undefined,
-    { environmentName: environment.name, signal, send: sendScriptRequest },
+    {
+      environmentName: environment.name,
+      signal,
+      send: (request, signal) => sendScriptRequest({ ...request, ignore_cookies: true }, signal),
+    },
   );
   if (failed || skipped || item !== request || results.some((result) => !result.passed)) {
     throw new Error(

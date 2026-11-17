@@ -3,7 +3,7 @@ import { t } from './i18n';
 import { runScripts } from './scripts';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { checkResponse, isJsonPointer, jsonPointer, responseJson } from './response-tests';
-import { recordRequestTrace, type ConsoleTrace } from './request-console';
+import { consoleAttemptFactory, postResponseTrace, type ConsoleTrace } from './request-console';
 import {
   resolveHttpRequest,
   addConsoleMasks,
@@ -115,16 +115,13 @@ export async function pickBodyFile() {
   return invoke<string | null>('pick_body_file', { title: t('Selecionar arquivo') });
 }
 
-export async function send(request: HttpRequest, requestId?: string, hideResponseDetails = false) {
+export async function send(request: HttpRequest, record?: (trace: ConsoleTrace) => void) {
   controller = new AbortController();
   try {
     if (native)
       return await invoke<HttpResponse>('send', {
         request,
-        hideResponseDetails,
-        console: new Channel<ConsoleTrace>((trace) =>
-          recordRequestTrace('editor', trace, requestId),
-        ),
+        console: new Channel<ConsoleTrace>(record),
       });
     checkBrowserRequest(request);
     return await browserSend(request);
@@ -135,7 +132,15 @@ export async function send(request: HttpRequest, requestId?: string, hideRespons
   }
 }
 
-export async function sendScriptRequest(request: HttpRequest, signal?: AbortSignal) {
+export async function clearSessionCookies() {
+  await invoke('clear_session_cookies');
+}
+
+export async function sendScriptRequest(
+  request: HttpRequest,
+  signal?: AbortSignal,
+  useRunnerCookies = false,
+) {
   signal?.throwIfAborted();
   if (!native) {
     checkBrowserRequest(request);
@@ -144,6 +149,7 @@ export async function sendScriptRequest(request: HttpRequest, signal?: AbortSign
   const console = new Channel<ConsoleTrace>();
   const response = await invoke<HttpResponse>('send', {
     request,
+    useRunnerCookies,
     hideResponseDetails: true,
     console,
   });
@@ -185,7 +191,8 @@ export async function runCollection(
 ): Promise<RunResult> {
   const { iterations = 1, delay_ms: delay = 0 } = collection;
   const requestCount = collection.requests.length;
-  if (native && !scripts) {
+  const startAttempt = native ? consoleAttemptFactory('runner') : undefined;
+  if (startAttempt && !scripts) {
     const localizeRow = (row: RunRow) => ({
       ...row,
       failures: row.failures.map(localizeNativeMessage),
@@ -197,9 +204,10 @@ export async function runCollection(
       const result = await invoke<RunResult>('run', {
         collection,
         progress,
-        console: new Channel<ConsoleTrace>((trace) =>
-          recordRequestTrace('runner', trace, requestIds[((trace.step ?? 0) - 1) % requestCount]),
-        ),
+        console: new Channel<ConsoleTrace>((trace) => {
+          const requestIndex = ((trace.step ?? 1) - 1) % requestCount;
+          startAttempt(requestIds[requestIndex], trace.step).trace(trace);
+        }),
       });
       return { ...result, results: result.results.map(localizeRow) };
     } finally {
@@ -221,12 +229,17 @@ export async function runCollection(
   const initialVariables = (): Record<string, string> =>
     Object.assign(Object.create(null), collection.variables);
   let variables = initialVariables();
+  const sendRunnerScriptRequest = (request: HttpRequest, signal?: AbortSignal) =>
+    sendScriptRequest(request, signal, true);
   try {
     for (let index = 0; index < requestCount * iterations; index++) {
       const requestIndex = index % requestCount;
       const step = collection.requests[requestIndex];
       if (index > 0 && delay > 0 && !controller.signal.aborted) {
         await waitBetweenRequests(delay, controller.signal);
+      }
+      if (native && requestIndex === 0 && !controller.signal.aborted) {
+        await invoke('reset_runner_cookies');
       }
       if (controller.signal.aborted) {
         outcome = 'cancelled';
@@ -252,6 +265,8 @@ export async function runCollection(
       };
       let errorReason: RunFailureReason = 'preparation';
       const tick = performance.now();
+      const attempt = startAttempt?.(requestIds[requestIndex], index + 1);
+      let deferredTrace: ReturnType<typeof postResponseTrace> | undefined;
       try {
         let template = step.request;
         let item = scripts?.requests[requestIndex];
@@ -273,7 +288,8 @@ export async function runCollection(
             {
               environmentName: scripts.environment.name,
               signal: controller.signal,
-              send: sendScriptRequest,
+              send: sendRunnerScriptRequest,
+              record: attempt?.script,
             },
           );
           controller.signal.throwIfAborted();
@@ -284,6 +300,7 @@ export async function runCollection(
           }
           if (skipped) {
             row.skipped = true;
+            attempt?.skip();
             throw skippedRequest;
           }
           template = compileRequest(
@@ -318,17 +335,13 @@ export async function runCollection(
           scripts?.collection.scripts?.after?.trim() || item?.scripts?.after?.trim(),
         );
         const captureBody = needsJson || hasPostScript;
+        if (hasPostScript && attempt)
+          deferredTrace = postResponseTrace(attempt.trace, attempt.script);
         const response = native
           ? await invoke<HttpResponse>('send', {
               request,
               runnerStep: { index, variables, capture_body: captureBody, extract: step.extract },
-              hideResponseDetails: hasPostScript,
-              console: new Channel<ConsoleTrace>((trace) => {
-                if (trace.response && hasPostScript) {
-                  trace.response.hiddenByPostResponseScript = true;
-                }
-                recordRequestTrace('runner', trace, requestIds[requestIndex]);
-              }),
+              console: new Channel<ConsoleTrace>(deferredTrace?.trace ?? attempt?.trace),
             })
           : await browserSend(request, captureBody ? 16 * 1024 * 1024 : null);
         row.status = response.status;
@@ -355,7 +368,7 @@ export async function runCollection(
           } else addFailure('extraction', t('Extração exige um valor escalar em {0}.', path));
         });
         if (scripts && item && row.scriptResults) {
-          await runScripts(
+          const after = await runScripts(
             'after',
             scripts.collection,
             item,
@@ -367,18 +380,28 @@ export async function runCollection(
             {
               environmentName: scripts.environment.name,
               signal: controller.signal,
-              send: sendScriptRequest,
+              send: sendRunnerScriptRequest,
+              record: deferredTrace?.script ?? attempt?.script,
+              protectWrite: deferredTrace?.protect,
             },
           );
           controller.signal.throwIfAborted();
+          deferredTrace?.finish(!after.failed);
         }
         row.validation_ms = Math.round(performance.now() - validation);
       } catch (error) {
+        deferredTrace?.finish(false);
+        row.http_ms = Math.round(performance.now() - tick);
         if (controller.signal.aborted) {
+          attempt?.failure(row.http_ms, 'cancelled');
           outcome = 'cancelled';
           break;
         }
-        row.http_ms = Math.round(performance.now() - tick);
+        if (error !== skippedRequest)
+          attempt?.failure(
+            row.http_ms,
+            errorReason === 'transport' ? 'transmission' : 'preparation',
+          );
         if (error !== skippedRequest && errorReason !== 'script')
           addFailure(errorReason, redact(normalizeError(error).message));
       }
@@ -396,6 +419,7 @@ export async function runCollection(
     return { results, outcome, duration_ms: Math.round(performance.now() - start) };
   } finally {
     controller = undefined;
+    if (native) await invoke('reset_runner_cookies');
   }
 }
 

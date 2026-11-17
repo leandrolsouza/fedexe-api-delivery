@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import {
   prepareSecrets,
   revisionAddress,
@@ -7,6 +6,7 @@ import {
   type StoredSecrets,
 } from './credentials';
 import { STORAGE_KEY, type CredentialAddress, type Workspace } from './models';
+import { originalWorkspaceId, writeLocalWorkspace } from './local-workspaces';
 import { uid } from './utils';
 
 type SaveResult = { cleanupError?: unknown };
@@ -14,6 +14,7 @@ type Options = {
   native: boolean;
   storedSecrets: StoredSecrets;
   retiredSecrets: CredentialAddress[];
+  workspaceId?: string;
   writeWorkspace?: (contents: string) => Promise<void>;
 };
 
@@ -21,14 +22,11 @@ export function createWorkspaceAutosave({
   native,
   storedSecrets,
   retiredSecrets,
+  workspaceId = originalWorkspaceId,
   writeWorkspace,
 }: Options) {
   const persist =
-    writeWorkspace ??
-    (async (contents: string) => {
-      if (native) await invoke('save_workspace', { contents });
-      else localStorage.setItem(STORAGE_KEY, contents);
-    });
+    writeWorkspace ?? ((contents: string) => writeLocalWorkspace(workspaceId, contents, native));
   let committed = storedSecrets;
   const staged: StoredSecrets = new Map();
   let retired = new Map(retiredSecrets.map((address) => [secretKey(address), address]));
@@ -84,7 +82,7 @@ export function createWorkspaceAutosave({
         cleanupError ??= error;
       }
     }
-    if (native && !writeWorkspace) {
+    if (native && workspaceId === originalWorkspaceId && !writeWorkspace) {
       try {
         localStorage.removeItem(STORAGE_KEY);
       } catch (error) {

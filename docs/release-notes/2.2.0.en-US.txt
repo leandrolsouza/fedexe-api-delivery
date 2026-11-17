@@ -1,0 +1,9 @@
+Create and switch between local workspaces with separate collections and request console history.
+
+Configure and test a local OpenAI-compatible AI server from Settings.
+
+The request console has a refreshed layout with expandable cards, clearer request metadata, and theme-aware status and warning badges. Response details mask values extracted by post-response scripts.
+
+Improve cookie session handling in the editor and collection runner, including isolation between runner iterations and a control to clear session cookies.
+
+Additional interface improvements include request options, workspace navigation, backups, imports, and update notifications.

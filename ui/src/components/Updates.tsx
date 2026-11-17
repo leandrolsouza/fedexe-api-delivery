@@ -17,25 +17,27 @@ export function useUpdates() {
   const [result, setResult] = useState<CheckResult>();
   const [checking, setChecking] = useState(false);
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState('');
-  const [installError, setInstallError] = useState('');
   const [progress, setProgress] = useState('');
   const started = useRef(false);
   const operation = useRef(false);
 
-  const check = useCallback(async () => {
+  const check = useCallback(async (manual = false) => {
     if (operation.current) return;
     operation.current = true;
     setChecking(true);
     setResult(undefined);
-    setError('');
-    setInstallError('');
     try {
       const next = await invoke<CheckResult>('check_update');
       setResult(next);
       setOpen(next.status === 'available');
+      if (manual && next.status === 'current') {
+        toast.success(t('Você está usando a versão estável mais recente.'));
+      }
+      if (manual && next.status === 'unconfigured') {
+        toast.info(t('O atualizador não está configurado neste instalador.'));
+      }
     } catch (failure) {
-      setError(normalizeError(failure).message);
+      toast.error(normalizeError(failure).message);
     } finally {
       operation.current = false;
       setChecking(false);
@@ -51,13 +53,12 @@ export function useUpdates() {
   async function install(blocked: boolean) {
     if (blocked || operation.current || result?.status !== 'available') return;
     operation.current = true;
-    setInstallError('');
     setProgress(t('Baixando o instalador…'));
     const channel = new Channel<string>((message) => setProgress(localizeNativeMessage(message)));
     try {
       await invoke('install_update', { version: result.version, progress: channel });
     } catch (failure) {
-      setInstallError(normalizeError(failure).message);
+      toast.error(normalizeError(failure).message);
     } finally {
       operation.current = false;
       setProgress('');
@@ -67,20 +68,11 @@ export function useUpdates() {
   return {
     version: result?.status === 'available' ? result.version : undefined,
     notes: result?.status === 'available' ? result.localizedNotes[locale]?.trim() : undefined,
-    status: checking
-      ? t('Verificando atualizações…')
-      : error ||
-        (result?.status === 'current'
-          ? t('Você está usando a versão estável mais recente.')
-          : result?.status === 'unconfigured'
-            ? t('O atualizador não está configurado neste instalador.')
-            : ''),
     check,
     checking,
     open,
     setOpen,
     install,
-    installError,
     progress,
   };
 }
@@ -98,11 +90,14 @@ export function UpdateSettings({ updates }: { updates: Updates }) {
           <p>{t('Versões estáveis do Fedexe API para Windows.')}</p>
         </div>
       </div>
-      <p role="status">
-        {updates.version ? t('Versão {0} disponível.', updates.version) : updates.status}
-      </p>
+      {updates.checking && <p role="status">{t('Verificando atualizações…')}</p>}
+      {updates.version && <p>{t('Versão {0} disponível.', updates.version)}</p>}
       <div className="settings-backup-actions">
-        <Button variant="outline" disabled={updates.checking} onClick={() => void updates.check()}>
+        <Button
+          variant="outline"
+          disabled={updates.checking}
+          onClick={() => void updates.check(true)}
+        >
           {t('Verificar atualizações')}
         </Button>
         {updates.version && (
@@ -143,7 +138,6 @@ export function UpdateDialog({ updates, blocked }: { updates: Updates; blocked: 
       </section>
       {blocked && <p role="status">{blocked}</p>}
       {updates.progress && <p role="status">{updates.progress}</p>}
-      {updates.installError && <p role="alert">{updates.installError}</p>}
       <div className="dialog-footer">
         <Button
           variant="outline"

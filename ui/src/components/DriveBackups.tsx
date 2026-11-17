@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
 import { formatNumber, t, useLocale } from '../lib/i18n';
@@ -30,10 +31,9 @@ export function DriveBackups({
 }) {
   const locale = useLocale();
   const [connected, setConnected] = useState(false);
-  const [available, setAvailable] = useState(false);
-  const [files, setFiles] = useState<Backup[]>([]);
+  const [available, setAvailable] = useState<boolean>();
+  const [files, setFiles] = useState<Backup[]>();
   const [nextPage, setNextPage] = useState<string | null>(null);
-  const [error, setError] = useState('');
   const [pending, setPending] = useState(true);
   const [preview, setPreview] = useState<Workspace>();
   const operation = useRef(true);
@@ -41,7 +41,7 @@ export function DriveBackups({
 
   async function list(page?: string) {
     const result = await invoke<BackupPage>('drive_list', { page });
-    setFiles((current) => (page ? [...current, ...result.files] : result.files));
+    setFiles((current) => (page && current ? [...current, ...result.files] : result.files));
     setNextPage(result.nextPageToken);
   }
 
@@ -54,7 +54,7 @@ export function DriveBackups({
         setConnected(status.connected);
         if (status.connected) await list();
       })
-      .catch((failure) => setError(normalizeError(failure).message))
+      .catch((failure) => toast.error(normalizeError(failure).message))
       .finally(() => {
         operation.current = false;
         setPending(false);
@@ -65,11 +65,10 @@ export function DriveBackups({
     if (operation.current) return;
     operation.current = true;
     setPending(true);
-    setError('');
     try {
       await work();
     } catch (failure) {
-      setError(normalizeError(failure).message);
+      toast.error(normalizeError(failure).message);
       if (outcome) onFailure(outcome);
     } finally {
       operation.current = false;
@@ -80,7 +79,7 @@ export function DriveBackups({
   async function connect() {
     await invoke('drive_connect');
     setConnected(true);
-    setFiles([]);
+    setFiles(undefined);
     setNextPage(null);
     await list();
   }
@@ -100,7 +99,7 @@ export function DriveBackups({
               <Button disabled={pending} onClick={() => void run(connect)}>
                 {t('Conectar com Google')}
               </Button>
-            ) : !pending && !error ? (
+            ) : !pending && available === false ? (
               <p>{t('O acesso ao Google Drive não foi configurado nesta versão.')}</p>
             ) : null}
           </div>
@@ -127,7 +126,7 @@ export function DriveBackups({
                     await invoke('drive_disconnect');
                     setConnected(false);
                     setAvailable((await invoke<DriveStatus>('drive_status')).available);
-                    setFiles([]);
+                    setFiles(undefined);
                     setNextPage(null);
                   })
                 }
@@ -140,7 +139,7 @@ export function DriveBackups({
                 {t('Conclua a execução e salve ou descarte os rascunhos antes de usar o backup.')}
               </p>
             )}
-            {files.length ? (
+            {files?.length ? (
               <ul className="drive-list">
                 {files.map((file) => (
                   <li key={file.id}>
@@ -165,7 +164,7 @@ export function DriveBackups({
                 ))}
               </ul>
             ) : (
-              !pending && !error && <p>{t('Nenhum backup encontrado.')}</p>
+              !pending && files && <p>{t('Nenhum backup encontrado.')}</p>
             )}
             {nextPage && (
               <Button
@@ -179,11 +178,6 @@ export function DriveBackups({
           </div>
         )}
         {pending && <p role="status">{t('Operação do Google Drive em andamento…')}</p>}
-        {error && (
-          <p className="inline-error" role="alert">
-            {error}
-          </p>
-        )}
       </section>
       <Dialog
         open={!!preview}
@@ -259,7 +253,7 @@ export function DriveBackups({
                     try {
                       await list();
                     } catch (failure) {
-                      setError(normalizeError(failure).message);
+                      toast.error(normalizeError(failure).message);
                     }
                   }, 'backup');
                 }}

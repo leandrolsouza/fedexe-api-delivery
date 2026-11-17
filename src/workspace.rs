@@ -6,16 +6,82 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-fn path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|dir| dir.join("workspace.json"))
-        .map_err(|error| error.to_string())
+fn valid_id(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+            }
+        })
+}
+
+fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|error| error.to_string())
+}
+
+fn path(dir: &Path, workspace_id: Option<&str>) -> Result<PathBuf, String> {
+    match workspace_id {
+        None => Ok(dir.join("workspace.json")),
+        Some(id) if valid_id(id) => Ok(dir.join("workspaces").join(format!("{id}.json"))),
+        Some(_) => Err("Identificador de workspace inválido.".into()),
+    }
 }
 
 #[tauri::command]
-pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
-    match fs::read_to_string(path(&app)?) {
+pub fn list_workspaces(app: AppHandle) -> Result<Vec<WorkspaceSummary>, String> {
+    discover_workspaces(&data_dir(&app)?).map_err(|error| error.to_string())
+}
+
+fn discover_workspaces(dir: &Path) -> io::Result<Vec<WorkspaceSummary>> {
+    let entries = match fs::read_dir(dir.join("workspaces")) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut workspaces = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_suffix(".json"))
+        {
+            if valid_id(id) {
+                let name = fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+                    .and_then(|data| {
+                        data["settings"]["workspaceName"]
+                            .as_str()
+                            .map(str::to_owned)
+                    });
+                workspaces.push(WorkspaceSummary {
+                    id: id.to_owned(),
+                    name,
+                });
+            }
+        }
+    }
+    Ok(workspaces)
+}
+
+#[derive(serde::Serialize)]
+pub struct WorkspaceSummary {
+    id: String,
+    name: Option<String>,
+}
+
+#[tauri::command]
+pub fn load_workspace(
+    app: AppHandle,
+    workspace_id: Option<String>,
+) -> Result<Option<String>, String> {
+    match fs::read_to_string(path(&data_dir(&app)?, workspace_id.as_deref())?) {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.to_string()),
@@ -23,8 +89,12 @@ pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub async fn save_workspace(app: AppHandle, contents: String) -> Result<(), String> {
-    let path = path(&app)?;
+pub async fn save_workspace(
+    app: AppHandle,
+    contents: String,
+    workspace_id: Option<String>,
+) -> Result<(), String> {
+    let path = path(&data_dir(&app)?, workspace_id.as_deref())?;
     tauri::async_runtime::spawn_blocking(move || write_atomic(&path, &contents))
         .await
         .map_err(|error| error.to_string())?
@@ -57,6 +127,31 @@ fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_additional_workspaces_without_replacing_the_original() {
+        let dir = std::env::temp_dir().join(format!("fedexe-workspaces-{}", std::process::id()));
+        let original = path(&dir, None).unwrap();
+        let id = "a2123456-1234-4321-a123-b01234567890";
+        let additional = path(&dir, Some(id)).unwrap();
+        let legacy = r#"{"version":1,"collections":[{"name":"Legacy"}]}"#;
+        write_atomic(&original, legacy).unwrap();
+        assert!(discover_workspaces(&dir).unwrap().is_empty());
+        write_atomic(
+            &additional,
+            r#"{"settings":{"workspaceName":"Other project"}}"#,
+        )
+        .unwrap();
+        write_atomic(&dir.join("workspaces").join("backup.json"), "{}").unwrap();
+
+        assert!(path(&dir, Some("../workspace")).is_err());
+        assert_eq!(fs::read_to_string(original).unwrap(), legacy);
+        let workspaces = discover_workspaces(&dir).unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].id, id);
+        assert_eq!(workspaces[0].name.as_deref(), Some("Other project"));
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn creates_and_replaces_workspace() {

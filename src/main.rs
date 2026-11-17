@@ -4,6 +4,7 @@
 mod credentials;
 #[cfg(windows)]
 mod drive;
+mod local_ai;
 #[cfg(windows)]
 mod postman;
 #[cfg(windows)]
@@ -24,6 +25,7 @@ use tokio::sync::oneshot;
 
 struct App {
     client: http::Clients,
+    runner_cookies: Mutex<Arc<http::CookieSession>>,
     active: Mutex<Option<oneshot::Sender<()>>>,
     bodies: Mutex<HashMap<String, Arc<Mutex<File>>>>,
     next_body: AtomicU64,
@@ -63,6 +65,7 @@ async fn send(
     app: State<'_, App>,
     request: Request,
     runner_step: Option<RunnerStep>,
+    use_runner_cookies: Option<bool>,
     hide_response_details: Option<bool>,
     console: tauri::ipc::Channel<http::console::Entry>,
 ) -> Result<Response, String> {
@@ -78,10 +81,11 @@ async fn send(
                         biased;
                         _ = receiver => Err("Execução cancelada.".into()),
                         result = async {
+                            let runner_cookies = app.runner_cookies.lock().unwrap().clone();
                             match runner_step {
                                 Some(step) => {
                                     let response = http::send_runner_step(
-                                        &app.client, request, step.variables, step.capture_body,
+                                        &app.client, &runner_cookies, request, step.variables, step.capture_body,
                                     ).await;
                                     if !step.extract.is_empty() {
                                         match &response {
@@ -92,6 +96,9 @@ async fn send(
                                         }
                                     }
                                     response
+                                }
+                                None if use_runner_cookies.unwrap_or_default() => {
+                                    http::send_in_session(&app.client, &runner_cookies, request).await
                                 }
                                 None => http::send(&app.client, request).await,
                             }
@@ -116,6 +123,16 @@ async fn send(
         response.body_id = Some(id);
     }
     Ok(response)
+}
+
+#[tauri::command]
+fn clear_session_cookies(app: State<'_, App>) {
+    app.client.clear_session_cookies();
+}
+
+#[tauri::command]
+fn reset_runner_cookies(app: State<'_, App>) {
+    *app.runner_cookies.lock().unwrap() = Arc::default();
 }
 
 #[tauri::command]
@@ -359,12 +376,15 @@ fn main() {
         })
         .manage(App {
             client,
+            runner_cookies: Mutex::default(),
             active: Mutex::new(None),
             bodies: Mutex::new(HashMap::new()),
             next_body: AtomicU64::new(0),
         })
         .invoke_handler(tauri::generate_handler![
             send,
+            clear_session_cookies,
+            reset_runner_cookies,
             run,
             run_load,
             cancel,
@@ -374,8 +394,11 @@ fn main() {
             #[cfg(windows)]
             pick_body_file,
             check_backup_attachments,
+            local_ai::ai_list_models,
+            local_ai::ai_test_model,
             workspace::load_workspace,
             workspace::save_workspace,
+            workspace::list_workspaces,
             #[cfg(windows)]
             credentials::read_secret,
             #[cfg(windows)]

@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowLeft, Download, Play, Square } from 'lucide-react';
 import { prepareCollection } from '../lib/collection-runner';
@@ -101,7 +102,6 @@ export function LoadRunner({
   const [resultTab, setResultTab] = useState<'summary' | 'timeline'>('summary');
   const [runNumber, setRunNumber] = useState(0);
   const [report, setReport] = useState<LoadReport>();
-  const [error, setError] = useState('');
   const [runContext, setRunContext] = useState('');
   const [requestNames, setRequestNames] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
@@ -186,7 +186,6 @@ export function LoadRunner({
     setTimeline([]);
     setRunNumber((number) => number + 1);
     setReport(undefined);
-    setError('');
     setRunContext(context);
     setRequestNames(requests.map(({ name }) => name));
     navigateToResults(true);
@@ -215,11 +214,8 @@ export function LoadRunner({
       setTimeline(result.timeline);
       setReport(result);
     } catch (cause) {
-      setError(
-        setupController.current?.signal.aborted
-          ? t('Execução cancelada.')
-          : redactSecrets(normalizeError(cause).message, environment),
-      );
+      if (setupController.current?.signal.aborted) toast.info(t('Execução cancelada.'));
+      else toast.error(redactSecrets(normalizeError(cause).message, environment));
     } finally {
       setupController.current = null;
       setPreparing(false);
@@ -254,7 +250,7 @@ export function LoadRunner({
             <ArrowLeft size={15} /> {t('Voltar à configuração')}
           </Button>
         ) : (
-          (running || report || error) && (
+          (running || report) && (
             <Button type="button" variant="secondary" onClick={() => navigateToResults(true)}>
               {t('Ver resultados')}
             </Button>
@@ -393,7 +389,6 @@ export function LoadRunner({
         </div>
       </form>
       <div className="runner-fields" hidden={!showResults}>
-        {error && <p role="alert">{error}</p>}
         {runContext && <p className="field-hint">{runContext}</p>}
         {running && (
           <p role="status">

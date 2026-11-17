@@ -1,7 +1,11 @@
-use reqwest::{Client, Method, Url};
+use reqwest::{Client, Method, Url, header::LOCATION};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub mod console;
@@ -13,6 +17,22 @@ pub mod oauth;
 const PREVIEW_LIMIT: usize = 256 * 1024;
 const VALIDATION_LIMIT: usize = 16 * 1024 * 1024;
 const TIMEOUT_MESSAGE: &str = "A requisição excedeu o timeout configurado.";
+const DEFAULT_MAX_REDIRECTS: u32 = 10;
+
+#[derive(Debug)]
+struct RedirectLimitExceeded(u32);
+
+impl std::fmt::Display for RedirectLimitExceeded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Limite de {} redirecionamentos excedido.",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for RedirectLimitExceeded {}
 
 #[derive(Clone, Deserialize)]
 pub struct Request {
@@ -35,6 +55,12 @@ pub struct Request {
     timeout_ms: Option<u64>,
     #[serde(default)]
     redirect_policy: RedirectPolicy,
+    max_redirects: Option<u32>,
+    #[serde(default)]
+    preserve_redirect_method: bool,
+    verify_tls: Option<bool>,
+    #[serde(default)]
+    ignore_cookies: bool,
     #[serde(default)]
     console_masks: console::Masks,
 }
@@ -51,18 +77,65 @@ pub struct Clients {
     direct: Client,
     oauth: oauth::OAuth,
     same_origin: Client,
+    editor_cookies: Mutex<Arc<CookieSession>>,
+    #[cfg(test)]
+    no_proxy: bool,
+}
+
+#[derive(Default)]
+pub struct CookieSession {
+    jar: Arc<SessionJar>,
+    clients: Mutex<[Option<Client>; 2]>,
+}
+
+#[derive(Default)]
+// Keep cookies from unrelated services on the same host (such as localhost ports) apart.
+struct SessionJar(Mutex<HashMap<url::Origin, reqwest::cookie::Jar>>);
+
+impl reqwest::cookie::CookieStore for SessionJar {
+    fn set_cookies(
+        &self,
+        headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>,
+        url: &Url,
+    ) {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(url.origin())
+            .or_default()
+            .set_cookies(
+                &mut headers.inspect(|value| console::cookie(value, true)),
+                url,
+            );
+    }
+
+    fn cookies(&self, url: &Url) -> Option<reqwest::header::HeaderValue> {
+        self.0
+            .lock()
+            .unwrap()
+            .get(&url.origin())?
+            .cookies(url)
+            .map(|mut value| {
+                console::cookie(&value, false);
+                value.set_sensitive(true);
+                value
+            })
+    }
 }
 
 impl Clients {
     pub fn new() -> Result<Self, reqwest::Error> {
         Ok(Self {
             oauth: oauth::OAuth::default(),
+            editor_cookies: Mutex::default(),
+            #[cfg(test)]
+            no_proxy: false,
             direct: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             same_origin: Client::builder()
                 .referer(false)
-                .redirect(same_origin_redirects())
+                .redirect(same_origin_redirects(DEFAULT_MAX_REDIRECTS))
                 .build()?,
         })
     }
@@ -86,33 +159,89 @@ impl Clients {
         self.oauth.disconnect(provider).await
     }
 
-    fn for_request(&self, request: &Request) -> &Client {
-        match request.redirect_policy {
-            RedirectPolicy::None => &self.direct,
-            RedirectPolicy::SameOrigin => &self.same_origin,
+    pub fn clear_session_cookies(&self) {
+        *self.editor_cookies.lock().unwrap() = Arc::default();
+    }
+
+    fn for_request(&self, request: &Request, session: &CookieSession) -> Result<Client, String> {
+        let verify_tls = request.verify_tls.unwrap_or(true);
+        let max_redirects = request.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS);
+        if max_redirects == 0 {
+            return Err("Informe um limite positivo de redirecionamentos.".into());
         }
+        let default_redirects = matches!(request.redirect_policy, RedirectPolicy::None)
+            || max_redirects == DEFAULT_MAX_REDIRECTS;
+        if verify_tls && default_redirects {
+            let (index, without_cookies) = match request.redirect_policy {
+                RedirectPolicy::None => (0, &self.direct),
+                RedirectPolicy::SameOrigin => (1, &self.same_origin),
+            };
+            if request.ignore_cookies {
+                return Ok(without_cookies.clone());
+            }
+            let mut clients = session.clients.lock().unwrap();
+            if let Some(client) = &clients[index] {
+                return Ok(client.clone());
+            }
+            let client = self.build_request_client(request, max_redirects, Some(&session.jar))?;
+            clients[index] = Some(client.clone());
+            return Ok(client);
+        }
+        self.build_request_client(
+            request,
+            max_redirects,
+            (!request.ignore_cookies).then_some(&session.jar),
+        )
+    }
+
+    fn build_request_client(
+        &self,
+        request: &Request,
+        max_redirects: u32,
+        jar: Option<&Arc<SessionJar>>,
+    ) -> Result<Client, String> {
+        let policy = match request.redirect_policy {
+            RedirectPolicy::None => reqwest::redirect::Policy::none(),
+            RedirectPolicy::SameOrigin => same_origin_redirects(max_redirects),
+        };
+        let mut builder = Client::builder()
+            .referer(false)
+            .redirect(policy)
+            .tls_danger_accept_invalid_certs(request.verify_tls == Some(false));
+        if let Some(jar) = jar {
+            builder = builder.cookie_provider(jar.clone());
+        }
+        #[cfg(test)]
+        if self.no_proxy {
+            builder = builder.no_proxy();
+        }
+        builder.build().map_err(http_error)
     }
 }
 
-fn same_origin_redirects() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
+fn same_origin_redirects(max_redirects: u32) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
         let target = attempt.url();
-        if !target.username().is_empty()
-            || target.password().is_some()
-            || !attempt
-                .previous()
-                .first()
-                .is_some_and(|original| original.origin() == target.origin())
+        if !attempt
+            .previous()
+            .first()
+            .is_some_and(|original| can_follow_redirect(original, target))
         {
             return attempt.stop();
         }
-        if attempt.previous().len() > 10 {
+        if attempt.previous().len() > max_redirects as usize {
             console::redirect(attempt.status(), target, false);
-            return attempt.error("Limite de 10 redirecionamentos excedido.");
+            return attempt.error(RedirectLimitExceeded(max_redirects));
         }
         console::redirect(attempt.status(), target, true);
         attempt.follow()
     })
+}
+
+fn can_follow_redirect(original: &Url, target: &Url) -> bool {
+    target.username().is_empty()
+        && target.password().is_none()
+        && original.origin() == target.origin()
 }
 
 #[derive(Clone, Deserialize)]
@@ -333,6 +462,9 @@ fn http_error(error: reqwest::Error) -> String {
     let mut message = error.to_string();
     let mut cause = error.source();
     while let Some(error) = cause {
+        if let Some(limit) = error.downcast_ref::<RedirectLimitExceeded>() {
+            return limit.to_string();
+        }
         message.push_str(": ");
         message.push_str(&error.to_string());
         cause = error.source();
@@ -365,19 +497,28 @@ fn expand_value(input: &str, variables: &BTreeMap<String, String>) -> Result<Str
 
 async fn perform(
     clients: &Clients,
+    session: &CookieSession,
     request: Request,
     variables: &BTreeMap<String, String>,
 ) -> Result<reqwest::Response, String> {
-    let client = clients.for_request(&request);
-    let request = prepare_request(clients, request, variables).await?;
-    execute_request(client, request).await
+    prepare_request(clients, session, request, variables)
+        .await?
+        .execute()
+        .await
+}
+
+struct PreparedRequest {
+    client: Client,
+    request: reqwest::Request,
+    preserve_redirects_limit: Option<u32>,
 }
 
 async fn prepare_request(
     clients: &Clients,
+    session: &CookieSession,
     mut request: Request,
     variables: &BTreeMap<String, String>,
-) -> Result<reqwest::Request, String> {
+) -> Result<PreparedRequest, String> {
     if console::active() {
         for template in std::mem::take(&mut request.console_masks.templates) {
             if let Ok(value) = expand_value(&template, variables) {
@@ -386,7 +527,15 @@ async fn prepare_request(
         }
         console::masks(std::mem::take(&mut request.console_masks));
     }
-    let client = clients.for_request(&request);
+    let preserve_redirects_limit = if request.preserve_redirect_method
+        && matches!(request.redirect_policy, RedirectPolicy::SameOrigin)
+    {
+        request.redirect_policy = RedirectPolicy::None;
+        Some(request.max_redirects.unwrap_or(DEFAULT_MAX_REDIRECTS))
+    } else {
+        None
+    };
+    let client = clients.for_request(&request, session)?;
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut url = Url::parse(&resolve_path(&request.url, request.path_params, variables)?)
         .map_err(|e| e.to_string())?;
@@ -507,20 +656,68 @@ async fn prepare_request(
             .headers_mut()
             .insert(reqwest::header::AUTHORIZATION, token);
     }
-    Ok(prepared)
+    Ok(PreparedRequest {
+        client,
+        request: prepared,
+        preserve_redirects_limit,
+    })
 }
 
-async fn execute_request(
-    client: &Client,
-    request: reqwest::Request,
-) -> Result<reqwest::Response, String> {
-    console::request(&request);
-    let response = client.execute(request).await.map_err(|error| {
-        console::transport_error(&error);
-        http_error(error)
-    })?;
-    console::response(&response);
-    Ok(response)
+impl PreparedRequest {
+    async fn execute(self) -> Result<reqwest::Response, String> {
+        let Self {
+            client,
+            mut request,
+            preserve_redirects_limit,
+        } = self;
+        console::request(&request);
+        let deadline = request
+            .timeout()
+            .map(|timeout| tokio::time::Instant::now() + *timeout);
+        let mut followed = 0;
+        loop {
+            let replay = preserve_redirects_limit.and_then(|_| request.try_clone());
+            let response = client.execute(request).await.map_err(|error| {
+                console::transport_error(&error);
+                http_error(error)
+            })?;
+            let (Some(limit), Some(mut next), Some(target)) =
+                (preserve_redirects_limit, replay, redirect_target(&response))
+            else {
+                console::response(&response);
+                return Ok(response);
+            };
+            if !can_follow_redirect(response.url(), &target) {
+                console::response(&response);
+                return Ok(response);
+            }
+            console::redirect_headers(response.headers());
+            if followed == limit {
+                console::redirect(response.status(), &target, false);
+                console::redirect_error();
+                return Err(RedirectLimitExceeded(limit).to_string());
+            }
+            if let Some(deadline) = deadline {
+                let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now())
+                else {
+                    return Err(TIMEOUT_MESSAGE.into());
+                };
+                *next.timeout_mut() = Some(remaining);
+            }
+            console::redirect(response.status(), &target, true);
+            *next.url_mut() = target;
+            request = next;
+            followed += 1;
+        }
+    }
+}
+
+fn redirect_target(response: &reqwest::Response) -> Option<Url> {
+    if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = response.headers().get(LOCATION)?.to_str().ok()?;
+    response.url().join(location).ok()
 }
 
 fn part_name(name: &str, variables: &BTreeMap<String, String>) -> Result<String, String> {
@@ -607,8 +804,17 @@ async fn read_limited(
 }
 
 pub async fn send(clients: &Clients, request: Request) -> Result<Response, String> {
+    let session = clients.editor_cookies.lock().unwrap().clone();
+    send_in_session(clients, &session, request).await
+}
+
+pub async fn send_in_session(
+    clients: &Clients,
+    session: &CookieSession,
+    request: Request,
+) -> Result<Response, String> {
     let start = Instant::now();
-    let mut response = perform(clients, request, &BTreeMap::new()).await?;
+    let mut response = perform(clients, session, request, &BTreeMap::new()).await?;
     let mut file = tokio::fs::File::from_std(tempfile::tempfile().map_err(|e| e.to_string())?);
     let mut preview = Vec::new();
     let mut size_bytes = 0;
@@ -643,12 +849,13 @@ pub async fn send(clients: &Clients, request: Request) -> Result<Response, Strin
 
 pub async fn send_runner_step(
     clients: &Clients,
+    session: &CookieSession,
     request: Request,
     variables: BTreeMap<String, String>,
     capture_body: bool,
 ) -> Result<Response, String> {
     let start = Instant::now();
-    let mut response = perform(clients, request, &variables).await?;
+    let mut response = perform(clients, session, request, &variables).await?;
     let (preview, truncated) = if capture_body {
         read_limited(&mut response, VALIDATION_LIMIT).await?
     } else {
@@ -713,6 +920,7 @@ pub fn save_body(source: &mut std::fs::File, path: &std::path::Path) -> std::io:
 
 async fn run_step(
     clients: &Clients,
+    session: &CookieSession,
     step: Step,
     variables: &mut BTreeMap<String, String>,
     row: &mut ResultRow,
@@ -726,11 +934,11 @@ async fn run_step(
                 .unwrap_or_else(|| "Requisição ausente.".into()),
         )
     })?;
-    let client = clients.for_request(&request);
-    let request = prepare_request(clients, request, variables)
+    let request = prepare_request(clients, session, request, variables)
         .await
         .map_err(|error| (Preparation, error))?;
-    let mut response = execute_request(client, request)
+    let mut response = request
+        .execute()
         .await
         .map_err(|error| (Transport, error))?;
     let status = response.status().as_u16();
@@ -864,6 +1072,7 @@ pub async fn run(
     let mut results = Vec::with_capacity(request_count);
     let mut outcome = RunOutcome::Completed;
     let mut variables = collection.variables.clone();
+    let mut session = CookieSession::default();
     for (index, step) in collection
         .requests
         .iter()
@@ -887,6 +1096,7 @@ pub async fn run(
         }
         if index > 0 && index % request_count == 0 {
             variables.clone_from(&collection.variables);
+            session = CookieSession::default();
         }
         report(RunProgress::Started { index });
         let mut row = ResultRow::new(step);
@@ -900,7 +1110,7 @@ pub async fn run(
                 console::finish(Some("Execução cancelada."), false);
                 break;
             }
-            result = run_step(clients, step.clone(), &mut variables, &mut row) => result,
+            result = run_step(clients, &session, step.clone(), &mut variables, &mut row) => result,
         };
         console::finish(
             validation
@@ -943,6 +1153,8 @@ mod tests {
     fn test_clients() -> Clients {
         Clients {
             oauth: oauth::OAuth::default(),
+            editor_cookies: Mutex::default(),
+            no_proxy: true,
             direct: Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -950,7 +1162,7 @@ mod tests {
                 .unwrap(),
             same_origin: Client::builder()
                 .no_proxy()
-                .redirect(same_origin_redirects())
+                .redirect(same_origin_redirects(DEFAULT_MAX_REDIRECTS))
                 .build()
                 .unwrap(),
         }
@@ -1098,14 +1310,18 @@ mod tests {
     }
 
     #[test]
-    fn applies_redirect_policy_and_timeout_per_endpoint() {
+    fn applies_redirect_policy_limit_and_timeout_per_endpoint() {
         let source = TcpListener::bind("127.0.0.1:0").unwrap();
         let external = TcpListener::bind("127.0.0.1:0").unwrap();
         external.set_nonblocking(true).unwrap();
         let target = external.local_addr().unwrap();
         let base = format!("http://{}", source.local_addr().unwrap());
         let server = thread::spawn(move || {
-            for expected in ["/local", "/local", "/end", "/foreign", "/slow"] {
+            let paths = [
+                "/local", "/local", "/end", "/chain", "/local", "/chain", "/local", "/end",
+                "/foreign", "/slow",
+            ];
+            for expected in paths.into_iter().cycle().take(paths.len() * 2) {
                 let (mut socket, _) = source.accept().unwrap();
                 socket
                     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -1126,6 +1342,7 @@ mod tests {
                 }
                 assert!(authenticated);
                 let response = match expected {
+                    "/chain" => "302 Found\r\nLocation: /local\r\n".to_owned(),
                     "/local" => "302 Found\r\nLocation: /end\r\n".to_owned(),
                     "/foreign" => format!("302 Found\r\nLocation: http://{target}/collect\r\n"),
                     "/slow" => {
@@ -1146,21 +1363,36 @@ mod tests {
         });
         tauri::async_runtime::block_on(async {
             let clients = test_clients();
-            for (path, policy, timeout, expected) in [
-                ("/local", "none", 2000, Ok(302)),
-                ("/local", "same_origin", 2000, Ok(200)),
-                ("/foreign", "same_origin", 2000, Ok(302)),
+            let cases = [
+                ("/local", "none", None, 2000, Ok(302)),
+                ("/local", "same_origin", None, 2000, Ok(200)),
+                (
+                    "/chain",
+                    "same_origin",
+                    Some(1),
+                    2000,
+                    Err("Limite de 1 redirecionamentos excedido."),
+                ),
+                ("/chain", "same_origin", Some(2), 2000, Ok(200)),
+                ("/foreign", "same_origin", None, 2000, Ok(302)),
                 (
                     "/slow",
                     "none",
+                    None,
                     100,
                     Err("A requisição excedeu o timeout configurado."),
                 ),
-            ] {
+            ];
+            for (preserve, (path, policy, max_redirects, timeout, expected)) in [false, true]
+                .into_iter()
+                .flat_map(|preserve| cases.map(|case| (preserve, case)))
+            {
                 let request = serde_json::from_value(json!({
                     "method": "GET", "url": format!("{base}{path}"),
                     "headers": [["Authorization", "Bearer fixture"]],
                     "redirect_policy": policy, "timeout_ms": timeout,
+                    "max_redirects": max_redirects,
+                    "preserve_redirect_method": preserve,
                 }))
                 .unwrap();
                 let response = send(&clients, request)
@@ -1168,6 +1400,215 @@ mod tests {
                     .map(|response| response.status);
                 assert_eq!(response, expected.map_err(str::to_owned));
             }
+        });
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn preserves_method_body_and_session_cookies_only_when_enabled() {
+        use std::io::Read;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for status in [301, 302, 303] {
+                for preserve in [false, true] {
+                    for redirected in [false, true] {
+                        let (mut socket, _) = listener.accept().unwrap();
+                        socket
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let body_expected = !redirected || preserve;
+                        let method = if body_expected { "POST" } else { "GET" };
+                        let path = if redirected { "/end" } else { "/start" };
+                        let mut reader = BufReader::new(&mut socket);
+                        let mut line = String::new();
+                        reader.read_line(&mut line).unwrap();
+                        assert_eq!(line.trim_end(), format!("{method} {path} HTTP/1.1"));
+                        let mut length = 0;
+                        let mut cookie = false;
+                        loop {
+                            line.clear();
+                            if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                                break;
+                            }
+                            let (name, value) = line.split_once(':').unwrap();
+                            if name.eq_ignore_ascii_case("content-length") {
+                                length = value.trim().parse().unwrap();
+                            }
+                            if name.eq_ignore_ascii_case("cookie") {
+                                cookie = value.trim() == "session=fixture";
+                            }
+                        }
+                        let mut body = vec![0; length];
+                        reader.read_exact(&mut body).unwrap();
+                        assert_eq!(body, if body_expected { &b"payload"[..] } else { &[] });
+                        assert_eq!(cookie, redirected);
+                        let response = if redirected {
+                            "200 OK\r\n".to_owned()
+                        } else {
+                            format!(
+                                "{status} Redirect\r\nLocation: /end\r\nSet-Cookie: session=fixture\r\n"
+                            )
+                        };
+                        write!(
+                            socket,
+                            "HTTP/1.1 {response}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+        });
+        tauri::async_runtime::block_on(async {
+            let clients = test_clients();
+            for _ in [301, 302, 303] {
+                for preserve in [false, true] {
+                    clients.clear_session_cookies();
+                    let mut request = json!({
+                        "method": "POST", "url": format!("{base}/start"), "body": "payload",
+                        "redirect_policy": "same_origin", "timeout_ms": 2000,
+                    });
+                    if preserve {
+                        request["preserve_redirect_method"] = json!(true);
+                    }
+                    let response = send(&clients, serde_json::from_value(request).unwrap())
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status, 200);
+                }
+            }
+        });
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn only_reuses_cookies_on_their_origin_and_path() {
+        use reqwest::{cookie::CookieStore, header::HeaderValue};
+
+        let jar = SessionJar::default();
+        let url = Url::parse("http://localhost:8080/api/login").unwrap();
+        let cookie = HeaderValue::from_static("session=fixture; Path=/api");
+        jar.set_cookies(&mut std::iter::once(&cookie), &url);
+
+        assert_eq!(
+            jar.cookies(&url.join("/api/profile").unwrap()).unwrap(),
+            "session=fixture"
+        );
+        assert!(jar.cookies(&url.join("/health").unwrap()).is_none());
+        assert!(
+            jar.cookies(&Url::parse("http://localhost:8081/api/profile").unwrap())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn shares_session_cookies_until_cleared_and_isolates_runner_iterations() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            for (path, cookie, response) in [
+                (
+                    "/login",
+                    None,
+                    "302 Found\r\nLocation: /check\r\nSet-Cookie: session=fixture; Path=/\r\n",
+                ),
+                ("/check", Some("session=fixture"), "200 OK\r\n"),
+                (
+                    "/login",
+                    None,
+                    "200 OK\r\nSet-Cookie: session=ignored; Path=/\r\n",
+                ),
+                ("/check", Some("session=fixture"), "200 OK\r\n"),
+                (
+                    "/run",
+                    None,
+                    "200 OK\r\nSet-Cookie: session=runner; Path=/\r\n",
+                ),
+                ("/check", Some("session=runner"), "200 OK\r\n"),
+                (
+                    "/run",
+                    None,
+                    "200 OK\r\nSet-Cookie: session=runner; Path=/\r\n",
+                ),
+                ("/check", Some("session=runner"), "200 OK\r\n"),
+                ("/check", Some("session=fixture"), "200 OK\r\n"),
+                ("/check", None, "200 OK\r\n"),
+            ] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut socket);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert_eq!(line.split_whitespace().nth(1), Some(path));
+                let mut actual_cookie = None;
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.eq_ignore_ascii_case("cookie")
+                    {
+                        actual_cookie = Some(value.trim().to_owned());
+                    }
+                }
+                assert_eq!(actual_cookie.as_deref(), cookie);
+                write!(
+                    socket,
+                    "HTTP/1.1 {response}Content-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+            }
+        });
+        tauri::async_runtime::block_on(async {
+            let clients = test_clients();
+            let request = |path, ignore, redirects| {
+                json!({
+                    "method": "GET", "url": format!("{base}{path}"), "ignore_cookies": ignore,
+                    "redirect_policy": redirects, "timeout_ms": 2000,
+                })
+            };
+            let send_request = |request| send(&clients, serde_json::from_value(request).unwrap());
+            let check = || request("/check", false, "none");
+            assert_eq!(
+                send_request(request("/login", false, "same_origin"))
+                    .await
+                    .unwrap()
+                    .status,
+                200
+            );
+            assert_eq!(
+                send_request(request("/login", true, "none"))
+                    .await
+                    .unwrap()
+                    .status,
+                200
+            );
+            assert_eq!(send_request(check()).await.unwrap().status, 200);
+            let collection = serde_json::from_value(json!({
+                "iterations": 2,
+                "requests": [
+                    { "name": "Login", "request": request("/run", false, "none") },
+                    { "name": "Check", "request": check() },
+                ]
+            }))
+            .unwrap();
+            let (_cancel, receiver) = tokio::sync::oneshot::channel();
+            let result = run(&clients, collection, receiver, |_| {}).await.unwrap();
+            assert_eq!(
+                result
+                    .results
+                    .iter()
+                    .map(|row| row.status)
+                    .collect::<Vec<_>>(),
+                [Some(200); 4]
+            );
+            assert_eq!(send_request(check()).await.unwrap().status, 200);
+            clients.clear_session_cookies();
+            assert_eq!(send_request(check()).await.unwrap().status, 200);
         });
         server.join().unwrap();
     }
@@ -1286,9 +1727,15 @@ mod tests {
                     "url": format!("{base}/extract"),
                 }))
                 .unwrap();
-                let response = send_runner_step(&clients, request, BTreeMap::new(), true)
-                    .await
-                    .unwrap();
+                let response = send_runner_step(
+                    &clients,
+                    &CookieSession::default(),
+                    request,
+                    BTreeMap::new(),
+                    true,
+                )
+                .await
+                .unwrap();
                 mask_runner_response(
                     &response,
                     &BTreeMap::from([("ticket".to_owned(), "/ticket".to_owned())]),
@@ -1486,6 +1933,7 @@ mod tests {
             assert_eq!(
                 perform(
                     &clients,
+                    &CookieSession::default(),
                     multipart,
                     &BTreeMap::from([("message".into(), "Olá".into())])
                 )
@@ -1636,6 +2084,7 @@ mod tests {
             .unwrap();
             let scripted = send_runner_step(
                 &clients,
+                &CookieSession::default(),
                 scripted_request,
                 BTreeMap::from([
                     ("base_url".into(), base_url.clone()),

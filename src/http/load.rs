@@ -1,4 +1,6 @@
-use super::{Clients, Collection, FailureReason, ResultRow, TIMEOUT_MESSAGE, run_step};
+use super::{
+    Clients, Collection, CookieSession, FailureReason, ResultRow, TIMEOUT_MESSAGE, run_step,
+};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Mutex, time::Duration};
@@ -309,13 +311,14 @@ async fn worker(
     let mut variables = BTreeMap::new();
     while Instant::now() < end {
         variables.clone_from(&collection.variables);
+        let session = CookieSession::default();
         for (index, step) in collection.requests.iter().enumerate() {
             if Instant::now() >= end {
                 return Ok(());
             }
             let mut row = ResultRow::new(step);
             let started = Instant::now();
-            let result = run_step(clients, step.clone(), &mut variables, &mut row).await;
+            let result = run_step(clients, &session, step.clone(), &mut variables, &mut row).await;
             let error = result.as_ref().err();
             if let Some((FailureReason::Preparation, message)) = error {
                 let missing_variable = message.strip_prefix("Variável ausente: ").filter(|name| {

@@ -40,6 +40,12 @@ export type RequestDefaults = {
 };
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const MAX_TIMEOUT_MS = 600_000;
+export const DEFAULT_MAX_REDIRECTS = 10;
+export const MAX_REDIRECT_LIMIT = 0xffff_ffff;
+
+function validRedirectLimit(value: number) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_REDIRECT_LIMIT;
+}
 
 export function validTimeout(value: number) {
   return Number.isInteger(value) && value >= 1 && value <= MAX_TIMEOUT_MS;
@@ -90,6 +96,10 @@ export type RequestItem = {
   scripts?: Scripts;
   timeoutMs?: number;
   redirectPolicy?: RedirectPolicy;
+  maxRedirects?: number;
+  preserveRedirectMethod?: boolean;
+  verifyTls?: boolean;
+  ignoreCookies?: boolean;
   id: string;
   name: string;
   folder: string;
@@ -148,6 +158,10 @@ export function safeEnvironment(
 export type HttpRequest = {
   timeout_ms?: number;
   redirect_policy?: RedirectPolicy;
+  max_redirects?: number;
+  preserve_redirect_method?: boolean;
+  verify_tls?: boolean;
+  ignore_cookies?: boolean;
   method: string;
   url: string;
   headers: [string, string][] | Record<string, string>;
@@ -270,6 +284,17 @@ export const newRequest = (folder = ''): RequestItem => ({
   extract: {},
 });
 
+export function createEmptyWorkspace(name: string): Workspace {
+  return {
+    version: 1,
+    collections: [],
+    environments: [],
+    activeEnvironment: '',
+    history: [],
+    settings: { theme: 'light', compact: false, wrap: true, workspaceName: name },
+  };
+}
+
 export function createWorkspace(): Workspace {
   const request = (
     name: string,
@@ -279,7 +304,7 @@ export function createWorkspace(): Workspace {
     extra: Partial<RequestItem> = {},
   ): RequestItem => ({ ...newRequest(folder), name, method, url: `{{base_url}}${url}`, ...extra });
   return {
-    version: 1,
+    ...createEmptyWorkspace(t('Meu workspace')),
     collections: [
       {
         id: 'acme',
@@ -347,8 +372,6 @@ export function createWorkspace(): Workspace {
       },
     ],
     activeEnvironment: 'local',
-    history: [],
-    settings: { theme: 'light', compact: false, wrap: true, workspaceName: t('Meu workspace') },
   };
 }
 
@@ -516,6 +539,10 @@ export function validCollection(value: unknown): value is Collection {
         validPairs(r.headers) &&
         (r.timeoutMs === undefined || validTimeout(r.timeoutMs)) &&
         (r.redirectPolicy === undefined || ['none', 'same_origin'].includes(r.redirectPolicy)) &&
+        (r.maxRedirects === undefined || validRedirectLimit(r.maxRedirects)) &&
+        (r.preserveRedirectMethod === undefined || typeof r.preserveRedirectMethod === 'boolean') &&
+        (r.verifyTls === undefined || typeof r.verifyTls === 'boolean') &&
+        (r.ignoreCookies === undefined || typeof r.ignoreCookies === 'boolean') &&
         validPairs(r.form) &&
         (r.multipart === undefined ||
           (validPairs(r.multipart) &&
@@ -1046,6 +1073,8 @@ export function compileRequest(
   item = syncUrl(item);
   const timeoutMs = item.timeoutMs ?? defaults?.defaultTimeoutMs;
   const redirectPolicy = item.redirectPolicy ?? defaults?.defaultRedirectPolicy;
+  if (item.maxRedirects !== undefined && !validRedirectLimit(item.maxRedirects))
+    throw new Error(t('Informe um limite positivo de redirecionamentos.'));
   if (timeoutMs !== undefined && !validTimeout(timeoutMs))
     throw new Error(t('O timeout deve ficar entre 1 e 600.000 ms.'));
   const conflict = authHeaderConflict(item, collection);
@@ -1160,6 +1189,12 @@ export function compileRequest(
     body,
     ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
     ...(redirectPolicy !== undefined ? { redirect_policy: redirectPolicy } : {}),
+    ...(item.maxRedirects !== undefined ? { max_redirects: item.maxRedirects } : {}),
+    ...(item.preserveRedirectMethod !== undefined
+      ? { preserve_redirect_method: item.preserveRedirectMethod }
+      : {}),
+    ...(item.verifyTls !== undefined ? { verify_tls: item.verifyTls } : {}),
+    ...(item.ignoreCookies !== undefined ? { ignore_cookies: item.ignoreCookies } : {}),
     ...(oauth ? { oauth } : {}),
     ...(multipart !== undefined ? { multipart } : {}),
     ...(binaryFile !== undefined ? { binary_file: binaryFile } : {}),
@@ -1229,6 +1264,12 @@ export function resolveHttpRequest(
     headers,
     body,
     ...(template.timeout_ms !== undefined ? { timeout_ms: template.timeout_ms } : {}),
+    ...(template.max_redirects !== undefined ? { max_redirects: template.max_redirects } : {}),
+    ...(template.preserve_redirect_method !== undefined
+      ? { preserve_redirect_method: template.preserve_redirect_method }
+      : {}),
+    ...(template.verify_tls !== undefined ? { verify_tls: template.verify_tls } : {}),
+    ...(template.ignore_cookies !== undefined ? { ignore_cookies: template.ignore_cookies } : {}),
     ...(template.redirect_policy !== undefined
       ? { redirect_policy: template.redirect_policy }
       : {}),

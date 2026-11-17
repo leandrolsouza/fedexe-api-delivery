@@ -11,6 +11,7 @@ import {
   ChevronUp,
   CircleHelp,
   Clock3,
+  Cookie,
   Code2,
   Copy,
   CornerDownLeft,
@@ -40,6 +41,8 @@ import {
   generatedHeaders,
   headerEntries,
   isSecretHeader,
+  DEFAULT_MAX_REDIRECTS,
+  MAX_REDIRECT_LIMIT,
   MAX_TIMEOUT_MS,
   requestVariables,
   resolvedVariables,
@@ -54,7 +57,7 @@ import {
   type Test,
 } from '../lib/models';
 import { cn, download, formatBytes } from '../lib/utils';
-import { native, normalizeError, saveResponseBody } from '../lib/transport';
+import { clearSessionCookies, native, normalizeError, saveResponseBody } from '../lib/transport';
 import { navigateTabs } from '../lib/keyboard';
 import { Button } from './ui/button';
 import { Dropdown } from './ui/dropdown';
@@ -143,7 +146,7 @@ export function RequestEditor({
   onSend: () => void;
   onCancel: () => void;
   response?: HttpResponse;
-  error?: string;
+  error?: boolean;
   scriptResults?: ScriptResult[];
   onSnippet: () => void;
   wrap: boolean;
@@ -157,6 +160,18 @@ export function RequestEditor({
   const [responseTab, setResponseTab] = useState('body');
   const [format, setFormat] = useState('pretty');
   const [savingBody, setSavingBody] = useState(false);
+  const [clearingCookies, setClearingCookies] = useState(false);
+  const clearCookies = async () => {
+    setClearingCookies(true);
+    try {
+      await clearSessionCookies();
+      toast.success(t('Cookies da sessão limpos.'));
+    } catch (error) {
+      toast.error(normalizeError(error).message);
+    } finally {
+      setClearingCookies(false);
+    }
+  };
   const layouts = [
     { id: 'request', label: t('Requisição') },
     { id: 'split', label: t('Dividido') },
@@ -284,7 +299,7 @@ export function RequestEditor({
         <div className="heading-actions">
           <span className={cn('saved-status', dirty && 'unsaved')}>
             <span className="status-dot" />
-            {dirty ? t('Alterações pendentes') : t('Salvo localmente')}
+            {dirty ? t('Alterações pendentes') : t('Salvo')}
           </span>
           <Button size="sm" variant="outline" onClick={onSave} disabled={!dirty}>
             <Save size={14} />
@@ -610,13 +625,37 @@ export function RequestEditor({
                     <ShieldCheck size={18} />
                   </span>
                   <div>
-                    <h4>{t('Validação de certificados TLS')}</h4>
-                    <p>{t('Ativa por padrão para manter suas conexões seguras.')}</p>
+                    {native ? (
+                      <>
+                        <label className="field-label">
+                          {t('Validação de certificados TLS')}
+                          <select
+                            className="input"
+                            value={request.verifyTls === false ? 'off' : 'on'}
+                            aria-describedby="request-tls-hint"
+                            onChange={(event) =>
+                              update({
+                                verifyTls: event.target.value === 'off' ? false : undefined,
+                              })
+                            }
+                          >
+                            <option value="on">{t('Ativa (padrão)')}</option>
+                            <option value="off">{t('Desativada')}</option>
+                          </select>
+                        </label>
+                        <p id="request-tls-hint">
+                          {t(
+                            'Desative apenas em ambientes de teste confiáveis. A conexão poderá aceitar certificados inválidos.',
+                          )}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h4>{t('Validação de certificados TLS')}</h4>
+                        <p>{t('A verificação é controlada pelo navegador.')}</p>
+                      </>
+                    )}
                   </div>
-                  <span className="green-text">
-                    {t('Sempre ativa') + ' '}
-                    <Check size={13} />
-                  </span>
                 </div>
                 <div>
                   <span className="settings-icon">
@@ -660,8 +699,94 @@ export function RequestEditor({
                         ? t('Uma mudança de protocolo, host ou porta encerra o redirecionamento.')
                         : t('Seguir redirecionamentos da mesma origem requer o app desktop.')}
                     </p>
+                    {native && (
+                      <>
+                        <label className="field-label">
+                          {t('Máximo de redirecionamentos')}
+                          <input
+                            className="input"
+                            type="number"
+                            min={1}
+                            max={MAX_REDIRECT_LIMIT}
+                            step={1}
+                            value={request.maxRedirects ?? ''}
+                            placeholder={String(DEFAULT_MAX_REDIRECTS)}
+                            aria-describedby="request-redirect-limit-hint"
+                            onChange={(event) => {
+                              const value = event.currentTarget.valueAsNumber;
+                              update({
+                                maxRedirects: Number.isInteger(value)
+                                  ? Math.min(MAX_REDIRECT_LIMIT, Math.max(1, value))
+                                  : undefined,
+                              });
+                            }}
+                          />
+                        </label>
+                        <p id="request-redirect-limit-hint">
+                          {t(
+                            'Deixe em branco para usar o limite padrão de {0}.',
+                            DEFAULT_MAX_REDIRECTS,
+                          )}
+                        </p>
+                        <label className="field-label">
+                          {t('Preservar método HTTP em 301, 302 e 303')}
+                          <select
+                            className="input"
+                            value={request.preserveRedirectMethod ? 'on' : 'off'}
+                            aria-describedby="request-redirect-method-hint"
+                            onChange={(event) =>
+                              update({
+                                preserveRedirectMethod: event.target.value === 'on' || undefined,
+                              })
+                            }
+                          >
+                            <option value="off">{t('Desativada')}</option>
+                            <option value="on">{t('Ativa')}</option>
+                          </select>
+                        </label>
+                        <p id="request-redirect-method-hint">
+                          {t(
+                            'Ao seguir redirecionamentos na mesma origem, reenvia o método e o corpo quando ele pode ser repetido.',
+                          )}
+                        </p>
+                      </>
+                    )}
                   </div>
                 </div>
+                {native && (
+                  <div>
+                    <span className="settings-icon">
+                      <Cookie size={18} />
+                    </span>
+                    <div>
+                      <label className="field-label">
+                        {t('Cookies da sessão')}
+                        <select
+                          className="input"
+                          value={request.ignoreCookies ? 'ignore' : 'use'}
+                          aria-describedby="request-cookie-hint"
+                          onChange={(event) =>
+                            update({ ignoreCookies: event.target.value === 'ignore' || undefined })
+                          }
+                        >
+                          <option value="use">{t('Usar cookies da sessão')}</option>
+                          <option value="ignore">{t('Ignorar nesta requisição')}</option>
+                        </select>
+                      </label>
+                      <p id="request-cookie-hint">
+                        {t('O app guarda os cookies em memória e os reutiliza na mesma origem.')}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={clearingCookies}
+                      onClick={clearCookies}
+                    >
+                      {t('Limpar cookies da sessão')}
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -730,8 +855,6 @@ export function RequestEditor({
             </details>
           )}
           <div className="editor-bottom-note">
-            <LockKeyhole size={12} />
-            <span>{t('Suas APIs, seus dados. Tudo fica neste dispositivo.')}</span>
             <button onClick={onSnippet}>
               <Terminal size={12} /> cURL
             </button>
@@ -889,7 +1012,6 @@ export function RequestEditor({
                 </span>
                 <div>
                   <h3>{t('Não foi dessa vez')}</h3>
-                  <p>{error}</p>
                   {scriptResults.length > 0 && <TestResultList results={scriptResults} />}
                   <Button size="sm" variant="outline" onClick={onSend}>
                     {t('Tentar novamente') + ' '}

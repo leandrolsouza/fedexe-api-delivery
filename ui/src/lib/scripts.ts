@@ -8,8 +8,11 @@ import { scriptHttpRequest } from './script-request';
 export type Scripts = { before?: string; after?: string };
 export type ScriptResult = { label: string; passed: boolean; error?: string; scriptError?: true };
 type Phase = keyof Scripts;
+type ScriptEvent = { level: string; message: string };
 type ScriptContext = {
   environmentName?: string;
+  protectWrite?: (value: string) => void;
+  record?: (label: string, event: ScriptEvent) => void;
   signal?: AbortSignal;
   send?: (request: HttpRequest, signal?: AbortSignal) => Promise<HttpResponse>;
 };
@@ -69,6 +72,7 @@ const bootstrap = `
       value = String(value);
       Object.defineProperty(variables, key, { value, writable: true, configurable: true });
       writes.push([key, value]);
+      protect(value);
     },
     unset(key) {
       key = String(key);
@@ -86,6 +90,7 @@ const bootstrap = `
     request.headers = request.headers.filter(([name]) => name.toLowerCase() !== key.toLowerCase());
     if (value !== undefined) request.headers.splice(index < 0 ? request.headers.length : index, 0, [key, value]);
     headers.push({ key, value });
+    if (value !== undefined) protect(value);
   }
   function describe(error) {
     return String(error?.message ?? error).slice(0, 4000);
@@ -211,6 +216,7 @@ export async function executeScript(
   variables: Record<string, string>,
   response?: HttpResponse,
   context: ScriptContext = {},
+  diagnostics?: { events: ScriptEvent[]; values: Set<string> },
 ): Promise<ScriptOutput> {
   const input = {
     variables,
@@ -242,9 +248,38 @@ export async function executeScript(
   try {
     using decodeBase64 = vm.newFunction('atob', (value) => vm.newString(atob(vm.getString(value))));
     vm.setProp(vm.global, 'atob', decodeBase64);
-    using console = vm.unwrapResult(
-      vm.evalCode('Object.freeze({ log() {}, warn() {}, error() {}, info() {}, debug() {} })'),
+    using protect = vm.newFunction('protect', (value) => {
+      diagnostics?.values.add(vm.getString(value));
+    });
+    using console = vm.newObject();
+    using formatLog = vm.unwrapResult(
+      vm.evalCode(`
+      (write => {
+        if (!write) return () => {};
+        const toString = String;
+        const isError = value => value instanceof Error;
+        return (...args) => {
+          const message = args.map(value => {
+            if (value === null) return 'null';
+            if (isError(value)) return toString(value);
+            return typeof value === 'object' ? '[object]' : toString(value);
+          }).join(' ');
+          if (message.length <= 16000) write(message);
+        };
+      })
+    `),
     );
+    for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+      using write = vm.newFunction(level, (message) => {
+        if (diagnostics && diagnostics.events.length < 50) {
+          diagnostics.events.push({ level, message: vm.getString(message) });
+        }
+      });
+      using method = vm.unwrapResult(
+        vm.callFunction(formatLog, vm.undefined, diagnostics ? write : vm.undefined),
+      );
+      vm.setProp(console, level, method);
+    }
     vm.setProp(vm.global, 'console', console);
     using queueRequest = vm.newFunction('sendRequest', (payload, callback) => {
       if (pending.length >= maxScriptRequests)
@@ -266,7 +301,7 @@ export async function executeScript(
     try {
       const build = vm.unwrapResult(
         vm.evalCode(
-          `(function (inputJson, script, queueRequest, skipExecution) {
+          `(function (inputJson, script, queueRequest, skipExecution, protect) {
           const input = JSON.parse(inputJson);
           ${bootstrap}
           runSync(() => script(pm));
@@ -278,16 +313,18 @@ export async function executeScript(
       try {
         using data = vm.newString(JSON.stringify(input));
         using finish = vm.unwrapResult(
-          vm.callFunction(build, vm.undefined, data, script, queueRequest, skipExecution),
+          vm.callFunction(build, vm.undefined, data, script, queueRequest, skipExecution, protect),
         );
         for (const { payload, callback } of pending) {
           if (skipped) break;
           context.signal?.throwIfAborted();
           let message = '';
           let result: HttpResponse | undefined;
+          let method: string | undefined;
           try {
             const { config, variables: scriptVariables } = JSON.parse(payload);
             const request = scriptHttpRequest(config, scriptVariables);
+            method = request.method;
             const started = performance.now();
             try {
               if (!context.send) throw new Error();
@@ -304,6 +341,12 @@ export async function executeScript(
                 : t('Configuração inválida em pm.sendRequest.');
           }
           context.signal?.throwIfAborted();
+          diagnostics?.events.push({
+            level: result && result.status < 400 ? 'info' : 'error',
+            message: ['pm.sendRequest', method, result?.status ?? message]
+              .filter(Boolean)
+              .join(' · '),
+          });
           using failure = vm.newString(message);
           using body = result ? vm.newString(JSON.stringify(result)) : undefined;
           vm.unwrapResult(
@@ -377,13 +420,45 @@ export async function runScripts(
     context.signal?.throwIfAborted();
     if (!source?.trim()) continue;
     const label = `${scope} · ${t(phase === 'before' ? 'Pré-requisição' : 'Pós-resposta')}`;
-    const output = await executeScript(source, item, variables, response, context).catch(() => ({
+    const diagnostics = context.record
+      ? { events: [] as ScriptEvent[], values: new Set<string>() }
+      : undefined;
+    const output = await executeScript(
+      source,
+      item,
+      variables,
+      response,
+      context,
+      diagnostics,
+    ).catch(() => ({
       tests: [],
       writes: [],
       headers: [],
       error: t('Não foi possível iniciar o JavaScript.'),
       skipped: undefined,
     }));
+    if (diagnostics && context.record) {
+      const headers = item.headers
+        .filter(
+          ({ enabled, key, secret }) =>
+            enabled &&
+            (secret || /^(authorization|proxy-authorization|cookie|x-api-key)$/i.test(key.trim())),
+        )
+        .flatMap(({ value }) => [value, value.replace(/^(Bearer|Basic)\s+/i, '')]);
+      const values = [...diagnostics.values, ...Object.values(variables), ...headers];
+      for (const event of diagnostics.events) {
+        context.record(label, {
+          ...event,
+          message: redactValues(redact(event.message), values).slice(0, 4000),
+        });
+      }
+      if (output.error !== undefined && !context.signal?.aborted) {
+        context.record(label, {
+          level: 'error',
+          message: redactValues(redact(output.error), values),
+        });
+      }
+    }
     context.signal?.throwIfAborted();
     const protectedValues = [...changes.values(), ...output.writes.map(([, value]) => value)];
     const clean = (message: string) => redactValues(redact(message), protectedValues);
@@ -401,6 +476,7 @@ export async function runScripts(
       continue;
     }
     for (const [key, value] of output.writes) {
+      if (value !== null) context.protectWrite?.(value);
       changes.set(key, value);
       if (value === null) delete variables[key];
       else variables[key] = value;

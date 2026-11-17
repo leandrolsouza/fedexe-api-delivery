@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { t } from '../lib/i18n';
@@ -34,7 +35,6 @@ export function PostmanWorkspaceDialog({
   const [workspace, setWorkspace] = useState<ReturnType<typeof readPostmanWorkspace>>();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
   const issues = workspace ? unsupportedPostmanIssues(workspace) : [];
 
   useEffect(() => {
@@ -44,7 +44,7 @@ export function PostmanWorkspaceDialog({
         if (active) setHasKey(stored);
       })
       .catch((failure: unknown) => {
-        if (active) setError(postmanError(failure));
+        if (active) toast.error(postmanError(failure));
       })
       .finally(() => {
         if (active) setCheckingKey(false);
@@ -56,11 +56,10 @@ export function PostmanWorkspaceDialog({
 
   async function perform(action: () => Promise<void>) {
     setBusy(true);
-    setError('');
     try {
       await action();
     } catch (failure) {
-      setError(postmanError(failure));
+      toast.error(postmanError(failure));
       onFailure();
     } finally {
       setBusy(false);
@@ -107,7 +106,7 @@ export function PostmanWorkspaceDialog({
       try {
         data = await loadPostmanSpecs(legacy, id, get);
       } catch (failure) {
-        setError(t('OpenAPI: {0}', postmanError(failure)));
+        toast.error(t('OpenAPI: {0}', postmanError(failure)));
       }
       setWorkspace(data);
       setSelected(new Set(data.items.map(itemKey)));
@@ -255,11 +254,6 @@ export function PostmanWorkspaceDialog({
         </>
       )}
       {busy && <p role="status">{t('Consultando o Postman…')}</p>}
-      {error && (
-        <div className="inline-error" role="alert">
-          {error}
-        </div>
-      )}
       <div className="dialog-footer">
         <Button variant="outline" onClick={onClose} disabled={busy}>
           {t('Cancelar')}

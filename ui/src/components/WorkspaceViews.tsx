@@ -35,10 +35,10 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Sparkles,
   Square,
   Terminal,
   Trash2,
-  TriangleAlert,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -68,6 +68,7 @@ import { LoadRunner } from './LoadRunner';
 import { MethodBadge } from './RequestEditor';
 import { TimeoutInput } from './TimeoutInput';
 import { ThemeSettingsPanel } from './ThemeSettings';
+import { LocalAiSettings } from './LocalAiSettings';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { Dropdown } from './ui/dropdown';
@@ -326,7 +327,7 @@ export function EnvironmentsView({
             </div>
             <div className="surface-footer">
               <span className="status-dot dot-green" />
-              {' ' + t('Alterações salvas automaticamente neste dispositivo')}
+              {' ' + t('Alterações salvas automaticamente')}
             </div>
           </section>
         ) : (
@@ -551,7 +552,6 @@ export function RunnerView({
   const [activeStep, setActiveStep] = useState<number>();
   const [rows, setRows] = useState<RunRow[]>([]);
   const [result, setResult] = useState<RunResult>();
-  const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
   const [stopOnFailure, setStopOnFailure] = useState(false);
   const [iterationsInput, setIterationsInput] = useState('1');
@@ -677,7 +677,6 @@ export function RunnerView({
     setInspectedRankIndex(undefined);
     setActiveStep(undefined);
     setResult(undefined);
-    setError('');
     setCancelling(false);
   }, []);
   useEffect(() => {
@@ -761,7 +760,7 @@ export function RunnerView({
           t('Execução concluída'),
         );
     } catch (error) {
-      setError(redactSecrets(normalizeError(error).message, environment));
+      toast.error(redactSecrets(normalizeError(error).message, environment));
     } finally {
       setCancelling(false);
       setActiveStep(undefined);
@@ -1256,12 +1255,6 @@ export function RunnerView({
               </div>
             )}
           </div>
-          {error && (
-            <div className="inline-error">
-              <TriangleAlert size={16} />
-              {error}
-            </div>
-          )}
           <div
             id="runner-panel-results"
             role="tabpanel"
@@ -1700,6 +1693,7 @@ const settingsSections = [
   { label: 'Aparência', icon: Monitor },
   { label: 'Temas', icon: Palette },
   { label: 'Padrões de requisição', icon: Clock3 },
+  { label: 'IA', icon: Sparkles },
   { label: 'Dados e backups', icon: HardDrive },
   { label: 'Atualizações e sobre', icon: Info },
 ] as const;
@@ -1708,7 +1702,6 @@ export function SettingsView({
   workspace,
   onChange,
   onImport,
-  onHelp,
   onBackup,
   onDrive,
   updates,
@@ -1717,7 +1710,6 @@ export function SettingsView({
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
   onImport: () => void;
-  onHelp: () => void;
   onBackup: () => void;
   onDrive?: () => void;
   updates: React.ReactNode;
@@ -1794,6 +1786,7 @@ export function SettingsView({
             </section>
           )}
           {section === 'Temas' && <ThemeSettingsPanel settings={settings} onChange={update} />}
+          {section === 'IA' && <LocalAiSettings />}
           {section === 'Padrões de requisição' && (
             <section className="surface settings-surface">
               <div className="settings-section-heading">
@@ -1900,7 +1893,7 @@ export function SettingsView({
               <p className="field-hint">
                 {native
                   ? t(
-                      'O workspace é salvo em JSON. Segredos marcados ficam no Gerenciador de Credenciais do Windows.',
+                      'O workspace é salvo em um arquivo JSON neste dispositivo. Segredos marcados ficam no Gerenciador de Credenciais do Windows.',
                     )
                   : t(
                       'O navegador salva o workspace localmente e mantém os segredos apenas na sessão.',
@@ -1917,10 +1910,6 @@ export function SettingsView({
                   <h2>Fedexe API</h2>
                   <p>{t('Versão {0}', version)}</p>
                 </div>
-                <Button variant="outline" onClick={onHelp}>
-                  {t('Conhecer o projeto') + ' '}
-                  <ArrowUpRight size={14} />
-                </Button>
               </section>
             </>
           )}

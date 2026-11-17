@@ -26,6 +26,7 @@ Use `npm run dev` para abrir a prévia em `http://127.0.0.1:1420`. A prévia usa
 - Mantenha os contratos dos comandos Tauri alinhados com as chamadas TypeScript. Ao mudar um comando, confira seus argumentos, retornos e consumidores dos dois lados.
 - Preserve a gravação atômica do workspace desktop e mantenha valores secretos de ambiente fora do JSON persistido, dos backups e dos logs. Use o Gerenciador de Credenciais no desktop e o armazenamento de sessão existente na prévia web.
 - Para novos textos da interface, use a infraestrutura de localização em `ui/src/lib/i18n.ts` e confira as versões em inglês e português do Brasil. Para mensagens vindas do Rust, confira `ui/src/lib/native-messages.ts`.
+- Exiba novos avisos de erro e confirmações de ações concluídas exclusivamente pelo sistema de notificações existente do app (Sonner). Use a própria tela para exibir progresso, resultados detalhados e controles de recuperação.
 - Em alterações de versão, mantenha `package.json`, `Cargo.toml` e `tauri.conf.json` alinhados e atualize os lockfiles correspondentes. O workflow `.github/workflows/windows.yml` verifica as versões ao gerar o instalador.
 
 ## Verificação

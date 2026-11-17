@@ -1,0 +1,9 @@
+Crie e alterne entre workspaces locais com coleções e histórico do console de requisições separados.
+
+Configure e teste um servidor local de IA compatível com OpenAI nas configurações.
+
+O console de requisições recebeu cartões expansíveis, metadados mais claros e indicadores de status e avisos nas cores do tema. Os detalhes da resposta mascaram valores extraídos por scripts de pós-resposta.
+
+Melhorias nos cookies de sessão do editor e do runner de coleções, com isolamento entre iterações e controle para limpar cookies.
+
+Outras melhorias na interface incluem opções de requisição, navegação de workspaces, backups, importações e notificações de atualização.

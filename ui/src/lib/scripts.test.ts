@@ -1,8 +1,109 @@
 import { describe, expect, it } from 'vitest';
 import { newRequest } from './models';
-import { executeScript } from './scripts';
+import type { Collection } from './models';
+import { postResponseTrace, type ConsoleTrace } from './request-console';
+import { executeScript, runScripts } from './scripts';
 
 describe('JavaScript de requisição', () => {
+  it('exibe os detalhes da resposta 201 após o script e mascara valores extraídos', async () => {
+    const item = newRequest();
+    item.scripts = {
+      after: `
+        pm.test('criado', () => pm.response.to.have.status(201));
+        pm.environment.set('session', pm.response.json().ticket);
+        pm.environment.set('session', 'replacement');
+      `,
+    };
+    const response = {
+      status: 201,
+      duration_ms: 1,
+      headers: [
+        ['content-type', 'application/json'],
+        ['x-ticket', 'private-ticket'],
+      ],
+      preview: '{"id":123,"ticket":"private-ticket"}',
+      truncated: false,
+    } satisfies NonNullable<Parameters<typeof runScripts>[7]>;
+    const entries: ConsoleTrace[] = [];
+    const capture = postResponseTrace((trace) => entries.push(trace));
+    capture.trace({
+      step: null,
+      duration_ms: 1,
+      request: null,
+      response: { ...response },
+      redirects: [],
+      failure: null,
+    });
+    expect(entries).toHaveLength(0);
+    const results: Parameters<typeof runScripts>[5] = [];
+    const after = await runScripts(
+      'after',
+      {} as Collection,
+      item,
+      {},
+      new Map(),
+      results,
+      (message) => message,
+      response,
+      { protectWrite: capture.protect },
+    );
+    expect(results[0]?.passed).toBe(true);
+    capture.finish(!after.failed);
+    expect(entries[0]?.response).toMatchObject({
+      status: 201,
+      headers: [
+        ['content-type', 'application/json'],
+        ['x-ticket', '[segredo]'],
+      ],
+      preview: '{"id":123,"ticket":"[segredo]"}',
+    });
+    expect(response.preview).toContain('private-ticket');
+  });
+
+  it('registra logs, chamadas auxiliares e erros em ordem e mascara valores do script', async () => {
+    const item = newRequest();
+    item.scripts = {
+      before: `
+        console.error('[Auth] m2m_client_id ausente', 401);
+        pm.sendRequest('https://example.test/token', (error, response) => {
+          console.warn('Status', response.code);
+          pm.environment.set('token', 'script-secret');
+          console.debug('Tokens', pm.environment.get('token'), pm.variables.get('configured'));
+          throw new Error('Falha com script-secret');
+        });
+      `,
+    };
+    const events: string[][] = [];
+    const result = await runScripts(
+      'before',
+      { scripts: {} } as Collection,
+      item,
+      { configured: 'configured-secret' },
+      new Map(),
+      [],
+      (message) => message,
+      undefined,
+      {
+        record: (label, { level, message }) => events.push([label, level, message]),
+        send: async () => ({
+          status: 401,
+          duration_ms: 2,
+          headers: [],
+          preview: '',
+          truncated: false,
+        }),
+      },
+    );
+    expect(result.failed).toBe(true);
+    expect(new Set(events.map(([label]) => label)).size).toBe(1);
+    expect(events.map(([, level, message]) => [level, message])).toEqual([
+      ['error', '[Auth] m2m_client_id ausente 401'],
+      ['error', 'pm.sendRequest · GET · 401'],
+      ['warn', 'Status 401'],
+      ['debug', 'Tokens [segredo] [segredo]'],
+      ['error', 'Falha com [segredo]'],
+    ]);
+  });
   it('substitui variáveis atuais e permite ignorar a etapa dentro de um callback HTTP', async () => {
     const output = await executeScript(
       `

@@ -96,6 +96,32 @@ describe('workspace e coleções', () => {
     expect(resolveHttpRequest(template, {}).redirect_policy).toBe('none');
   });
 
+  it('preserva as opções HTTP por requisição no workspace e no runner', () => {
+    const workspace = createWorkspace();
+    workspace.collections[0].requests = [
+      {
+        ...newRequest(),
+        url: 'https://example.test',
+        maxRedirects: 3,
+        preserveRedirectMethod: true,
+        verifyTls: false,
+        ignoreCookies: true,
+      },
+    ];
+    const restored = loadWorkspace(JSON.stringify(exportableWorkspace(workspace)));
+    const collection = restored.collections[0];
+    const [request] = collection.requests;
+    const expected = {
+      max_redirects: 3,
+      preserve_redirect_method: true,
+      verify_tls: false,
+      ignore_cookies: true,
+    };
+    expect(compileRequest(request, collection, {})).toMatchObject(expected);
+    const template = compileRequest(request, collection, {}, false, true);
+    expect(resolveHttpRequest(template, {})).toMatchObject(expected);
+  });
+
   it('preserva formatos raw e GraphQL ao recarregar e compila seus corpos', () => {
     const workspace = createWorkspace();
     const collection = workspace.collections[0];
