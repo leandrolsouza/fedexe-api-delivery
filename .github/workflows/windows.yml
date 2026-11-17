@@ -25,6 +25,13 @@ jobs:
         run: |
           npm ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item ../qa/tools/qa-native.rs src/qa_native.rs
+          $source = Get-Content src/main.rs -Raw
+          $source = $source.Replace('fn main() {', "mod qa_native;`nfn main() {`n    if qa_native::read_fixture_secret() { return; }")
+          $source = $source.Replace('if let Some(window) = app.get_webview_window("main") {', "if let Some(window) = app.get_webview_window(`"main`") {`n                    qa_native::bridge(window.clone());")
+          $source = $source.Replace('tauri::generate_handler![', "tauri::generate_handler![`n            qa_native::result,")
+          if ($source -notmatch 'qa_native::bridge' -or $source -notmatch 'qa_native::result') { throw 'QA bridge could not be attached' }
+          Set-Content src/main.rs -Value $source -Encoding utf8
           $key = Join-Path $env:RUNNER_TEMP 'qa-updater.key'
           .\node_modules\.bin\tauri.cmd signer generate --ci -p disposable-ci-fixture -w $key *> $null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -71,9 +78,34 @@ jobs:
           $setup = Start-Process -FilePath $previous -ArgumentList "/S /D=$dir" -WindowStyle Hidden -PassThru
           if (!$setup.WaitForExit(60000)) { $setup.Kill(); throw 'Previous setup did not finish in 60 seconds' }
           if ($setup.ExitCode -ne 0) { throw 'Previous setup failed' }
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+          $env:FEDEXE_UPDATER_QA_DIR = Join-Path $env:RUNNER_TEMP 'fedexe-qa-bridge'
+          New-Item -ItemType Directory -Path $env:FEDEXE_UPDATER_QA_DIR | Out-Null
+          $binary = Join-Path $dir 'fedexe-api-delivery.exe'
+          $vaultReader = Join-Path $env:RUNNER_TEMP 'fedexe-qa-vault-reader.exe'
+          Copy-Item -LiteralPath $binary -Destination $vaultReader
           Write-Output "Windows build $([Environment]::OSVersion.Version)"
-          node qa/tools/qa-updater.mjs "$dir/fedexe-api-delivery.exe" $installer $pfx
+          node qa/tools/qa-updater.mjs $binary $installer $pfx
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = (Get-Item "$dir/fedexe-api-delivery.exe").VersionInfo.ProductVersion
-          if ($version -notmatch '^2\.1\.0(?:\.0)?$') { throw "Expected installed version 2.1.0, got $version" }
+          $deadline = [DateTime]::UtcNow.AddSeconds(75)
+          do {
+            $version = (Get-Item -LiteralPath $binary -ErrorAction SilentlyContinue).VersionInfo.ProductVersion
+            $reopened = Get-Process -Name 'fedexe-api-delivery' -ErrorAction SilentlyContinue | Where-Object Path -EQ $binary
+            if ($reopened -and $version -match '^2\.1\.0(?:\.0)?$') { break }
+            Start-Sleep -Milliseconds 400
+          } while ([DateTime]::UtcNow -lt $deadline)
+          if (!$reopened -or $version -notmatch '^2\.1\.0(?:\.0)?$') { throw "Expected 2.1.0 to auto-relaunch, installed version: $version" }
+          Start-Sleep -Seconds 2
+          $expected = Get-Content (Join-Path $env:FEDEXE_UPDATER_QA_DIR 'expected-workspace.json') -Raw | ConvertFrom-Json
+          $actual = Get-Content (Join-Path $env:APPDATA 'app.fedexe.api/workspace.json') -Raw | ConvertFrom-Json
+          foreach ($kind in 'collections','environments') {
+            $before = @($expected.$kind | ForEach-Object { "$($_.id) $($_.name)" })
+            $after = @($actual.$kind | ForEach-Object { "$($_.id) $($_.name)" })
+            if (Compare-Object $before $after) { throw "Workspace $kind changed after update" }
+          }
+          if (!($actual.collections.requests | Where-Object name -EQ 'Updater QA request')) { throw 'Saved request missing' }
+          $environmentId = (Get-Content (Join-Path $env:FEDEXE_UPDATER_QA_DIR 'environment-id.txt') -Raw).Trim()
+          $reader = Start-Process -FilePath $vaultReader -ArgumentList @('--qa-read-secret', $environmentId) -WindowStyle Hidden -Wait -PassThru
+          if ($reader.ExitCode -ne 0) { throw 'Could not read the test credential' }
+          $credential = Get-Content (Join-Path $env:FEDEXE_UPDATER_QA_DIR 'vault.json') -Raw | ConvertFrom-Json
+          if ($credential -cne 'disposable-fixture') { throw 'Test credential was not preserved' }
+          Write-Output 'Valid update relaunched 2.1.0 with collections, environments, saved request, and test credential intact.'
