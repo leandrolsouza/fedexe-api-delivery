@@ -79,7 +79,7 @@ try {
   console.log('English notes and Later passed');
   await click('Settings');
   await click('View update');
-  await until('update reopened from Settings', async () => (await dialogText()).includes('2.1.0'));
+  await until('update reopened from Settings', async () => (await dialogText()).includes('2.1.1'));
 
   await evaluate("(() => { localStorage.setItem('fedexe.locale', 'pt-BR'); setTimeout(() => location.reload(), 500); return true; })()");
   await pause(750);
