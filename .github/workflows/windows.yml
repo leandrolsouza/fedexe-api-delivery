@@ -59,7 +59,7 @@ jobs:
           $password = ConvertTo-SecureString 'disposable-ci-fixture' -AsPlainText -Force
           $pfx = Join-Path $env:RUNNER_TEMP 'qa-localhost.pfx'
           $public = Join-Path $env:RUNNER_TEMP 'qa-localhost.cer'
-          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password | Out-Null
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $password -CryptoAlgorithmOption AES256_SHA256 | Out-Null
           Export-Certificate -Cert $cert -FilePath $public | Out-Null
           Import-Certificate -FilePath $public -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
           $previous = (Get-ChildItem 'previous/target/release/bundle/nsis' -Filter '*-setup.exe').FullName

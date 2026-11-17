@@ -108,7 +108,6 @@ try {
   await until('Later closes the notice', async () => (await dialogText()) === '');
   console.log('English notes and Later passed');
   await click('Settings');
-  await click('Updates and about');
   await click('View update');
   await until('update reopened from Settings', async () => (await dialogText()).includes('2.1.0'));
 
@@ -130,7 +129,6 @@ try {
   await until('create request draft', () => cdp.run(
     "(() => { const input = document.querySelector('input.request-name'); if (!input) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input, 'Updater QA request'); input.dispatchEvent(new Event('input',{bubbles:true})); return true; })()"));
   await click('Configurações');
-  await click('Atualizações e sobre');
   await click('Ver atualização');
   await until('pending draft blocks install', async () =>
     (await dialogText()).includes('Salve ou descarte os rascunhos antes de instalar.') &&
@@ -139,9 +137,9 @@ try {
   await click('Adiar');
   await until('return to draft', () => cdp.run(
     "(() => { const row = document.querySelector('.tree-request-main:has(.dirty-dot)'); if (!row) return false; row.click(); return true; })()"));
-  await click('Salvar');
+  await until('save the draft', () => cdp.run(
+    "(() => { const save = document.querySelector('.heading-actions > button'); if (!save || save.disabled) return false; save.click(); return true; })()"));
   await click('Configurações');
-  await click('Atualizações e sobre');
   await click('Ver atualização');
   await click('Instalar atualização');
   await until('invalid signature rejected', async () => (await dialogText()).includes('A assinatura do pacote não pôde ser validada'));
