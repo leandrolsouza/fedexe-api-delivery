@@ -3,7 +3,7 @@ import { t } from './i18n';
 import { runScripts } from './scripts';
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { checkResponse, isJsonPointer, jsonPointer, responseJson } from './response-tests';
-import { recordRequestTrace, type ConsoleTrace } from './request-console';
+import { consoleAttemptFactory, type ConsoleTrace } from './request-console';
 import {
   resolveHttpRequest,
   addConsoleMasks,
@@ -115,16 +115,18 @@ export async function pickBodyFile() {
   return invoke<string | null>('pick_body_file', { title: t('Selecionar arquivo') });
 }
 
-export async function send(request: HttpRequest, requestId?: string, hideResponseDetails = false) {
+export async function send(
+  request: HttpRequest,
+  record?: (trace: ConsoleTrace) => void,
+  hideResponseDetails = false,
+) {
   controller = new AbortController();
   try {
     if (native)
       return await invoke<HttpResponse>('send', {
         request,
         hideResponseDetails,
-        console: new Channel<ConsoleTrace>((trace) =>
-          recordRequestTrace('editor', trace, requestId),
-        ),
+        console: new Channel<ConsoleTrace>(record),
       });
     checkBrowserRequest(request);
     return await browserSend(request);
@@ -185,7 +187,8 @@ export async function runCollection(
 ): Promise<RunResult> {
   const { iterations = 1, delay_ms: delay = 0 } = collection;
   const requestCount = collection.requests.length;
-  if (native && !scripts) {
+  const startAttempt = native ? consoleAttemptFactory('runner') : undefined;
+  if (startAttempt && !scripts) {
     const localizeRow = (row: RunRow) => ({
       ...row,
       failures: row.failures.map(localizeNativeMessage),
@@ -197,9 +200,10 @@ export async function runCollection(
       const result = await invoke<RunResult>('run', {
         collection,
         progress,
-        console: new Channel<ConsoleTrace>((trace) =>
-          recordRequestTrace('runner', trace, requestIds[((trace.step ?? 0) - 1) % requestCount]),
-        ),
+        console: new Channel<ConsoleTrace>((trace) => {
+          const requestIndex = ((trace.step ?? 1) - 1) % requestCount;
+          startAttempt(requestIds[requestIndex], trace.step).trace(trace);
+        }),
       });
       return { ...result, results: result.results.map(localizeRow) };
     } finally {
@@ -252,6 +256,7 @@ export async function runCollection(
       };
       let errorReason: RunFailureReason = 'preparation';
       const tick = performance.now();
+      const attempt = startAttempt?.(requestIds[requestIndex], index + 1);
       try {
         let template = step.request;
         let item = scripts?.requests[requestIndex];
@@ -274,6 +279,7 @@ export async function runCollection(
               environmentName: scripts.environment.name,
               signal: controller.signal,
               send: sendScriptRequest,
+              record: attempt?.script,
             },
           );
           controller.signal.throwIfAborted();
@@ -284,6 +290,7 @@ export async function runCollection(
           }
           if (skipped) {
             row.skipped = true;
+            attempt?.skip();
             throw skippedRequest;
           }
           template = compileRequest(
@@ -327,7 +334,7 @@ export async function runCollection(
                 if (trace.response && hasPostScript) {
                   trace.response.hiddenByPostResponseScript = true;
                 }
-                recordRequestTrace('runner', trace, requestIds[requestIndex]);
+                attempt?.trace(trace);
               }),
             })
           : await browserSend(request, captureBody ? 16 * 1024 * 1024 : null);
@@ -368,17 +375,24 @@ export async function runCollection(
               environmentName: scripts.environment.name,
               signal: controller.signal,
               send: sendScriptRequest,
+              record: attempt?.script,
             },
           );
           controller.signal.throwIfAborted();
         }
         row.validation_ms = Math.round(performance.now() - validation);
       } catch (error) {
+        row.http_ms = Math.round(performance.now() - tick);
         if (controller.signal.aborted) {
+          attempt?.failure(row.http_ms, 'cancelled');
           outcome = 'cancelled';
           break;
         }
-        row.http_ms = Math.round(performance.now() - tick);
+        if (error !== skippedRequest)
+          attempt?.failure(
+            row.http_ms,
+            errorReason === 'transport' ? 'transmission' : 'preparation',
+          );
         if (error !== skippedRequest && errorReason !== 'script')
           addFailure(errorReason, redact(normalizeError(error).message));
       }

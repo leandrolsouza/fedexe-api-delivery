@@ -1,0 +1,3 @@
+O console de requisições do desktop agora agrupa cada tentativa de envio em uma linha expansível, tanto no editor quanto no runner de coleções.
+
+Veja as mensagens e os erros dos scripts de pré-requisição e pós-resposta, além dos resultados de pm.sendRequest, junto da requisição HTTP principal. O filtro Somente erros preserva o contexto completo de cada tentativa com falha.

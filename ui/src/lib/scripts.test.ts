@@ -1,8 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import { newRequest } from './models';
-import { executeScript } from './scripts';
+import type { Collection } from './models';
+import { executeScript, runScripts } from './scripts';
 
 describe('JavaScript de requisição', () => {
+  it('registra logs, chamadas auxiliares e erros em ordem e mascara valores do script', async () => {
+    const item = newRequest();
+    item.scripts = {
+      before: `
+        console.error('[Auth] m2m_client_id ausente', 401);
+        pm.sendRequest('https://example.test/token', (error, response) => {
+          console.warn('Status', response.code);
+          pm.environment.set('token', 'script-secret');
+          console.debug('Tokens', pm.environment.get('token'), pm.variables.get('configured'));
+          throw new Error('Falha com script-secret');
+        });
+      `,
+    };
+    const events: string[][] = [];
+    const result = await runScripts(
+      'before',
+      { scripts: {} } as Collection,
+      item,
+      { configured: 'configured-secret' },
+      new Map(),
+      [],
+      (message) => message,
+      undefined,
+      {
+        record: (label, { level, message }) => events.push([label, level, message]),
+        send: async () => ({
+          status: 401,
+          duration_ms: 2,
+          headers: [],
+          preview: '',
+          truncated: false,
+        }),
+      },
+    );
+    expect(result.failed).toBe(true);
+    expect(new Set(events.map(([label]) => label)).size).toBe(1);
+    expect(events.map(([, level, message]) => [level, message])).toEqual([
+      ['error', '[Auth] m2m_client_id ausente 401'],
+      ['error', 'pm.sendRequest · GET · 401'],
+      ['warn', 'Status 401'],
+      ['debug', 'Tokens [segredo] [segredo]'],
+      ['error', 'Falha com [segredo]'],
+    ]);
+  });
   it('substitui variáveis atuais e permite ignorar a etapa dentro de um callback HTTP', async () => {
     const output = await executeScript(
       `

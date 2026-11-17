@@ -104,7 +104,7 @@ import {
   send,
   sendScriptRequest,
 } from './lib/transport';
-import { recordEditorPreparationFailure } from './lib/request-console';
+import { consoleAttemptFactory } from './lib/request-console';
 import { RequestConsole } from './components/RequestConsole';
 import { cn, download, uid } from './lib/utils';
 import { Button } from './components/ui/button';
@@ -566,6 +566,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     const execution = new AbortController();
     manualExecution.current = execution;
     const results: ScriptResult[] = [];
+    const attempt = native ? consoleAttemptFactory('editor')(item.id) : undefined;
+    const scriptContext = {
+      environmentName: environment?.name,
+      signal: execution.signal,
+      send: sendScriptRequest,
+      record: attempt?.script,
+    };
     const sessionKey = JSON.stringify([collection.id, environment?.id]);
     const changes = scriptSessions.current.get(sessionKey) ?? new Map<string, string | null>();
     const secrets = [...collection.variables, ...(environment?.variables ?? [])]
@@ -596,12 +603,13 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         results,
         redact,
         undefined,
-        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+        scriptContext,
       );
       execution.signal.throwIfAborted();
       if (before.failed) throw new Error(t('Falha no script de pré-requisição.'));
       if (before.skipped) {
         skipped = true;
+        attempt?.skip();
         toast.info(t('Requisição ignorada pelo script.'));
         return;
       }
@@ -618,7 +626,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       prepared = true;
       const response = await send(
         compiled,
-        item.id,
+        attempt?.trace,
         Boolean(collection.scripts?.after?.trim() || item.scripts?.after?.trim()),
       );
       status = response.status;
@@ -633,13 +641,21 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         results,
         redact,
         response,
-        { environmentName: environment?.name, signal: execution.signal, send: sendScriptRequest },
+        scriptContext,
       );
     } catch (error) {
       errorText = redact(normalizeError(error).message);
       duration = Math.round(performance.now() - start);
-      if (native && !prepared)
-        recordEditorPreparationFailure(duration, error instanceof RequestResolutionError, item.id);
+      attempt?.failure(
+        duration,
+        execution.signal.aborted
+          ? 'cancelled'
+          : error instanceof RequestResolutionError
+            ? 'resolution'
+            : prepared
+              ? 'transmission'
+              : 'preparation',
+      );
       setErrors((current) => ({ ...current, [item.id]: errorText! }));
     } finally {
       if (changes.size) scriptSessions.current.set(sessionKey, changes);

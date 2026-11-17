@@ -3723,6 +3723,37 @@ kbd {
 .console-entry summary > * {
   margin-inline-start: 12px;
 }
+.console-attempt-events {
+  display: grid;
+  padding: 0 12px 10px 24px;
+}
+.console-attempt-events > .console-request-link {
+  justify-self: start;
+  margin-block: 4px 10px;
+}
+.console-attempt-events > :not(button) {
+  border-top: 1px solid var(--border);
+}
+.console-http-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 0;
+  overflow-wrap: anywhere;
+}
+.console-script {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 10px 0;
+}
+.console-script pre {
+  flex-basis: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .console-request-link {
   cursor: pointer;
   text-align: start;

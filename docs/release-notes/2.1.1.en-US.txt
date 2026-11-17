@@ -1,0 +1,3 @@
+The desktop request console now groups each send into a separate, expandable entry in both the editor and the collection runner.
+
+See pre-request and post-response script logs, errors, and pm.sendRequest results alongside the main HTTP request. The Errors only filter keeps the complete context for each failed attempt.
