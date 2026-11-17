@@ -3,6 +3,7 @@ import { t, useLocale, type Locale } from '../lib/i18n';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { Download } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { native, normalizeError } from '../lib/transport';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -107,6 +108,16 @@ export function UpdateSettings({ updates }: { updates: Updates }) {
         {updates.version && (
           <Button onClick={() => updates.setOpen(true)}>{t('Ver atualização')}</Button>
         )}
+        <Button
+          variant="outline"
+          onClick={() => {
+            void invoke('open_release_notes').catch(() =>
+              toast.error(t('Não foi possível abrir as notas da versão.')),
+            );
+          }}
+        >
+          {t('Notas da versão')}
+        </Button>
       </div>
     </section>
   );

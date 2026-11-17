@@ -1,0 +1,8 @@
+{
+  "app": {
+    "trayIcon": {
+      "iconPath": "icons/tray.png",
+      "tooltip": "Fedexe API"
+    }
+  }
+}

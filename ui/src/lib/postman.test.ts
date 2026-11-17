@@ -4,6 +4,42 @@ import { importPostman } from './postman';
 import { indexFolders } from './folders';
 
 describe('migração do Postman', () => {
+  it('preserva o formato raw e os campos GraphQL do Postman', () => {
+    const result = importPostman({
+      info: {
+        name: 'API',
+        schema: 'https://schema.postman.com/json/collection/v2.1.0/collection.json',
+      },
+      item: [
+        {
+          name: 'XML',
+          request: {
+            url: 'https://example.test',
+            body: {
+              mode: 'raw',
+              raw: '<item />',
+              options: { raw: { language: 'xml' } },
+            },
+          },
+        },
+        {
+          name: 'GraphQL',
+          request: {
+            url: 'https://example.test/graphql',
+            body: {
+              mode: 'graphql',
+              graphql: { query: '{ items { id } }', variables: '{"limit":2}' },
+            },
+          },
+        },
+      ],
+    })!;
+    expect(result.issues).toEqual([]);
+    expect(result.collection?.requests).toMatchObject([
+      { bodyType: 'text', rawFormat: 'xml', body: '<item />' },
+      { bodyType: 'graphql', graphql: { query: '{ items { id } }', variables: '{"limit":2}' } },
+    ]);
+  });
   it('reconstrói a hierarquia a partir dos caminhos salvos de pastas Postman', () => {
     const result = importPostman({
       info: {

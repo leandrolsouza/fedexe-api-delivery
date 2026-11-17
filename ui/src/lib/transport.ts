@@ -12,6 +12,7 @@ import {
   type Collection,
   type Environment,
   type RequestItem,
+  type RequestDefaults,
   DEFAULT_TIMEOUT_MS,
   type HttpRequest,
   type HttpResponse,
@@ -175,7 +176,12 @@ export async function runCollection(
   collection: NativeCollection,
   onProgress: (event: RunProgress) => void,
   requestIds: readonly string[] = [],
-  scripts?: { collection: Collection; environment: Environment; requests: RequestItem[] },
+  scripts?: {
+    collection: Collection;
+    environment: Environment;
+    requests: RequestItem[];
+    defaults?: RequestDefaults;
+  },
 ): Promise<RunResult> {
   const { iterations = 1, delay_ms: delay = 0 } = collection;
   const requestCount = collection.requests.length;
@@ -280,7 +286,14 @@ export async function runCollection(
             row.skipped = true;
             throw skippedRequest;
           }
-          template = compileRequest(item, scripts.collection, variables, false, true);
+          template = compileRequest(
+            item,
+            scripts.collection,
+            variables,
+            false,
+            true,
+            scripts.defaults,
+          );
           if (native) {
             template = addConsoleMasks(
               template,

@@ -88,13 +88,32 @@ async function main() {
     supplied.add(key);
     environment.variables.push({ id: key, key, value, enabled: true, secret: true });
   }
-  const requests = requestsForRun(
+  let requests = requestsForRun(
     collection,
     args.folder === undefined ? 'collection' : 'folder',
     args.folder,
     [],
   );
   if (!requests.length) return fail('The selected collection or folder has no requests.');
+  let options;
+  if (load) {
+    try {
+      options = readJson(args.scenario);
+      if (!options || typeof options !== 'object' || Array.isArray(options)) throw new Error();
+    } catch {
+      return fail('Cannot read the load scenario.');
+    }
+    const { request_ids: ids, ...nativeOptions } = options;
+    options = nativeOptions;
+    if (ids !== undefined) {
+      const available = new Set(requests.map(({ id }) => id));
+      if (!Array.isArray(ids) || !ids.length || ids.some((id) => !available.has(id))) {
+        return fail('The scenario must select at least one request from the selected scope.');
+      }
+      const selected = new Set(ids);
+      requests = requests.filter(({ id }) => selected.has(id));
+    }
+  }
   for (const request of requests) {
     for (const header of request.headers) {
       if (!header.enabled || !header.secret || header.value) continue;
@@ -111,16 +130,16 @@ async function main() {
   let report;
   try {
     const scripts = (item) => item.scripts?.before?.trim() || item.scripts?.after?.trim();
-    if (load && (scripts(collection) || requests.some(scripts))) {
+    if (options?.collection_setup === true) {
+      return fail('Running a collection pre-request script before load requires the desktop app.');
+    }
+    if (load && (scripts(collection) || requests.some(scripts)) && options?.skip_scripts !== true) {
       return fail(
-        'Load scenarios support response tests and extraction. Remove JavaScript scripts from the selected flow.',
+        'The selected flow contains JavaScript. Set skip_scripts to true in the scenario to run without scripts.',
       );
     }
     const run = load
-      ? await runLoad(
-          executable,
-          JSON.stringify({ collection: input, options: readJson(args.scenario) }),
-        )
+      ? await runLoad(executable, JSON.stringify({ collection: input, options }))
       : spawnSync(executable, {
           input: JSON.stringify(input),
           encoding: 'utf8',

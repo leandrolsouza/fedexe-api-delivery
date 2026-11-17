@@ -24,8 +24,115 @@ import {
   validCollection,
   variablesFor,
 } from './models';
+import { resolveTheme } from './themes';
 
 describe('workspace e coleções', () => {
+  it('restaura temas antigos e preserva escolhas manuais e do sistema no backup', () => {
+    const workspace = createWorkspace();
+    const restoredSettings = () =>
+      loadWorkspace(JSON.stringify(exportableWorkspace(workspace))).settings;
+
+    workspace.settings.theme = 'dark';
+    expect(resolveTheme(restoredSettings(), 'light')).toBe('dark');
+    workspace.settings.theme = 'system';
+    expect(resolveTheme(restoredSettings(), 'light')).toBe('light');
+    expect(resolveTheme(restoredSettings(), 'dark')).toBe('dark');
+
+    Object.assign(workspace.settings, {
+      manualTheme: 'github-light',
+      lightTheme: 'ayu-light',
+      darkTheme: 'dracula',
+    });
+    const settings = restoredSettings();
+    expect(settings.manualTheme).toBe('github-light');
+    expect(resolveTheme(settings, 'light')).toBe('ayu-light');
+    expect(resolveTheme(settings, 'dark')).toBe('dracula');
+    expect(resolveTheme({ ...settings, theme: 'catppuccin-mocha' }, 'light')).toBe(
+      'catppuccin-mocha',
+    );
+  });
+
+  it('preserva o timeout padrão no backup e prioriza o timeout da requisição', () => {
+    const workspace = loadWorkspace(JSON.stringify(createWorkspace()));
+    expect(workspace.settings.defaultTimeoutMs).toBeUndefined();
+    workspace.settings.defaultTimeoutMs = 12_000;
+
+    const restored = loadWorkspace(JSON.stringify(exportableWorkspace(workspace)));
+    const collection = restored.collections[0];
+    const request = { ...newRequest(), url: 'https://example.test' };
+    expect(compileRequest(request, collection, {}, true, false, restored.settings).timeout_ms).toBe(
+      12_000,
+    );
+    const template = compileRequest(
+      { ...request, timeoutMs: 2500 },
+      collection,
+      {},
+      false,
+      true,
+      restored.settings,
+    );
+    expect(resolveHttpRequest(template, {}).timeout_ms).toBe(2500);
+  });
+
+  it('preserva a política de redirecionamento no backup e respeita a escolha por requisição', () => {
+    const workspace = createWorkspace();
+    const request = { ...newRequest(), url: 'https://example.test' };
+    const collection = workspace.collections[0];
+    expect(compileRequest(request, collection, {}).redirect_policy).toBeUndefined();
+
+    workspace.settings.defaultRedirectPolicy = 'same_origin';
+    const { settings } = loadWorkspace(JSON.stringify(exportableWorkspace(workspace)));
+    expect(compileRequest(request, collection, {}, true, false, settings).redirect_policy).toBe(
+      'same_origin',
+    );
+    const template = compileRequest(
+      { ...request, redirectPolicy: 'none' },
+      collection,
+      {},
+      false,
+      true,
+      settings,
+    );
+    expect(resolveHttpRequest(template, {}).redirect_policy).toBe('none');
+  });
+
+  it('preserva formatos raw e GraphQL ao recarregar e compila seus corpos', () => {
+    const workspace = createWorkspace();
+    const collection = workspace.collections[0];
+    collection.requests = [
+      {
+        ...newRequest(),
+        url: 'https://example.test',
+        bodyType: 'text',
+        rawFormat: 'xml',
+        body: '<item />',
+      },
+      {
+        ...newRequest(),
+        url: 'https://example.test/graphql',
+        method: 'POST',
+        bodyType: 'graphql',
+        graphql: {
+          query: 'query ($id: ID!) { item(id: $id) { name } }',
+          variables: '{"id":"{{id}}"}',
+        },
+      },
+    ];
+    const restored = loadWorkspace(JSON.stringify(workspace)).collections[0];
+    const [xml, graphql] = restored.requests;
+    expect(compileRequest(xml, restored, {})).toMatchObject({
+      body: '<item />',
+      headers: expect.arrayContaining([['Content-Type', 'application/xml']]),
+    });
+    const template = compileRequest(graphql, restored, {}, false, true);
+    expect(template.validate_json).toBe(true);
+    const request = resolveHttpRequest(template, { id: '42' });
+    expect(JSON.parse(request.body!)).toEqual({
+      query: graphql.graphql?.query,
+      variables: { id: '42' },
+    });
+    expect(request.headers).toContainEqual(['Content-Type', 'application/json']);
+  });
   it('omite valores marcados no backup sem alterar o workspace local', () => {
     const workspace = createWorkspace();
     const collection = workspace.collections[0];
@@ -225,11 +332,27 @@ describe('workspace e coleções', () => {
       variables: [
         { name: 'base', source: 'environment' },
         { name: 'header', source: 'collection' },
-        { name: 'token', source: undefined },
+        { name: 'token', source: 'environment', empty: true },
         { name: 'filter', source: undefined },
         { name: 'field', source: undefined },
       ],
     });
+  });
+  it('mostra a origem do Bearer herdado antes e depois de o script preencher o token', () => {
+    const collection = createWorkspace().collections[0];
+    const request = { ...newRequest(), url: 'https://example.test/pessoas' };
+    collection.auth = { ...request.auth, type: 'bearer', token: '{{access_token}}' };
+    request.auth.type = 'inherit';
+    collection.variables = [{ ...pair('access_token'), secret: true }];
+
+    expect(variablesFor(collection)).not.toHaveProperty('access_token');
+    expect(requestVariables(request, collection).variables).toEqual([
+      { name: 'access_token', source: 'collection', empty: true },
+    ]);
+    const session = new Map([['access_token', 'token-de-teste']]);
+    expect(requestVariables(request, collection, undefined, session).variables).toEqual([
+      { name: 'access_token', source: 'session' },
+    ]);
   });
   it('importa o JSON do protótipo anterior', () => {
     const collection = importCollection({

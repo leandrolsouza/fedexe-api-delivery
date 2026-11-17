@@ -128,6 +128,33 @@ fn release_response_bodies(app: State<'_, App>, ids: Vec<String>) {
 
 #[cfg(windows)]
 #[tauri::command]
+async fn check_backup_attachments(
+    paths: Vec<std::path::PathBuf>,
+) -> Result<Vec<Option<bool>>, String> {
+    use std::path::{Component, Prefix};
+
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|path| match path.components().next() {
+                Some(Component::Prefix(prefix))
+                    if !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) =>
+                {
+                    None
+                }
+                _ => Some(
+                    path.is_absolute()
+                        && std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()),
+                ),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+#[tauri::command]
 async fn pick_body_file(
     window: tauri::WebviewWindow,
     title: String,
@@ -242,9 +269,22 @@ async fn oauth_connect(app: State<'_, App>, provider: http::oauth::Provider) -> 
 
 #[cfg(windows)]
 fn open_oauth_browser(url: &url::Url) -> Result<(), String> {
+    open_in_browser(url.as_str())
+        .map_err(|_| "Não foi possível abrir o navegador para a autorização OAuth 2.0.".into())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn open_release_notes() -> Result<(), String> {
+    open_in_browser("https://github.com/leandrolsouza/fedexe-api-delivery/releases")
+        .map_err(|_| "Não foi possível abrir as notas da versão.".into())
+}
+
+#[cfg(windows)]
+fn open_in_browser(url: &str) -> Result<(), ()> {
     use std::ptr::null;
     use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
-    let url: Vec<u16> = url.as_str().encode_utf16().chain([0]).collect();
+    let url: Vec<u16> = url.encode_utf16().chain([0]).collect();
     let result = unsafe {
         ShellExecuteW(
             std::ptr::null_mut(),
@@ -256,7 +296,7 @@ fn open_oauth_browser(url: &url::Url) -> Result<(), String> {
         )
     };
     if result as isize <= 32 {
-        return Err("Não foi possível abrir o navegador para a autorização OAuth 2.0.".into());
+        return Err(());
     }
     Ok(())
 }
@@ -281,7 +321,27 @@ fn main() {
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(updates::PendingUpdate::default());
+        .manage(updates::PendingUpdate::default())
+        .on_tray_icon_event(|app, event| {
+            use tauri::{
+                Manager,
+                tray::{MouseButton, MouseButtonState, TrayIconEvent},
+            };
+
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        });
     builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
@@ -313,6 +373,7 @@ fn main() {
             save_response_body,
             #[cfg(windows)]
             pick_body_file,
+            check_backup_attachments,
             workspace::load_workspace,
             workspace::save_workspace,
             #[cfg(windows)]
@@ -341,6 +402,8 @@ fn main() {
             updates::check_update,
             #[cfg(windows)]
             updates::install_update,
+            #[cfg(windows)]
+            open_release_notes,
         ])
         .run(tauri::generate_context!())
         .expect("Fedexe API");

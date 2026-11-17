@@ -6,6 +6,8 @@ O roadmap é de um cliente HTTP local, não de um dashboard de métricas. A inte
 
 Visual: superfícies claras, acentos violeta, cores semânticas por método HTTP, fonte Inter empacotada localmente, espaços consistentes, estados vazios, foco visível e feedback de ações. Há temas claro, escuro e do sistema, além de layout compacto e adaptação a janelas menores. A interface está em português.
 
+O [Style Guide do Fedexe API](STYLE-GUIDE.md) detalha a paleta, a tipografia, os espaçamentos e os ícones do editor nos temas claro e escuro.
+
 ## Navegação
 
 - **Coleções:** árvore de coleções/pastas, busca, menus contextuais, duplicação, renomeação, exclusão com confirmação, movimentação entre pastas e ordenação por arrastar ou pelo menu. Abas mantêm rascunhos separados. `Ctrl+S` salva a requisição.
@@ -15,7 +17,8 @@ Visual: superfícies claras, acentos violeta, cores semânticas por método HTTP
 - **Runner:** coleção inteira, pasta ou requisições selecionadas. Exige a escolha do ambiente e executa na ordem salva. Aceita de 1 a 100 iterações e um intervalo de até 60.000 ms entre requisições, inclusive entre iterações. A primeira etapa começa imediatamente e é possível cancelar durante a espera. Os testes verificam status, presença ou valor exato de header e campos JSON. No desktop, um valor igual em qualquer ocorrência de um header repetido satisfaz a regra. A extração por JSON Pointer disponibiliza strings, números e booleanos às etapas seguintes da mesma iteração. Cada iteração começa com as variáveis originais.
 - **Histórico:** até 300 metadados de envios avulsos, busca, filtros e reabertura da requisição original. Não persiste corpos de resposta nem headers de autorização.
 - **Console de requisições:** no desktop, reúne em memória os últimos 100 envios do editor e etapas do runner. Filtre pela origem ou por erro e abra um registro para conferir a requisição resolvida, os redirecionamentos e a resposta. A prévia tem até 8 KiB. JSON que não pode ser mascarado com segurança aparece como indisponível. O motor mascara credenciais, valores marcados como secretos e valores extraídos pelo runner antes de enviar os registros ao painel.
-- **Configurações:** tema, densidade, quebra de linha, nome do workspace, backup e restauração.
+- **Configurações:** menu lateral com Aparência, Temas, Padrões de requisição, Dados e backups e Atualizações e sobre.
+- **Temas:** galeria com Fedexe Claro, Fedexe Escuro, GitHub Light, Ayu Light, Dracula e Catppuccin Mocha. Escolha um tema fixo em **Manual** ou configure os temas claro e escuro em **Seguir o sistema**.
 - **Produtividade:** busca global (`Ctrl+K`), envio (`Ctrl+Enter`), nova requisição (`Ctrl+N`), alternância do painel (`Ctrl+\`), geração de cURL com placeholders e guia rápido dentro do app.
 
 ## Stack
@@ -42,7 +45,9 @@ O salvamento automático grava novas versões das credenciais antes de substitui
 
 Ao compartilhar, revise texto livre, como descrições e corpos de requisição, e use variáveis marcadas como secretas para inserir credenciais nesses campos. As exportações de configuração e os exemplos cURL aplicam as regras acima. O download de uma resposta salva o conteúdo retornado pelo servidor.
 
-O timeout padrão é de 30 segundos. No desktop, o endpoint pode manter a resposta 3xx ou seguir até dez redirecionamentos dentro da origem original (protocolo, host e porta), com validação TLS ativa. Um redirecionamento que exige repetir um corpo transmitido por streaming pode permanecer como resposta 3xx. No navegador, `fetch` pode combinar headers repetidos, bloqueia redirecionamentos e restringe corpos em GET/HEAD. O runner mostra a etapa atual e atualiza resultados e tempos conforme cada etapa termina. O relatório final do desktop está disponível ao concluir a rodada.
+O editor lembra localmente a última disposição dos painéis e a posição do divisor.
+
+O timeout padrão é de 30 segundos e pode ser alterado em **Configurações → Padrões de requisição**. No desktop, a mesma seção define a política padrão de redirecionamento. O editor e o runner priorizam os valores definidos por requisição. A regra inicial mantém a resposta 3xx. A opção **Seguir apenas na mesma origem** permite até dez redirecionamentos dentro da origem original (protocolo, host e porta), com validação TLS ativa. Um redirecionamento que exige repetir um corpo transmitido por streaming pode permanecer como resposta 3xx. No navegador, `fetch` pode combinar headers repetidos, bloqueia redirecionamentos e restringe corpos em GET/HEAD. O runner mostra a etapa atual e atualiza resultados e tempos conforme cada etapa termina. O relatório final do desktop está disponível ao concluir a rodada.
 
 ## Verificação
 

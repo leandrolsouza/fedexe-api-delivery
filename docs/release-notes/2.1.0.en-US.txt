@@ -1,0 +1,7 @@
+Choose from six interface themes, or set separate light and dark themes that follow your system preference.
+
+Restore a workspace from a local Fedexe backup. Review the backup before replacing your collections, environments, and settings, and export a copy of your current workspace from the confirmation screen.
+
+Inspect throughput, p95 and p99 latency, and the error rate over time in load tests. The timeline is also included in desktop and CLI JSON reports.
+
+The request editor now highlights variables in URLs and provides dedicated controls for request bodies and timeouts.

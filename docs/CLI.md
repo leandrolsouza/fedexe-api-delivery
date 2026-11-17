@@ -26,7 +26,11 @@ Por padrão a execução continua após uma falha. Com `--stop-on-failure`, o re
 
 ## Testes de carga
 
-No desktop, abra o **Runner de coleções**, selecione **Teste de carga** e escolha a coleção ou pasta e o ambiente. Use requisições salvas na ordem em que o usuário as executaria. Para encadear autenticação e dados, configure extrações JSON Pointer e use as variáveis extraídas nas etapas seguintes. Cada VU recomeça com as variáveis originais em cada rodada. Uma falha declarativa, de extração ou de transporte encerra a rodada daquele VU. O modo de carga aceita testes e extrações declarativos e exige um fluxo sem scripts JavaScript.
+No desktop, abra o **Runner de coleções**, selecione **Teste de carga** e escolha a coleção ou pasta e o ambiente. Use requisições salvas na ordem em que o usuário as executaria. Para encadear autenticação e dados, configure extrações JSON Pointer e use as variáveis extraídas nas etapas seguintes. Cada VU recomeça com as variáveis originais em cada rodada. Uma falha declarativa, de extração ou de transporte encerra a rodada daquele VU.
+
+O modo de carga executa testes e extrações declarativos. Se o fluxo usa JavaScript, confirme **Executar este teste de carga sem scripts JavaScript** no desktop ou use `"skip_scripts": true` no cenário do CLI. Para manter a autenticação e a preparação dos dados durante o teste de carga, configure as etapas correspondentes como requisições, variáveis e extrações da coleção.
+
+No desktop, também é possível escolher **Rodar o pré-script da coleção uma vez antes da carga** para obter um token ou inicializar variáveis com o script existente. O runner usa as variáveis em todos os VUs daquela execução e descarta os valores no fim. As chamadas do pré-script ficam fora das métricas de carga. Para testes que excedem a validade do token, use uma etapa declarativa de login no fluxo para renová-lo durante a execução.
 
 Use **Exportar cenário** para gerar o arquivo do CLI. Exemplo de rampa de 2 a 20 VUs em 30 segundos, seguida de 90 segundos com 20 VUs:
 
@@ -59,6 +63,14 @@ Configure de 1 a 500 VUs e de 1 a 86.400 segundos de carga. A pausa opcional `th
 O CLI emite uma amostra JSON por segundo em stderr, com RPS da janela mais recente. O resultado final em stdout e no arquivo de relatório contém RPS médio, latência média, p95 e p99, contagem de HTTP 4xx/5xx, erros de transporte, timeouts e falhas de validação. Cada requisição entra uma vez na taxa de erros, mesmo que pertença a mais de uma categoria. A taxa inclui HTTP 4xx/5xx e erros de transporte. Os percentis usam o método de posto mais próximo com histogramas de memória limitada. Latências acima de 10 s têm resolução reduzida no relatório. A comparação com o limite de p99 usa as amostras em milissegundos sem o arredondamento do histograma.
 
 O passo de CI pode executar o comando `load` diretamente. O código `0` indica uma execução concluída com amostras e todos os limites configurados atendidos. O código `1` indica limite excedido e reprova o passo. O código `2` cobre configuração inválida, erro de preparação, cancelamento ou falta de amostras. Os dois limites são opcionais e aceitam igualdade. O cenário e o relatório exportados contêm configurações numéricas e métricas agregadas.
+
+O relatório inclui `thresholds` com valor medido, limite e veredito de cada critério. `requests_by_step` agrega chamadas, erros, porcentagem e contagem por status HTTP 4xx/5xx em `http_errors_by_status`. O campo `step` começa em 1 e segue a ordem da coleção ou pasta selecionada. Falhas declarativas aparecem separadamente da taxa de erros. O desktop mostra o nome de cada requisição nas linhas com falhas. O JSON usa os números das etapas.
+
+A aba **Evolução** e o campo `timeline` do relatório mostram RPS, p95, p99 e taxa de erros por janela de tempo, a partir do início da carga. O horário em `first_error_ms` corresponde à conclusão da primeira requisição com erro HTTP ou de transporte na janela. Janelas sem requisições têm RPS zero e percentis e taxa de erros ausentes. A janela mínima é de um segundo e aumenta em testes longos para limitar o histórico. A última janela pode incluir requisições concluídas após o fim da janela de carga.
+
+Ao iniciar um teste no desktop, o runner abre a tela de resultados em largura total. No teste de carga, ela oferece **Resumo** e **Evolução**. No teste funcional, ela mantém as etapas, os filtros e o relatório. Em ambos, use **Voltar à configuração** para ajustar o cenário e **Ver resultados** para reabrir o último teste.
+
+Ao escolher uma pasta no desktop, marque somente as requisições que devem rodar. O cenário de carga exportado para uma seleção parcial inclui `request_ids`. O CLI executa esses IDs no escopo informado e segue a ordem salva da coleção.
 
 ## GitHub Actions
 

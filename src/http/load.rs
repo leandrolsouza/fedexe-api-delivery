@@ -25,6 +25,10 @@ pub struct Options {
     phase_seconds: u64,
     #[serde(default)]
     think_ms: u64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    skip_scripts: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    collection_setup: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_p99_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,6 +92,72 @@ struct Samples {
     above_p99_limit: u64,
     total_ms: f64,
     latency: BTreeMap<u64, u64>,
+    requests_by_step: Vec<RequestCounts>,
+    window: Window,
+}
+
+#[derive(Default)]
+struct Window {
+    requests: u64,
+    errors: u64,
+    first_error_ms: Option<u64>,
+    latency: BTreeMap<u64, u64>,
+}
+
+#[derive(Clone, Serialize)]
+struct TimelinePoint {
+    start_ms: u64,
+    end_ms: u64,
+    requests: u64,
+    errors: u64,
+    rps: f64,
+    p95_ms: Option<u64>,
+    p99_ms: Option<u64>,
+    error_percent: Option<f64>,
+    first_error_ms: Option<u64>,
+}
+
+impl Window {
+    fn finish(self, from: Duration, to: Duration) -> TimelinePoint {
+        let has_requests = self.requests > 0;
+        TimelinePoint {
+            start_ms: from.as_millis() as u64,
+            end_ms: to.as_millis() as u64,
+            requests: self.requests,
+            errors: self.errors,
+            rps: self.requests as f64 / (to - from).as_secs_f64().max(f64::EPSILON),
+            p95_ms: percentile(&self.latency, self.requests, 95),
+            p99_ms: percentile(&self.latency, self.requests, 99),
+            error_percent: has_requests.then(|| 100.0 * self.errors as f64 / self.requests as f64),
+            first_error_ms: self.first_error_ms,
+        }
+    }
+}
+
+fn percentile(latency: &BTreeMap<u64, u64>, requests: u64, percent: u64) -> Option<u64> {
+    let rank = (requests * percent).div_ceil(100);
+    let mut seen = 0;
+    latency.iter().find_map(|(&ms, &count)| {
+        seen += count;
+        (seen >= rank).then_some(ms)
+    })
+}
+
+#[derive(Default, Serialize)]
+struct RequestCounts {
+    requests: u64,
+    errors: u64,
+    http_errors_by_status: BTreeMap<u16, u64>,
+    transport_errors: u64,
+    validation_failures: u64,
+}
+
+#[derive(Serialize)]
+struct RequestStats {
+    step: usize,
+    #[serde(flatten)]
+    counts: RequestCounts,
+    error_percent: Option<f64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -103,26 +173,38 @@ pub struct Metrics {
     transport_errors: u64,
     timeouts: u64,
     validation_failures: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interval: Option<TimelinePoint>,
 }
 
 impl Samples {
     fn record(
         &mut self,
+        index: usize,
         ms: u64,
         row: &ResultRow,
         error: Option<&(FailureReason, String)>,
         options: &Options,
+        elapsed: Duration,
     ) {
         self.requests += 1;
-        let http_error = row
-            .status
-            .is_some_and(|status| (400..600).contains(&status));
+        let status = row.status.filter(|status| (400..600).contains(status));
         let transport_error = error.is_some();
-        self.errors += u64::from(http_error || transport_error);
-        self.http_errors += u64::from(http_error);
+        let failed = u64::from(status.is_some() || transport_error);
+        let validation_failed = u64::from(!row.failures.is_empty());
+        let step = &mut self.requests_by_step[index];
+        step.requests += 1;
+        step.errors += failed;
+        if let Some(status) = status {
+            *step.http_errors_by_status.entry(status).or_default() += 1;
+        }
+        step.transport_errors += u64::from(transport_error);
+        step.validation_failures += validation_failed;
+        self.errors += failed;
+        self.http_errors += u64::from(status.is_some());
         self.transport_errors += u64::from(transport_error);
         self.timeouts += u64::from(error.is_some_and(|(_, message)| message == TIMEOUT_MESSAGE));
-        self.validation_failures += u64::from(!row.failures.is_empty());
+        self.validation_failures += validation_failed;
         self.total_ms += ms as f64;
         self.above_p99_limit += u64::from(options.max_p99_ms.is_some_and(|limit| ms > limit));
         // Keep histogram memory bounded for long runs. Larger samples use wider buckets.
@@ -138,16 +220,24 @@ impl Samples {
         } else {
             ms.checked_next_power_of_two().unwrap_or(u64::MAX)
         };
+        // Preserve the threshold boundary when rounding wide buckets upward.
+        let bucket = options
+            .max_p99_ms
+            .filter(|limit| ms <= *limit)
+            .map_or(bucket, |limit| bucket.min(limit));
         *self.latency.entry(bucket).or_default() += 1;
+        self.window.requests += 1;
+        self.window.errors += failed;
+        if failed > 0 {
+            self.window
+                .first_error_ms
+                .get_or_insert(elapsed.as_millis() as u64);
+        }
+        *self.window.latency.entry(bucket).or_default() += 1;
     }
 
     fn percentile(&self, percent: u64) -> Option<u64> {
-        let rank = (self.requests * percent).div_ceil(100);
-        let mut seen = 0;
-        self.latency.iter().find_map(|(&ms, &count)| {
-            seen += count;
-            (seen >= rank).then_some(ms)
-        })
+        percentile(&self.latency, self.requests, percent)
     }
 
     fn snapshot(&self, elapsed: Duration, rate_count: u64, rate_elapsed: Duration) -> Metrics {
@@ -164,6 +254,7 @@ impl Samples {
             transport_errors: self.transport_errors,
             timeouts: self.timeouts,
             validation_failures: self.validation_failures,
+            interval: None,
         }
     }
 }
@@ -177,6 +268,31 @@ pub struct Report {
     metrics: Metrics,
     p99_passed: Option<bool>,
     error_rate_passed: Option<bool>,
+    thresholds: Thresholds,
+    requests_by_step: Vec<RequestStats>,
+    timeline: Vec<TimelinePoint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preparation_failure: Option<PreparationFailure>,
+}
+
+#[derive(Serialize)]
+struct Threshold<T> {
+    measured: Option<T>,
+    limit: Option<T>,
+    passed: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct Thresholds {
+    p99_ms: Threshold<u64>,
+    error_percent: Threshold<f64>,
+}
+
+#[derive(Serialize)]
+struct PreparationFailure {
+    step: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missing_variable: Option<String>,
 }
 
 async fn worker(
@@ -186,23 +302,32 @@ async fn worker(
     samples: &Mutex<Samples>,
     start: Instant,
     slot: u32,
-) -> bool {
+) -> Result<(), PreparationFailure> {
     let (offset, end) = options.window(slot);
     let end = start + end;
     tokio::time::sleep_until(start + offset).await;
     let mut variables = BTreeMap::new();
     while Instant::now() < end {
         variables.clone_from(&collection.variables);
-        for step in &collection.requests {
+        for (index, step) in collection.requests.iter().enumerate() {
             if Instant::now() >= end {
-                return true;
+                return Ok(());
             }
             let mut row = ResultRow::new(step);
             let started = Instant::now();
             let result = run_step(clients, step.clone(), &mut variables, &mut row).await;
             let error = result.as_ref().err();
-            if error.is_some_and(|(reason, _)| *reason == FailureReason::Preparation) {
-                return false;
+            if let Some((FailureReason::Preparation, message)) = error {
+                let missing_variable = message.strip_prefix("Variável ausente: ").filter(|name| {
+                    name.len() <= 128
+                        && name.bytes().all(|byte| {
+                            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
+                        })
+                });
+                return Err(PreparationFailure {
+                    step: index + 1,
+                    missing_variable: missing_variable.map(str::to_owned),
+                });
             }
             let ms = if error.is_some() {
                 started.elapsed().as_millis()
@@ -212,7 +337,7 @@ async fn worker(
             samples
                 .lock()
                 .unwrap()
-                .record(ms as u64, &row, error, options);
+                .record(index, ms as u64, &row, error, options, start.elapsed());
             if options.think_ms > 0 {
                 let next = Instant::now() + Duration::from_millis(options.think_ms);
                 tokio::time::sleep_until(next.min(end)).await;
@@ -224,7 +349,7 @@ async fn worker(
         }
         tokio::task::yield_now().await;
     }
-    true
+    Ok(())
 }
 
 pub async fn run(
@@ -237,7 +362,12 @@ pub async fn run(
     if !options.valid() || collection.requests.is_empty() {
         return Err("Configuração de carga inválida.".into());
     }
-    let samples = Mutex::new(Samples::default());
+    let samples = Mutex::new(Samples {
+        requests_by_step: (0..collection.requests.len())
+            .map(|_| RequestCounts::default())
+            .collect(),
+        ..Samples::default()
+    });
     let start = Instant::now();
     let mut workers: FuturesUnordered<_> = (0..options.vus)
         .map(|slot| worker(clients, &collection, &options, &samples, start, slot))
@@ -246,28 +376,45 @@ pub async fn run(
         tokio::time::interval_at(start + Duration::from_secs(1), Duration::from_secs(1));
     clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut previous = (start, 0);
-    let outcome = loop {
+    let duration = Duration::from_secs(options.duration_seconds);
+    // Target at most 600 windows during the load phase. Drain is included in the final window.
+    let window_width = Duration::from_secs(options.duration_seconds.div_ceil(600));
+    let mut next_window = window_width;
+    let mut window_start = Duration::ZERO;
+    let mut timeline = Vec::new();
+    let (outcome, preparation_failure) = loop {
         tokio::select! {
             biased;
-            _ = &mut cancel => break "cancelled",
-            _ = clock.tick() => {
+            _ = &mut cancel => break ("cancelled", None),
+            tick = clock.tick() => {
                 let now = Instant::now();
-                let samples = samples.lock().unwrap();
-                let snapshot = samples.snapshot(now - start, samples.requests - previous.1, now - previous.0);
+                let elapsed = now - start;
+                let mut samples = samples.lock().unwrap();
+                let mut snapshot = samples.snapshot(elapsed, samples.requests - previous.1, now - previous.0);
+                if elapsed < duration && tick - start >= next_window {
+                    let point = std::mem::take(&mut samples.window).finish(window_start, elapsed);
+                    window_start = elapsed;
+                    next_window = window_width * (elapsed.as_secs().div_euclid(window_width.as_secs()) as u32 + 1);
+                    timeline.push(point.clone());
+                    snapshot.interval = Some(point);
+                }
                 previous = (now, samples.requests);
                 drop(samples);
                 progress(snapshot);
             }
             result = workers.next() => match result {
-                Some(true) => {}
-                Some(false) => break "preparation_error",
-                None => break "completed",
+                Some(Ok(())) => {}
+                Some(Err(failure)) => break ("preparation_error", Some(failure)),
+                None => break ("completed", None),
             }
         }
     };
     drop(workers);
     let elapsed = start.elapsed();
-    let samples = samples.into_inner().unwrap();
+    let mut samples = samples.into_inner().unwrap();
+    if elapsed.as_millis() > window_start.as_millis() || samples.window.requests > 0 {
+        timeline.push(std::mem::take(&mut samples.window).finish(window_start, elapsed));
+    }
     let metrics = samples.snapshot(elapsed, samples.requests, elapsed);
     let completed = outcome == "completed" && samples.requests > 0;
     let p99_passed = options.max_p99_ms.filter(|_| completed).map(|_| {
@@ -288,6 +435,32 @@ pub async fn run(
     } else {
         0
     };
+    let thresholds = Thresholds {
+        p99_ms: Threshold {
+            measured: metrics.p99_ms,
+            limit: options.max_p99_ms,
+            passed: p99_passed,
+        },
+        error_percent: Threshold {
+            measured: metrics.error_percent,
+            limit: options.max_error_percent,
+            passed: error_rate_passed,
+        },
+    };
+    let requests_by_step = samples
+        .requests_by_step
+        .into_iter()
+        .enumerate()
+        .map(|(index, counts)| {
+            let error_percent = (counts.requests > 0)
+                .then(|| 100.0 * counts.errors as f64 / counts.requests as f64);
+            RequestStats {
+                step: index + 1,
+                counts,
+                error_percent,
+            }
+        })
+        .collect();
     Ok(Report {
         schema_version: 1,
         exit_code,
@@ -296,6 +469,10 @@ pub async fn run(
         metrics,
         p99_passed,
         error_rate_passed,
+        thresholds,
+        requests_by_step,
+        timeline,
+        preparation_failure,
     })
 }
 

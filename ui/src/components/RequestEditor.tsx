@@ -15,7 +15,6 @@ import {
   Copy,
   CornerDownLeft,
   Database,
-  FileJson2,
   Info,
   LoaderCircle,
   LockKeyhole,
@@ -36,19 +35,21 @@ import {
   authHeaderConflict,
   compileRequestSnippet,
   DEFAULT_TIMEOUT_MS,
-  MAX_TIMEOUT_MS,
   effectiveAuth,
   exportableRequest,
   generatedHeaders,
   headerEntries,
   isSecretHeader,
+  MAX_TIMEOUT_MS,
   requestVariables,
+  resolvedVariables,
   syncUrl,
   urlWithQuery,
   type Collection,
   type Environment,
   type HttpResponse,
   type Method,
+  type RedirectPolicy,
   type RequestItem,
   type Test,
 } from '../lib/models';
@@ -61,14 +62,15 @@ import { PairEditor } from './PairEditor';
 import { CodeViewer } from './CodeViewer';
 import { hasScripts, type ScriptResult } from '../lib/scripts';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
-import { FileBodyEditor } from './FileBodyEditor';
 import { AuthFields, AuthType, authLabel } from './AuthFields';
+import { VariableUrlInput, type EditableVariable } from './VariableUrlInput';
 
 export type RequestLayout = 'request' | 'split' | 'response';
 
 const ScriptEditor = lazy(() => import('./ScriptEditor'));
-const minRequestShare = 25;
-const maxRequestShare = 75;
+const RequestBody = lazy(() => import('./RequestBody'));
+export const minRequestShare = 25;
+export const maxRequestShare = 75;
 
 function TestResultList({ results }: { results: ScriptResult[] }) {
   return (
@@ -103,8 +105,13 @@ export function MethodBadge({ method, small = false }: { method: string; small?:
 
 export function RequestEditor({
   request,
+  defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
+  defaultRedirectPolicy = 'none',
+  initialTab = 'params',
   collection,
   environment,
+  sessionVariables,
+  onSaveVariable,
   onChange,
   onSave,
   dirty,
@@ -122,8 +129,13 @@ export function RequestEditor({
   onRequestShareChange,
 }: {
   request: RequestItem;
+  defaultTimeoutMs?: number;
+  defaultRedirectPolicy?: RedirectPolicy;
+  initialTab?: 'params' | 'body';
   collection: Collection;
   environment?: Environment;
+  sessionVariables?: ReadonlyMap<string, string | null>;
+  onSaveVariable: (variable: EditableVariable, value: string) => void;
   onChange: (value: RequestItem) => void;
   onSave: () => void;
   dirty: boolean;
@@ -140,7 +152,7 @@ export function RequestEditor({
   requestShare: number;
   onRequestShareChange: (share: number) => void;
 }) {
-  const [tab, setTab] = useState('params');
+  const [tab, setTab] = useState<string>(initialTab);
   const [urlInput, setUrlInput] = useState<string>();
   const [responseTab, setResponseTab] = useState('body');
   const [format, setFormat] = useState('pretty');
@@ -158,11 +170,12 @@ export function RequestEditor({
   const update = (value: Partial<RequestItem>) => onChange({ ...request, ...value });
   let references: ReturnType<typeof requestVariables> | undefined;
   try {
-    references = requestVariables(request, collection, environment);
+    references = requestVariables(request, collection, environment, sessionVariables);
   } catch {
     // The send action reports request configuration errors.
   }
   const missing = references?.variables.filter(({ source }) => !source) ?? [];
+  const empty = references?.variables.filter(({ empty }) => empty) ?? [];
   const tabs = [
     {
       id: 'params',
@@ -319,10 +332,25 @@ export function RequestEditor({
             </select>
             <ChevronDown size={13} />
           </div>
-          <input
+          <VariableUrlInput
             aria-label={t('URL da requisição')}
-            className="url-input"
             value={urlInput ?? urlWithQuery(request)}
+            resolveVariable={(name) => {
+              const sessionValue = sessionVariables?.get(name);
+              if (sessionValue === null) return undefined;
+              if (sessionValue !== undefined) {
+                return { id: name, value: sessionValue, source: 'session', secret: true };
+              }
+              return resolvedVariables(collection, environment).get(name);
+            }}
+            sourceLabel={(source) =>
+              source === 'collection'
+                ? collection.name + t(' (coleção)')
+                : source === 'environment'
+                  ? (environment?.name ?? '')
+                  : t('Sessão de scripts')
+            }
+            onSaveVariable={onSaveVariable}
             onFocus={(event) => setUrlInput(event.currentTarget.value)}
             onChange={(event) => {
               const url = event.target.value;
@@ -527,81 +555,9 @@ export function RequestEditor({
               </div>
             )}
             {tab === 'body' && (
-              <>
-                <div className="body-options">
-                  {(['none', 'json', 'text', 'urlencoded', 'multipart', 'binary'] as const).map(
-                    (type) => (
-                      <label key={type}>
-                        <input
-                          type="radio"
-                          name="body-type"
-                          checked={request.bodyType === type}
-                          onChange={() => update({ bodyType: type })}
-                        />
-                        {
-                          {
-                            none: t('Nenhum'),
-                            json: 'JSON',
-                            text: t('Texto'),
-                            urlencoded: t('Form URL-encoded'),
-                            multipart: 'Multipart',
-                            binary: t('Arquivo binário'),
-                          }[type]
-                        }
-                      </label>
-                    ),
-                  )}
-                </div>
-                {request.bodyType === 'none' ? (
-                  <div className="body-empty">
-                    <FileJson2 size={28} />
-                    <p>{t('Esta requisição não tem corpo.')}</p>
-                  </div>
-                ) : request.bodyType === 'urlencoded' ? (
-                  <PairEditor
-                    kind={t('campo')}
-                    rows={request.form}
-                    onChange={(form) => update({ form })}
-                  />
-                ) : request.bodyType === 'multipart' || request.bodyType === 'binary' ? (
-                  <FileBodyEditor request={request} onChange={update} />
-                ) : (
-                  <div className="body-code">
-                    <div className="editor-toolbar">
-                      <span>
-                        <span className="status-dot dot-purple" />
-                        {request.bodyType === 'json' ? 'JSON' : t('Texto bruto')}
-                      </span>
-                      {request.bodyType === 'json' && (
-                        <button
-                          onClick={() => {
-                            try {
-                              update({ body: JSON.stringify(JSON.parse(request.body), null, 2) });
-                            } catch {
-                              toast.error(t('JSON inválido. Verifique a sintaxe do corpo.'));
-                            }
-                          }}
-                        >
-                          <Braces size={13} />
-                          {' ' + t('Formatar')}
-                        </button>
-                      )}
-                    </div>
-                    <textarea
-                      aria-label={t('Corpo da requisição')}
-                      spellCheck={false}
-                      className="body-textarea"
-                      value={request.body}
-                      onChange={(e) => update({ body: e.target.value })}
-                      placeholder={
-                        request.bodyType === 'json'
-                          ? t('{\n  "mensagem": "Olá, mundo!"\n}')
-                          : t('Digite o corpo da requisição…')
-                      }
-                    />
-                  </div>
-                )}
-              </>
+              <Suspense fallback={<p role="status">{t('Carregando editor…')}</p>}>
+                <RequestBody request={request} onChange={update} />
+              </Suspense>
             )}
             {tab === 'scripts' && (
               <Suspense fallback={<p role="status">{t('Carregando editor…')}</p>}>
@@ -628,7 +584,9 @@ export function RequestEditor({
                         min={1}
                         max={MAX_TIMEOUT_MS}
                         step={1}
-                        value={request.timeoutMs ?? DEFAULT_TIMEOUT_MS}
+                        value={request.timeoutMs ?? ''}
+                        placeholder={String(defaultTimeoutMs)}
+                        aria-describedby="request-timeout-hint"
                         onChange={(event) => {
                           const value = event.currentTarget.valueAsNumber;
                           update({
@@ -639,7 +597,12 @@ export function RequestEditor({
                         }}
                       />
                     </label>
-                    <p>{t('Limite para receber a resposta completa.')}</p>
+                    <p id="request-timeout-hint">
+                      {t(
+                        'Deixe em branco para usar o padrão do workspace ({0} ms).',
+                        formatNumber(defaultTimeoutMs),
+                      )}
+                    </p>
                   </div>
                 </div>
                 <div>
@@ -664,14 +627,28 @@ export function RequestEditor({
                       {t('Redirecionamentos')}
                       <select
                         className="input"
-                        value={request.redirectPolicy ?? 'none'}
+                        value={request.redirectPolicy ?? (native ? '' : 'none')}
                         onChange={(event) =>
                           update({
                             redirectPolicy:
-                              event.target.value === 'same_origin' ? 'same_origin' : 'none',
+                              event.target.value === ''
+                                ? undefined
+                                : (event.target.value as RedirectPolicy),
                           })
                         }
                       >
+                        {native && (
+                          <option value="">
+                            {t(
+                              'Usar padrão do workspace ({0})',
+                              t(
+                                defaultRedirectPolicy === 'same_origin'
+                                  ? 'Seguir apenas na mesma origem'
+                                  : 'Não seguir',
+                              ),
+                            )}
+                          </option>
+                        )}
                         <option value="none">{t('Não seguir')}</option>
                         <option value="same_origin" disabled={!native}>
                           {t('Seguir apenas na mesma origem')}
@@ -703,12 +680,18 @@ export function RequestEditor({
               <ArrowUpRight size={12} />
             </button>
           </div>
-          {(missing.length > 0 || references?.unclosed) && (
+          {(missing.length > 0 || empty.length > 0 || references?.unclosed) && (
             <div className="request-variable-warning" role="status">
               {missing.length > 0 && (
                 <div>
                   {t('Variáveis ausentes:') + ' '}
                   {missing.map(({ name }) => name || '{{}}').join(', ')}
+                </div>
+              )}
+              {empty.length > 0 && (
+                <div>
+                  {t('Variáveis secretas sem valor:') + ' '}
+                  {empty.map(({ name }) => name).join(', ')}
                 </div>
               )}
               {references?.unclosed && (
@@ -726,7 +709,7 @@ export function RequestEditor({
                 {formatNumber(references.variables.length)})
               </summary>
               <dl>
-                {references.variables.map(({ name, source }) => (
+                {references.variables.map(({ name, source, empty }) => (
                   <div key={name}>
                     <dt>
                       <code>{`{{${name}}}`}</code>
@@ -736,7 +719,10 @@ export function RequestEditor({
                         ? environment?.name
                         : source === 'collection'
                           ? collection.name + t(' (coleção)')
-                          : t('Ausente')}
+                          : source === 'session'
+                            ? t('Sessão de scripts')
+                            : t('Ausente')}
+                      {empty && t(' (sem valor)')}
                     </dd>
                   </div>
                 ))}

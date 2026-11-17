@@ -4,6 +4,7 @@ import {
   emptyAuth,
   newRequest,
   pair,
+  rawBodyFormats,
   syncUrl,
   type Collection,
   type Environment,
@@ -203,7 +204,20 @@ export function importPostman(value: unknown) {
       const body = object(request.body);
       if (body.disabled !== true && body.mode === 'raw') {
         endpoint.body = str(body.raw);
-        endpoint.bodyType = object(object(body.options).raw).language === 'json' ? 'json' : 'text';
+        const language = object(object(body.options).raw).language;
+        const format = rawBodyFormats.find((format) => format === language);
+        endpoint.bodyType = format === 'json' ? 'json' : 'text';
+        if (format && format !== 'json') endpoint.rawFormat = format;
+      } else if (body.disabled !== true && body.mode === 'graphql') {
+        const graphql = object(body.graphql);
+        endpoint.bodyType = 'graphql';
+        endpoint.graphql = {
+          query: str(graphql.query),
+          variables:
+            graphql.variables && typeof graphql.variables === 'object'
+              ? JSON.stringify(graphql.variables, null, 2)
+              : str(graphql.variables),
+        };
       } else if (body.disabled !== true && body.mode === 'urlencoded') {
         endpoint.bodyType = 'urlencoded';
         endpoint.form = variables(body.urlencoded, label);

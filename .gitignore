@@ -1,7 +1,30 @@
+# Rust
 /target/
+
+# Node
 /node_modules/
+/ui/node_modules/
+
+# Build outputs
 /dist/
+/dist-cli/
+
+# TypeScript
 *.tsbuildinfo
+
+# Test artifacts
 /.playwright-cli/
 /test-results/
-/dist-cli/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

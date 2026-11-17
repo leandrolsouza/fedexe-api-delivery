@@ -127,8 +127,10 @@ async function savedWorkspace() {
 
 describe('autosave do workspace', () => {
   it('reabre o JSON anterior com as credenciais anteriores quando o segundo segredo falha', async () => {
-    const { autosave, workspace, reopen, writeWorkspace } = await savedWorkspace();
+    const { autosave, workspace, reopen, writeWorkspace, contents } = await savedWorkspace();
+    const oldContents = contents();
     const changed = structuredClone(workspace);
+    changed.settings.workspaceName = 'Nome novo';
     changed.collections[0].auth.token = 'token-novo';
     changed.collections[0].auth.password = 'senha-nova';
     const set = vault.set.bind(vault);
@@ -140,6 +142,8 @@ describe('autosave do workspace', () => {
 
     await expect(autosave.enqueue(changed).result).rejects.toThrow('Cofre indisponível');
     expect(writeWorkspace).not.toHaveBeenCalled();
+    expect(contents()).toBe(oldContents);
+    expect(vault.size).toBe(3);
     expect((await reopen()).workspace).toEqual(workspace);
 
     await autosave.enqueue(changed).result;

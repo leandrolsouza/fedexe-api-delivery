@@ -2,6 +2,7 @@ import type { Scripts, ScriptResult } from './scripts';
 import { isInFolder } from './folders';
 import { t } from './i18n';
 import { uid } from './utils';
+import { isTheme, type ThemeSettings } from './themes';
 
 export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 export type View =
@@ -33,10 +34,14 @@ export function requestsForRun(
   return collection.requests;
 }
 export type RedirectPolicy = 'none' | 'same_origin';
+export type RequestDefaults = {
+  defaultTimeoutMs?: number;
+  defaultRedirectPolicy?: RedirectPolicy;
+};
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const MAX_TIMEOUT_MS = 600_000;
 
-function validTimeout(value: number) {
+export function validTimeout(value: number) {
   return Number.isInteger(value) && value >= 1 && value <= MAX_TIMEOUT_MS;
 }
 export type Pair = { id: string; key: string; value: string; enabled: boolean; secret?: boolean };
@@ -78,6 +83,9 @@ export type Test =
   | { type: 'status'; equals: number }
   | { type: 'header'; name: string; equals?: string }
   | { type: 'json'; pointer: string; equals: unknown };
+export const rawBodyFormats = ['text', 'javascript', 'json', 'html', 'xml'] as const;
+export type RawBodyFormat = (typeof rawBodyFormats)[number];
+
 export type RequestItem = {
   scripts?: Scripts;
   timeoutMs?: number;
@@ -91,8 +99,10 @@ export type RequestItem = {
   params: Pair[];
   pathParams?: Pair[];
   headers: Pair[];
-  bodyType: 'none' | 'json' | 'text' | 'urlencoded' | 'multipart' | 'binary';
+  bodyType: 'none' | 'json' | 'text' | 'urlencoded' | 'multipart' | 'binary' | 'graphql';
+  rawFormat?: RawBodyFormat;
   body: string;
+  graphql?: { query: string; variables: string };
   form: Pair[];
   multipart?: MultipartRow[];
   binaryFile?: string;
@@ -221,11 +231,11 @@ export type Workspace = {
   activeEnvironment: string;
   history: HistoryItem[];
   settings: {
-    theme: 'light' | 'dark' | 'system';
     compact: boolean;
     wrap: boolean;
     workspaceName: string;
-  };
+  } & RequestDefaults &
+    ThemeSettings;
 };
 
 export const emptyAuth = (): Auth => ({
@@ -411,10 +421,17 @@ export function isWorkspace(value: unknown): value is Workspace {
         typeof row.requestId === 'string',
     ) &&
     !!data.settings &&
-    ['light', 'dark', 'system'].includes(data.settings.theme) &&
+    (data.settings.theme === 'system' || isTheme(data.settings.theme)) &&
+    (data.settings.manualTheme === undefined || isTheme(data.settings.manualTheme)) &&
+    (data.settings.lightTheme === undefined || isTheme(data.settings.lightTheme, 'light')) &&
+    (data.settings.darkTheme === undefined || isTheme(data.settings.darkTheme, 'dark')) &&
     typeof data.settings.workspaceName === 'string' &&
     typeof data.settings.compact === 'boolean' &&
-    typeof data.settings.wrap === 'boolean'
+    typeof data.settings.wrap === 'boolean' &&
+    (data.settings.defaultTimeoutMs === undefined ||
+      validTimeout(data.settings.defaultTimeoutMs)) &&
+    (data.settings.defaultRedirectPolicy === undefined ||
+      ['none', 'same_origin'].includes(data.settings.defaultRedirectPolicy))
   );
 }
 function validPairs(value: unknown): value is Pair[] {
@@ -505,7 +522,14 @@ export function validCollection(value: unknown): value is Collection {
             r.multipart.every((row) => ['field', 'file'].includes(row.kind)))) &&
         (r.binaryFile === undefined || typeof r.binaryFile === 'string') &&
         validAuth(r.auth) &&
-        ['none', 'json', 'text', 'urlencoded', 'multipart', 'binary'].includes(r.bodyType) &&
+        ['none', 'json', 'text', 'urlencoded', 'multipart', 'binary', 'graphql'].includes(
+          r.bodyType,
+        ) &&
+        (r.rawFormat === undefined || rawBodyFormats.includes(r.rawFormat)) &&
+        (r.graphql === undefined ||
+          (r.graphql &&
+            typeof r.graphql.query === 'string' &&
+            typeof r.graphql.variables === 'string')) &&
         typeof r.body === 'string' &&
         Array.isArray(r.tests) &&
         r.tests.every(
@@ -792,10 +816,10 @@ export function redactValues(message: string, values: Iterable<string | null>): 
     .sort((left, right) => right.length - left.length);
   return secrets.reduce((text, secret) => text.replaceAll(secret, '[segredo]'), message);
 }
-function resolvedVariables(collection: Collection, environment?: Environment) {
+export function resolvedVariables(collection: Collection, environment?: Environment) {
   const variables = new Map<
     string,
-    { value: string; source: 'collection' | 'environment'; secret?: boolean }
+    { id: string; value: string; source: 'collection' | 'environment'; secret?: boolean }
   >();
   const groups = [
     ['collection', collection.variables],
@@ -804,8 +828,7 @@ function resolvedVariables(collection: Collection, environment?: Environment) {
   for (const [source, rows] of groups) {
     for (const row of rows) {
       if (!row.enabled || !row.key) continue;
-      if (row.secret && !row.value) variables.delete(row.key);
-      else variables.set(row.key, { value: row.value, source, secret: row.secret });
+      variables.set(row.key, { id: row.id, value: row.value, source, secret: row.secret });
     }
   }
   return variables;
@@ -813,8 +836,9 @@ function resolvedVariables(collection: Collection, environment?: Environment) {
 
 export function variablesFor(collection: Collection, environment?: Environment) {
   const variables: Record<string, string> = Object.create(null);
-  for (const [name, { value }] of resolvedVariables(collection, environment))
-    variables[name] = value;
+  for (const [name, { value, secret }] of resolvedVariables(collection, environment)) {
+    if (!secret || value) variables[name] = value;
+  }
   return variables;
 }
 
@@ -822,6 +846,7 @@ export function requestVariables(
   item: RequestItem,
   collection: Collection,
   environment?: Environment,
+  sessionVariables?: ReadonlyMap<string, string | null>,
 ) {
   const request = compileRequest(item, collection, {}, false, true);
   const fields = [
@@ -855,7 +880,22 @@ export function requestVariables(
   const resolved = resolvedVariables(collection, environment);
   return {
     unclosed,
-    variables: [...names].map((name) => ({ name, source: resolved.get(name)?.source })),
+    variables: [...names].map<{
+      name: string;
+      source: 'collection' | 'environment' | 'session' | undefined;
+      empty?: true;
+    }>((name) => {
+      const sessionValue = sessionVariables?.get(name);
+      if (sessionValue !== undefined) {
+        return { name, source: sessionValue === null ? undefined : 'session' };
+      }
+      const variable = resolved.get(name);
+      return {
+        name,
+        source: variable?.source,
+        ...(variable?.secret && !variable.value ? { empty: true } : {}),
+      };
+    }),
   };
 }
 export class RequestResolutionError extends Error {}
@@ -906,19 +946,31 @@ export function generatedHeaders(item: RequestItem, collection: Collection) {
     headers.push({ name: 'Authorization', value: '', secret: true, source: t('Autorização') });
   if (auth.type === 'api-key' && auth.placement === 'header' && auth.key.trim())
     headers.push({ name: auth.key.trim(), value: '', secret: true, source: t('Autorização') });
+  const contentType = {
+    none: undefined,
+    text:
+      item.rawFormat &&
+      {
+        text: 'text/plain',
+        javascript: 'application/javascript',
+        json: undefined,
+        html: 'text/html',
+        xml: 'application/xml',
+      }[item.rawFormat],
+    json: 'application/json',
+    graphql: 'application/json',
+    urlencoded: 'application/x-www-form-urlencoded',
+    multipart: t('multipart/form-data (boundary automático)'),
+    binary: 'application/octet-stream',
+  }[item.bodyType];
   if (
+    contentType &&
     !item.headers.some((row) => row.enabled && row.key.trim().toLowerCase() === 'content-type') &&
-    !headers.some(({ name }) => name.toLowerCase() === 'content-type') &&
-    ['json', 'urlencoded', 'multipart', 'binary'].includes(item.bodyType)
+    !headers.some(({ name }) => name.toLowerCase() === 'content-type')
   )
     headers.push({
       name: 'Content-Type',
-      value: {
-        json: 'application/json',
-        urlencoded: 'application/x-www-form-urlencoded',
-        multipart: t('multipart/form-data (boundary automático)'),
-        binary: 'application/octet-stream',
-      }[item.bodyType as 'json' | 'urlencoded' | 'multipart' | 'binary'],
+      value: contentType,
       secret: false,
       source: t('Corpo'),
     });
@@ -989,9 +1041,12 @@ export function compileRequest(
   vars: Record<string, string>,
   resolve = true,
   defer = false,
+  defaults?: RequestDefaults,
 ): HttpRequest {
   item = syncUrl(item);
-  if (item.timeoutMs !== undefined && !validTimeout(item.timeoutMs))
+  const timeoutMs = item.timeoutMs ?? defaults?.defaultTimeoutMs;
+  const redirectPolicy = item.redirectPolicy ?? defaults?.defaultRedirectPolicy;
+  if (timeoutMs !== undefined && !validTimeout(timeoutMs))
     throw new Error(t('O timeout deve ficar entre 1 e 600.000 ms.'));
   const conflict = authHeaderConflict(item, collection);
   if (conflict) throw new Error(conflict);
@@ -1058,7 +1113,15 @@ export function compileRequest(
   if (!defer) url = appendQuery(url, query, resolve ? vars : undefined);
   let body: string | null =
     item.bodyType === 'json' || item.bodyType === 'text' ? expandValue(item.body) : null;
-  if (item.bodyType === 'json') {
+  if (item.bodyType === 'graphql') {
+    const query = JSON.stringify(item.graphql?.query ?? '');
+    const variables = item.graphql?.variables.trim();
+    body = expandValue(
+      variables ? `{"query":${query},"variables":${variables}}` : `{"query":${query}}`,
+    );
+  }
+  const validateJson = item.bodyType === 'json' || item.bodyType === 'graphql';
+  if (validateJson) {
     if (resolve) {
       try {
         JSON.parse(body || '');
@@ -1095,8 +1158,8 @@ export function compileRequest(
     url,
     headers,
     body,
-    ...(item.timeoutMs !== undefined ? { timeout_ms: item.timeoutMs } : {}),
-    ...(item.redirectPolicy !== undefined ? { redirect_policy: item.redirectPolicy } : {}),
+    ...(timeoutMs !== undefined ? { timeout_ms: timeoutMs } : {}),
+    ...(redirectPolicy !== undefined ? { redirect_policy: redirectPolicy } : {}),
     ...(oauth ? { oauth } : {}),
     ...(multipart !== undefined ? { multipart } : {}),
     ...(binaryFile !== undefined ? { binary_file: binaryFile } : {}),
@@ -1114,7 +1177,7 @@ export function compileRequest(
                   .map((p) => [p.key, p.value] as [string, string]),
               }
             : {}),
-          validate_json: item.bodyType === 'json',
+          validate_json: validateJson,
         }
       : {}),
   };

@@ -3,6 +3,7 @@ import { Notifications, useNotifications, type Notice } from './components/Notif
 import { PostmanWorkspaceDialog } from './components/PostmanWorkspaceDialog';
 import type { PostmanImport } from './lib/postman-workspace';
 import { formatNumber, t, useLocale } from './lib/i18n';
+import { resolveTheme, themes, type ColorScheme } from './lib/themes';
 import {
   lazy,
   Suspense,
@@ -62,6 +63,12 @@ import {
 import { Toaster, toast } from 'sonner';
 import { invoke } from '@tauri-apps/api/core';
 import { createWorkspaceAutosave } from './lib/workspace-autosave';
+import {
+  inspectRestoredBackup,
+  replaceBackupAttachment,
+  type BackupAttachment,
+  type BackupRestoreReport,
+} from './lib/backup-restore';
 import { loadSecrets, type StoredSecrets } from './lib/credentials';
 import {
   createWorkspace,
@@ -80,6 +87,7 @@ import {
   variablesFor,
   type Auth,
   type Collection,
+  type Pair,
   type HistoryItem,
   type HttpResponse,
   type RequestItem,
@@ -91,6 +99,7 @@ import {
   cancel,
   native,
   normalizeError,
+  pickBodyFile,
   releaseResponseBodies,
   send,
   sendScriptRequest,
@@ -105,6 +114,8 @@ import { Dropdown } from './components/ui/dropdown';
 import {
   curlFor,
   MethodBadge,
+  maxRequestShare,
+  minRequestShare,
   RequestEditor,
   type RequestLayout,
 } from './components/RequestEditor';
@@ -131,7 +142,7 @@ import {
   isInFolder,
 } from './lib/folders';
 
-type OpenTab = { collectionId: string; requestId: string };
+type OpenTab = { collectionId: string; requestId: string; bodyShortcut?: string };
 const ScriptEditor = lazy(() => import('./components/ScriptEditor'));
 const collectionSettingsTabs = ['Variáveis', 'Autorização', 'Scripts'] as const;
 type EditDialog = {
@@ -142,6 +153,24 @@ type EditDialog = {
 };
 type ConfirmDialog = { title: string; description: string; label: string; action: () => void };
 const driveEnabled = native && import.meta.env.VITE_FEDEXE_GOOGLE_DRIVE === 'true';
+const editorPreferencesKey = 'fedexe.editor-layout.v1';
+
+function loadEditorPreferences(): { layout: RequestLayout; requestShare: number } {
+  try {
+    const saved = JSON.parse(localStorage.getItem(editorPreferencesKey) ?? 'null');
+    return {
+      layout: saved?.layout === 'request' || saved?.layout === 'response' ? saved.layout : 'split',
+      requestShare:
+        Number.isInteger(saved?.requestShare) &&
+        saved.requestShare >= minRequestShare &&
+        saved.requestShare <= maxRequestShare
+          ? saved.requestShare
+          : 50,
+    };
+  } catch {
+    return { layout: 'split', requestShare: 50 };
+  }
+}
 const navigationItems = [
   { id: 'collections', label: 'Coleções', icon: Layers3 },
   { id: 'environments', label: 'Ambientes', icon: Globe2 },
@@ -202,14 +231,33 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     .filter((item) => (item.id === 'drive' ? driveEnabled : item.id !== 'console' || native))
     .map((item) => ({ ...item, label: t(item.label) }));
   const [workspace, setWorkspace] = useState<Workspace>(initial.workspace);
+  const { defaultTimeoutMs, defaultRedirectPolicy } = workspace.settings;
   const [storageBlocked, setStorageBlocked] = useState(!!initial.error);
   const [storageError, setStorageError] = useState(initial.error);
   const [saveAttempt, setSaveAttempt] = useState(0);
   const [persisted, setPersisted] = useState<Workspace>();
   const [autosave] = useState(() => createWorkspaceAutosave({ ...initial, native }));
   const [view, setView] = useState<View>('collections');
-  const [requestLayout, setRequestLayout] = useState<RequestLayout>('split');
-  const [requestShare, setRequestShare] = useState(50);
+  const [{ layout: requestLayout, requestShare }, setEditorPreferences] =
+    useState(loadEditorPreferences);
+  const setRequestLayout = (layout: RequestLayout) =>
+    setEditorPreferences((current) =>
+      layout === current.layout ? current : { ...current, layout },
+    );
+  const setRequestShare = (requestShare: number) =>
+    setEditorPreferences((current) =>
+      requestShare === current.requestShare ? current : { ...current, requestShare },
+    );
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        editorPreferencesKey,
+        JSON.stringify({ layout: requestLayout, requestShare }),
+      );
+    } catch {
+      // The editor remains usable if browser storage is unavailable.
+    }
+  }, [requestLayout, requestShare]);
   const firstCollection = workspace.collections[0];
   const firstRequest =
     firstCollection?.requests.find((r) => r.id === 'list-users') || firstCollection?.requests[0];
@@ -274,6 +322,23 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
   const [importReport, setImportReport] = useState<ImportReport>();
   const [importReports, setImportReports] = useState<Record<string, ImportReport>>({});
   const restoring = useRef(false);
+  const restoreNotice = useRef<string>(undefined);
+  const restoreInspection = useRef(0);
+  const [restoreReport, setRestoreReport] = useState<BackupRestoreReport>();
+  const showRestoreReport = useCallback(async (snapshot: Workspace, onlyWithIssues: boolean) => {
+    const inspection = ++restoreInspection.current;
+    const report = await inspectRestoredBackup(
+      snapshot,
+      native
+        ? (paths) => invoke<(boolean | null)[]>('check_backup_attachments', { paths })
+        : undefined,
+    );
+    if (
+      inspection === restoreInspection.current &&
+      (!onlyWithIssues || report.attachments.length || report.secrets.length)
+    )
+      setRestoreReport(report);
+  }, []);
 
   function showImportReport(report: ImportReport, failed = false) {
     const id = addNotice(failed ? 'importFailed' : 'imported');
@@ -317,13 +382,20 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       : moveFolderDestinations[0];
   const [dragged, setDragged] = useState<OpenTab>();
   const [lastRun, setLastRun] = useState<RunResult>();
-  const [theme, setTheme] = useState('light');
+  const [systemScheme, setSystemScheme] = useState<ColorScheme>(() =>
+    matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  );
+  const palette = resolveTheme(workspace.settings, systemScheme);
+  const theme = themes[palette].scheme;
   const fileInput = useRef<HTMLInputElement>(null);
   const collection = workspace.collections.find((c) => c.id === active.collectionId);
   const savedRequest = collection?.requests.find((r) => r.id === active.requestId);
   const request = drafts[active.requestId] || savedRequest;
   const dirty = !!request && JSON.stringify(request) !== JSON.stringify(savedRequest);
   const environment = workspace.environments.find((env) => env.id === workspace.activeEnvironment);
+  const variableSession = collection
+    ? scriptSessions.current.get(JSON.stringify([collection.id, environment?.id]))
+    : undefined;
   const totalRequests = workspace.collections.reduce((sum, c) => sum + c.requests.length, 0);
   const backupBlocked = busy || Object.keys(drafts).length > 0;
   const restoreBlocked = useRef(backupBlocked);
@@ -345,8 +417,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         setPersisted(workspace);
         if (restoring.current) {
           restoring.current = false;
-          addNotice('restored');
+          restoreNotice.current = addNotice('restored');
           toast.success(t('Backup restaurado'));
+          void showRestoreReport(workspace, true);
         }
         if (saved.cleanupError)
           setStorageError(
@@ -359,7 +432,6 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       (error) => {
         if (superseded) return;
         if (restoring.current) {
-          restoring.current = false;
           addNotice('restoreFailed');
         }
         setStorageError(
@@ -371,24 +443,20 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       superseded = true;
       cancel();
     };
-  }, [workspace, storageBlocked, autosave, saveAttempt, addNotice]);
+  }, [workspace, storageBlocked, autosave, saveAttempt, addNotice, showRestoreReport]);
 
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
-    const apply = () => {
-      const value =
-        workspace.settings.theme === 'system'
-          ? media.matches
-            ? 'dark'
-            : 'light'
-          : workspace.settings.theme;
-      document.documentElement.dataset.theme = value;
-      setTheme(value);
-    };
+    const apply = () => setSystemScheme(media.matches ? 'dark' : 'light');
     apply();
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
-  }, [workspace.settings.theme]);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.palette = palette;
+  }, [palette, theme]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -433,8 +501,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       ...current,
       collections: current.collections.map((c) => (c.id === id ? update(c) : c)),
     }));
-  const openRequest = (collectionId: string, requestId: string) => {
-    setActive({ collectionId, requestId });
+  const openRequest = (collectionId: string, requestId: string, bodyShortcut?: string) => {
+    setActive({ collectionId, requestId, bodyShortcut });
     setTabs((current) =>
       current.some((t) => t.requestId === requestId)
         ? current
@@ -442,6 +510,29 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     );
     setView('collections');
   };
+  async function locateBackupAttachment(attachment: BackupAttachment) {
+    const { collectionId, requestId } = attachment;
+    const saved = workspace.collections
+      .find(({ id }) => id === collectionId)
+      ?.requests.find(({ id }) => id === requestId);
+    if (!saved) return;
+    setRestoreReport(undefined);
+    if (requestLayout === 'response') setRequestLayout('split');
+    openRequest(collectionId, requestId, uid());
+    if (!native) return;
+    try {
+      const path = await pickBodyFile();
+      if (!path) return;
+      setDrafts((current) => {
+        const request = current[requestId] ?? saved;
+        const updated = replaceBackupAttachment(request, attachment, path);
+        if (JSON.stringify(updated) === JSON.stringify(request)) return current;
+        return { ...current, [requestId]: updated };
+      });
+    } catch (error) {
+      toast.error(normalizeError(error).message);
+    }
+  }
   const changeDraft = (item: RequestItem) =>
     setDrafts((current) => {
       const saved = workspace.collections.flatMap((c) => c.requests).find((r) => r.id === item.id);
@@ -514,7 +605,10 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         toast.info(t('Requisição ignorada pelo script.'));
         return;
       }
-      let compiled = compileRequest(before.item, collection, variables);
+      let compiled = compileRequest(before.item, collection, variables, true, false, {
+        defaultTimeoutMs,
+        defaultRedirectPolicy: native ? defaultRedirectPolicy : undefined,
+      });
       if (native) {
         compiled = addConsoleMasks(compiled, before.item, collection, environment, variables);
         for (const value of changes.values()) {
@@ -573,7 +667,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       setBusy(false);
       setSendingId('');
     }
-  }, [request, collection, environment, busy]);
+  }, [request, collection, environment, busy, defaultTimeoutMs, defaultRedirectPolicy]);
 
   const cancelExecution = () => {
     manualExecution.current?.abort();
@@ -1182,6 +1276,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
           return;
         }
         restoring.current = true;
+        ++restoreInspection.current;
+        setRestoreReport(undefined);
         setWorkspace(snapshot);
         setStorageBlocked(false);
         setDrafts({});
@@ -1210,7 +1306,9 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       case 'backupFailed':
         return driveEnabled ? () => setView('drive') : undefined;
       case 'restored':
-        return () => setView('collections');
+        return notice.id === restoreNotice.current
+          ? () => void showRestoreReport(workspace, false)
+          : () => setView('collections');
       case 'restoreFailed':
       case 'localBackup':
         return () => setView('settings');
@@ -1448,14 +1546,8 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
     >
       <header className="app-header" data-tauri-drag-region="deep">
         <div className="header-brand">
-          <span className="brand-mark">
-            <svg viewBox="0 0 32 32" aria-hidden="true">
-              <path d="M10 7h17l-3 6h-9l-2 4h9l-3 6h-9l-3 6H1z" fill="currentColor" />
-            </svg>
-          </span>
-          <strong>
-            fedexe<span>api</span>
-          </strong>
+          <img className="brand-mark" src="/favicon.svg" alt="" />
+          <strong>Fedexe API</strong>
           <span className="version-tag" aria-label={t('Versão {0}', version)}>
             {version}
           </span>
@@ -2012,10 +2104,36 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               </nav>
               {request && collection ? (
                 <RequestEditor
-                  key={request.id}
+                  key={active.bodyShortcut ?? request.id}
+                  initialTab={active.bodyShortcut ? 'body' : 'params'}
                   request={request}
+                  defaultTimeoutMs={defaultTimeoutMs}
+                  defaultRedirectPolicy={defaultRedirectPolicy}
                   collection={collection}
                   environment={environment}
+                  sessionVariables={variableSession}
+                  onSaveVariable={({ id, source }, value) => {
+                    if (source === 'session') {
+                      variableSession?.set(id, value);
+                      return;
+                    }
+                    const updateVariable = (row: Pair) => (row.id === id ? { ...row, value } : row);
+                    if (source === 'collection') {
+                      updateCollection(collection.id, (current) => ({
+                        ...current,
+                        variables: current.variables.map(updateVariable),
+                      }));
+                    } else {
+                      setWorkspace((current) => ({
+                        ...current,
+                        environments: current.environments.map((item) =>
+                          item.id === environment?.id
+                            ? { ...item, variables: item.variables.map(updateVariable) }
+                            : item,
+                        ),
+                      }));
+                    }
+                  }}
                   onChange={changeDraft}
                   onSave={save}
                   dirty={dirty}
@@ -2105,6 +2223,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
               onBackup={() => addNotice('localBackup')}
               onDrive={driveEnabled ? () => setView('drive') : undefined}
               updates={<UpdateSettings updates={updates} />}
+              version={version}
             />
           )}
           {driveEnabled && (
@@ -2137,7 +2256,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
       <footer className="app-statusbar">
         <div>
           <span className="statusbar-brand">
-            <Zap size={12} fill="currentColor" /> Fedexe API
+            <img src="/favicon.svg" width={12} height={12} alt="" /> Fedexe API
           </span>
           <span className="statusbar-separator" />
           <span>
@@ -2429,6 +2548,66 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         />
       )}
       <Dialog
+        open={!!restoreReport}
+        onOpenChange={(open) => {
+          if (!open) setRestoreReport(undefined);
+        }}
+        title={t('Revisar backup restaurado')}
+        description={t('Confira os anexos e segredos antes de executar as requisições.')}
+      >
+        {!!restoreReport?.attachments.length && (
+          <section>
+            <h3>{t('Anexos a revisar')}</h3>
+            <ul className="import-report">
+              {restoreReport.attachments.map((attachment) => (
+                <li
+                  key={JSON.stringify([
+                    attachment.collectionId,
+                    attachment.requestId,
+                    attachment.partId,
+                  ])}
+                >
+                  <strong>{attachment.location}</strong>
+                  <div>{attachment.name}</div>
+                  <div>
+                    {attachment.unchecked
+                      ? t('Caminho do arquivo não verificado.')
+                      : attachment.path
+                        ? t('Arquivo indisponível no caminho salvo.')
+                        : t('Nenhum arquivo selecionado')}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void locateBackupAttachment(attachment)}
+                  >
+                    {native ? t('Abrir requisição e selecionar arquivo') : t('Abrir requisição')}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {!!restoreReport?.secrets.length && (
+          <section>
+            <h3>{t('Segredos a preencher')}</h3>
+            <ul className="import-report">
+              {restoreReport.secrets.map(({ id, location, name }) => (
+                <li key={id}>
+                  {location} · {name}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        {restoreReport && !restoreReport.attachments.length && !restoreReport.secrets.length && (
+          <p>{t('Nenhum anexo ou segredo pendente.')}</p>
+        )}
+        <div className="dialog-footer">
+          <Button onClick={() => setRestoreReport(undefined)}>{t('Fechar')}</Button>
+        </div>
+      </Dialog>
+      <Dialog
         open={!!importReport}
         onOpenChange={(open) => {
           if (!open) setImportReport(undefined);
@@ -2522,9 +2701,7 @@ function WorkspaceApp({ initial }: { initial: Awaited<ReturnType<typeof initialS
         className="help-dialog"
       >
         <div className="help-hero">
-          <span className="brand-mark">
-            <Zap size={26} fill="currentColor" />
-          </span>
+          <img className="brand-mark" src="/favicon.svg" alt="" />
           <div>
             <strong>{t('Construir APIs pode ser mais leve.')}</strong>
             <p>{t('Explore a coleção Acme API para conhecer seu novo workspace.')}</p>

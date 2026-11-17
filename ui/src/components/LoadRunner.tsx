@@ -1,13 +1,28 @@
-import { useState, type FormEvent } from 'react';
-import { Download, Play, Square } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, Download, Play, Square } from 'lucide-react';
 import { prepareCollection } from '../lib/collection-runner';
 import { formatNumber, t, type Message } from '../lib/i18n';
-import { runLoad, type LoadMetrics, type LoadOptions, type LoadReport } from '../lib/load-runner';
-import { redactSecrets, type Collection, type Environment, type RequestItem } from '../lib/models';
+import {
+  prepareLoadVariables,
+  runLoad,
+  type LoadInterval,
+  type LoadMetrics,
+  type LoadOptions,
+  type LoadReport,
+} from '../lib/load-runner';
+import {
+  redactSecrets,
+  type Collection,
+  type Environment,
+  type RequestDefaults,
+  type RequestItem,
+} from '../lib/models';
 import { hasScripts } from '../lib/scripts';
 import { native, normalizeError } from '../lib/transport';
 import { download } from '../lib/utils';
 import { Button } from './ui/button';
+import { LoadResults } from './LoadResults';
+import { LoadTimeline } from './LoadTimeline';
 
 const profiles = {
   constant: 'Constante',
@@ -16,7 +31,7 @@ const profiles = {
   soak: 'Longa duração',
 } as const;
 
-type NumericField = Exclude<keyof LoadOptions, 'profile'>;
+type NumericField = Exclude<keyof LoadOptions, 'profile' | 'skip_scripts' | 'collection_setup'>;
 type Field = [NumericField, Message, number, number, number?];
 const fields: Field[] = [
   ['vus', 'Usuários virtuais (VUs)', 1, 500],
@@ -43,20 +58,30 @@ const metricLabels: Record<keyof LoadMetrics, Message> = {
 };
 
 type Props = {
+  requestPicker?: ReactNode;
+  exportRequestIds?: string[];
+  showResults: boolean;
+  onShowResults: (show: boolean) => void;
   context: string;
   collection?: Collection;
   environment?: Environment;
   requests: RequestItem[];
+  defaults: RequestDefaults;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   onCancel: () => void;
 };
 
 export function LoadRunner({
+  requestPicker,
+  exportRequestIds,
+  showResults,
+  onShowResults,
   context,
   collection,
   environment,
   requests,
+  defaults,
   busy,
   setBusy,
   onCancel,
@@ -72,11 +97,45 @@ export function LoadRunner({
     max_error_percent: '',
   });
   const [metrics, setMetrics] = useState<LoadMetrics>();
+  const [timeline, setTimeline] = useState<LoadInterval[]>([]);
+  const [resultTab, setResultTab] = useState<'summary' | 'timeline'>('summary');
+  const [runNumber, setRunNumber] = useState(0);
   const [report, setReport] = useState<LoadReport>();
   const [error, setError] = useState('');
   const [runContext, setRunContext] = useState('');
+  const [requestNames, setRequestNames] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [approvedScriptScope, setApprovedScriptScope] = useState('');
+  const [setupScope, setSetupScope] = useState('');
+  const setupController = useRef<AbortController>(null);
+  const [preparing, setPreparing] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (focusHeading.current) {
+      heading.current?.focus();
+      focusHeading.current = false;
+    }
+  }, [showResults]);
+
+  function navigateToResults(show: boolean) {
+    focusHeading.current = true;
+    onShowResults(show);
+  }
+
+  const scripts =
+    hasScripts(collection?.scripts) || requests.some((request) => hasScripts(request.scripts));
+  const scriptScope = JSON.stringify([
+    context,
+    collection?.id,
+    environment?.id,
+    requests.map(({ id }) => id),
+  ]);
+  const skipScripts = scripts && approvedScriptScope === scriptScope;
+  const hasSetup = Boolean(collection?.scripts?.before?.trim());
+  const collectionSetup = hasSetup && setupScope === scriptScope;
+  const scriptsBlockRun = scripts && !skipScripts && !collectionSetup;
   const phased = profile === 'ramp' || profile === 'spike';
   const visibleFields = fields.filter(
     ([key]) => phased || (key !== 'base_vus' && key !== 'phase_seconds'),
@@ -88,6 +147,8 @@ export function LoadRunner({
     base_vus: phased ? Number(values.base_vus) : 1,
     phase_seconds: phased ? Number(values.phase_seconds) : 0,
     think_ms: Number(values.think_ms),
+    skip_scripts: skipScripts || collectionSetup || undefined,
+    collection_setup: collectionSetup || undefined,
     max_p99_ms: values.max_p99_ms === '' ? undefined : Number(values.max_p99_ms),
     max_error_percent:
       values.max_error_percent === '' ? undefined : Number(values.max_error_percent),
@@ -106,9 +167,6 @@ export function LoadRunner({
     phased &&
     (options.base_vus >= options.vus ||
       options.duration_seconds - options.phase_seconds < (profile === 'spike' ? 2 : 1));
-  const scripts =
-    hasScripts(collection?.scripts) || requests.some((request) => hasScripts(request.scripts));
-
   async function execute(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (
@@ -117,7 +175,7 @@ export function LoadRunner({
       !environment ||
       !requests.length ||
       busy ||
-      scripts ||
+      scriptsBlockRun ||
       rangeInvalid ||
       phaseInvalid
     )
@@ -125,20 +183,46 @@ export function LoadRunner({
     setBusy(true);
     setRunning(true);
     setMetrics(undefined);
+    setTimeline([]);
+    setRunNumber((number) => number + 1);
     setReport(undefined);
     setError('');
     setRunContext(context);
+    setRequestNames(requests.map(({ name }) => name));
+    navigateToResults(true);
     try {
-      const result = await runLoad(
-        prepareCollection(collection, environment, requests, false),
-        options,
-        setMetrics,
-      );
+      const flow = prepareCollection(collection, environment, requests, false, false, defaults);
+      if (collectionSetup) {
+        const controller = new AbortController();
+        setupController.current = controller;
+        setPreparing(true);
+        await prepareLoadVariables(
+          collection,
+          environment,
+          requests[0],
+          flow.variables,
+          controller.signal,
+        );
+        controller.signal.throwIfAborted();
+        setupController.current = null;
+        setPreparing(false);
+      }
+      const result = await runLoad(flow, options, ({ interval, ...metrics }) => {
+        setMetrics(metrics);
+        if (interval) setTimeline((points) => [...points, interval]);
+      });
       setMetrics(result.metrics);
+      setTimeline(result.timeline);
       setReport(result);
     } catch (cause) {
-      setError(redactSecrets(normalizeError(cause).message, environment));
+      setError(
+        setupController.current?.signal.aborted
+          ? t('Execução cancelada.')
+          : redactSecrets(normalizeError(cause).message, environment),
+      );
     } finally {
+      setupController.current = null;
+      setPreparing(false);
       setCancelling(false);
       setRunning(false);
       setBusy(false);
@@ -160,82 +244,124 @@ export function LoadRunner({
               : t('Execução concluída'));
 
   return (
-    <form onSubmit={execute} className="runner-fields">
-      <label className="field-label">
-        {t('Perfil de carga')}
-        <select
-          className="input"
-          disabled={busy}
-          value={profile}
-          onChange={(event) => setProfile(event.target.value as LoadOptions['profile'])}
-        >
-          {Object.entries(profiles).map(([value, label]) => (
-            <option key={value} value={value}>
-              {t(label)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <div className="runner-timing-fields load-fields">
-        {visibleFields.map(([key, label, min, max, anyStep]) => (
-          <label key={key} className="field-label">
-            {t(label)}
-            <input
-              className="input"
-              type="number"
-              min={min}
-              max={max}
-              step={anyStep === 0 ? 'any' : 1}
-              required={!key.startsWith('max_')}
-              disabled={busy}
-              value={values[key]}
-              onChange={(event) => setValues({ ...values, [key]: event.target.value })}
-            />
-          </label>
-        ))}
-      </div>
-      {phased && (
-        <p className="field-hint">
-          {t(
-            profile === 'ramp'
-              ? 'A rampa começa com os VUs de base e atinge o total ao fim da fase.'
-              : 'O pico usa o total de VUs no centro da execução, com carga de base antes e depois.',
-          )}
-        </p>
-      )}
-      {phaseInvalid && (
-        <p className="field-hint">
-          {t('Use menos VUs de base que o total e reserve tempo fora da fase.')}
-        </p>
-      )}
-      {!native && (
-        <p className="field-hint">{t('Execute testes de carga no app desktop ou pelo CLI.')}</p>
-      )}
-      {scripts && (
-        <p className="field-hint">
-          {t('Selecione um fluxo sem scripts JavaScript para o teste de carga.')}
-        </p>
-      )}
-      <div className="load-actions">
-        {running ? (
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={cancelling}
-            onClick={() => {
-              setCancelling(true);
-              onCancel();
-            }}
-          >
-            <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
+    <>
+      <header className="surface-heading load-screen-heading">
+        <h2 ref={heading} tabIndex={-1}>
+          {t(showResults ? 'Resultados do teste de carga' : 'Teste de carga')}
+        </h2>
+        {showResults ? (
+          <Button type="button" variant="secondary" onClick={() => navigateToResults(false)}>
+            <ArrowLeft size={15} /> {t('Voltar à configuração')}
           </Button>
         ) : (
+          (running || report || error) && (
+            <Button type="button" variant="secondary" onClick={() => navigateToResults(true)}>
+              {t('Ver resultados')}
+            </Button>
+          )
+        )}
+      </header>
+      <form onSubmit={execute} className="runner-fields" hidden={showResults}>
+        <label className="field-label">
+          {t('Perfil de carga')}
+          <select
+            className="input"
+            disabled={busy}
+            value={profile}
+            onChange={(event) => setProfile(event.target.value as LoadOptions['profile'])}
+          >
+            {Object.entries(profiles).map(([value, label]) => (
+              <option key={value} value={value}>
+                {t(label)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="runner-timing-fields load-fields">
+          {visibleFields.map(([key, label, min, max, anyStep]) => (
+            <label key={key} className="field-label">
+              {t(label)}
+              <input
+                className="input"
+                type="number"
+                min={min}
+                max={max}
+                step={anyStep === 0 ? 'any' : 1}
+                required={!key.startsWith('max_')}
+                disabled={busy}
+                value={values[key]}
+                onChange={(event) => setValues({ ...values, [key]: event.target.value })}
+              />
+            </label>
+          ))}
+        </div>
+        {phased && (
+          <p className="field-hint">
+            {t(
+              profile === 'ramp'
+                ? 'A rampa começa com os VUs de base e atinge o total ao fim da fase.'
+                : 'O pico usa o total de VUs no centro da execução, com carga de base antes e depois.',
+            )}
+          </p>
+        )}
+        {phaseInvalid && (
+          <p className="field-hint">
+            {t('Use menos VUs de base que o total e reserve tempo fora da fase.')}
+          </p>
+        )}
+        {!native && (
+          <p className="field-hint">{t('Execute testes de carga no app desktop ou pelo CLI.')}</p>
+        )}
+        {scripts && (
+          <div className="load-script-choice">
+            <p className="field-hint">
+              {t(
+                'O fluxo selecionado contém JavaScript. Se um script prepara a autenticação ou os dados, configure essas etapas na coleção antes de rodar sem scripts.',
+              )}
+            </p>
+            <label>
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={skipScripts}
+                onChange={(event) => {
+                  setApprovedScriptScope(event.target.checked ? scriptScope : '');
+                  setSetupScope('');
+                }}
+              />{' '}
+              {t('Executar este teste de carga sem scripts JavaScript')}
+            </label>
+            {hasSetup && (
+              <label>
+                <input
+                  type="checkbox"
+                  disabled={busy}
+                  checked={collectionSetup}
+                  onChange={(event) => {
+                    setSetupScope(event.target.checked ? scriptScope : '');
+                    setApprovedScriptScope('');
+                  }}
+                />
+                {t('Rodar o pré-script da coleção uma vez antes da carga')}
+              </label>
+            )}
+            {collectionSetup && (
+              <p className="field-hint">
+                {t(
+                  'Os usuários virtuais compartilham as variáveis preparadas. O token não é renovado e esta opção está disponível no desktop.',
+                )}
+              </p>
+            )}
+          </div>
+        )}
+        {requestPicker}
+        <div className="load-actions">
           <Button
             type="submit"
             disabled={
               !native ||
               busy ||
-              scripts ||
+              scriptsBlockRun ||
               rangeInvalid ||
               phaseInvalid ||
               !environment ||
@@ -244,53 +370,145 @@ export function LoadRunner({
           >
             <Play size={14} /> {t('Iniciar teste de carga')}
           </Button>
-        )}
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={busy || rangeInvalid || phaseInvalid}
-          onClick={() => download('fedexe-load-scenario.json', JSON.stringify(options, null, 2))}
-        >
-          <Download size={14} /> {t('Exportar cenário')}
-        </Button>
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {runContext && <p className="field-hint">{runContext}</p>}
-      {running && <p role="status">{t('Teste de carga em andamento')}</p>}
-      {verdict && <p role="status">{verdict}</p>}
-      {metrics && (
-        <dl className="load-metrics" aria-label={t('Métricas de carga')}>
-          {(Object.keys(metricLabels) as (keyof LoadMetrics)[]).map((key) => (
-            <div key={key}>
-              <dt>{t(metricLabels[key])}</dt>
-              <dd>
-                {metrics[key] === null
-                  ? '—'
-                  : formatNumber(metrics[key], { maximumFractionDigits: 2 })}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {report && (
-        <div className="load-actions">
-          {report.p99_passed !== null && (
-            <span>{t(report.p99_passed ? 'p99 aprovado' : 'p99 reprovado')}</span>
-          )}
-          {report.error_rate_passed !== null && (
-            <span>
-              {t(report.error_rate_passed ? 'Taxa de erros aprovada' : 'Taxa de erros reprovada')}
-            </span>
-          )}
           <Button
             type="button"
             variant="secondary"
-            onClick={() => download('fedexe-load-report.json', JSON.stringify(report, null, 2))}
+            disabled={
+              busy ||
+              rangeInvalid ||
+              phaseInvalid ||
+              scriptsBlockRun ||
+              collectionSetup ||
+              exportRequestIds?.length === 0
+            }
+            onClick={() =>
+              download(
+                'fedexe-load-scenario.json',
+                JSON.stringify({ ...options, request_ids: exportRequestIds }, null, 2),
+              )
+            }
           >
-            <Download size={14} /> {t('Exportar relatório de carga')}
+            <Download size={14} /> {t('Exportar cenário')}
           </Button>
         </div>
-      )}
-    </form>
+      </form>
+      <div className="runner-fields" hidden={!showResults}>
+        {error && <p role="alert">{error}</p>}
+        {runContext && <p className="field-hint">{runContext}</p>}
+        {running && (
+          <p role="status">
+            {t(preparing ? 'Executando o pré-script da coleção…' : 'Teste de carga em andamento')}
+          </p>
+        )}
+        {verdict && <p role="status">{verdict}</p>}
+        {report?.preparation_failure && (
+          <p>
+            {report.preparation_failure.missing_variable
+              ? t(
+                  'Etapa {0}: variável ausente {1}.',
+                  report.preparation_failure.step,
+                  report.preparation_failure.missing_variable,
+                )
+              : t('Falha de preparação na etapa {0}.', report.preparation_failure.step)}
+          </p>
+        )}
+        {(running || metrics || report) && (
+          <div className="runner-tabs" role="tablist" aria-label={t('Resultados da execução')}>
+            {(['summary', 'timeline'] as const).map((tab) => (
+              <button
+                type="button"
+                key={tab}
+                id={`load-tab-${tab}`}
+                role="tab"
+                aria-controls={`load-panel-${tab}`}
+                aria-selected={resultTab === tab}
+                tabIndex={resultTab === tab ? 0 : -1}
+                onClick={() => setResultTab(tab)}
+                onKeyDown={(event) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const next =
+                    event.key === 'Home'
+                      ? 'summary'
+                      : event.key === 'End' || tab === 'summary'
+                        ? 'timeline'
+                        : 'summary';
+                  setResultTab(next);
+                  event.currentTarget.parentElement
+                    ?.querySelector<HTMLButtonElement>(`#load-tab-${next}`)
+                    ?.focus();
+                }}
+              >
+                {t(tab === 'summary' ? 'Resumo' : 'Evolução')}
+              </button>
+            ))}
+          </div>
+        )}
+        {(running || metrics || report) && (
+          <>
+            <div
+              id="load-panel-summary"
+              className="load-summary"
+              role="tabpanel"
+              aria-labelledby="load-tab-summary"
+              hidden={resultTab !== 'summary'}
+              tabIndex={0}
+            >
+              {report && <LoadResults report={report} requestNames={requestNames} />}
+              {metrics && (
+                <dl className="load-metrics" aria-label={t('Métricas de carga')}>
+                  {(Object.keys(metricLabels) as (keyof LoadMetrics)[]).map((key) => (
+                    <div key={key}>
+                      <dt>{t(metricLabels[key])}</dt>
+                      <dd>
+                        {metrics[key] === null
+                          ? '—'
+                          : formatNumber(metrics[key], { maximumFractionDigits: 2 })}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </div>
+            <div
+              id="load-panel-timeline"
+              role="tabpanel"
+              aria-labelledby="load-tab-timeline"
+              hidden={resultTab !== 'timeline'}
+              tabIndex={0}
+            >
+              <LoadTimeline key={runNumber} points={timeline} />
+            </div>
+          </>
+        )}
+        {(report || running) && (
+          <div className="load-actions">
+            {running && (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={cancelling}
+                onClick={() => {
+                  setCancelling(true);
+                  setupController.current?.abort();
+                  onCancel();
+                }}
+              >
+                <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
+              </Button>
+            )}
+            {report && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => download('fedexe-load-report.json', JSON.stringify(report, null, 2))}
+              >
+                <Download size={14} /> {t('Exportar relatório de carga')}
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

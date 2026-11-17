@@ -14,6 +14,8 @@ let peak = 0;
 let inFlight = 0;
 let writes = 0;
 let nextSession = 0;
+let mixedCalls = 0;
+let timelineStart;
 const server = createServer(async (request, response) => {
   calls.push(request.url);
   if (request.url.startsWith('/load/')) {
@@ -29,6 +31,11 @@ const server = createServer(async (request, response) => {
     await new Promise((resolve) => setTimeout(resolve, timedOut ? 200 : 20));
     inFlight -= 1;
     if (timedOut) return json(200, {});
+    if (request.url === '/load/timeline') {
+      timelineStart ??= performance.now();
+      return json(performance.now() - timelineStart < 1250 ? 200 : 503, {});
+    }
+    if (request.url === '/load/mixed') return json(++mixedCalls % 2 ? 429 : 503, {});
     if (request.url === '/load/login' && request.headers['x-login'] === secret) {
       const id = String(++nextSession);
       const session = `${token}-${id}`;
@@ -288,9 +295,27 @@ try {
     assert.ok(peak > 1 && peak <= 3);
     assert.ok(!calls.includes('/outside'));
   }
+  collection.requests = flow;
+  collection.scripts = { before: 'throw new Error("load must skip JavaScript");' };
+  await writeFile(collectionPath, JSON.stringify(collection));
+  await writeFile(
+    scenarioPath,
+    JSON.stringify({ profile: 'constant', vus: 2, duration_seconds: 2 }),
+  );
+  const beforeScriptRejection = calls.length;
+  const blocked = await run([...args, '--scenario', scenarioPath], 'load');
+  assert.equal(blocked.code, 2);
+  assert.match(blocked.stderr, /skip_scripts/);
+  assert.equal(calls.length, beforeScriptRejection);
+  const optIn = await checkLoad('skip-js', 0, { skip_scripts: true });
+  assert.equal(optIn.options.skip_scripts, true);
+  assert.equal(optIn.metrics.validation_failures, 0);
+  delete collection.scripts;
+
   collection.requests = [
     request('4xx', '/load/unauthorized', [], [status(401)]),
     request('5xx', '/load/unavailable', [], [status(503)]),
+    request('mixed', '/load/mixed', [], []),
     { ...request('timeout', '/load/timeout', [], []), timeoutMs: 60 },
   ];
   const loadFailure = await checkLoad('failed-thresholds', 1, { max_p99_ms: 0 });
@@ -301,10 +326,59 @@ try {
   assert.equal(metrics.transport_errors, metrics.timeouts);
   assert.equal(metrics.requests, metrics.http_errors + metrics.timeouts);
   assert.equal(metrics.error_percent, 100);
+  assert.deepEqual(loadFailure.thresholds, {
+    p99_ms: { measured: metrics.p99_ms, limit: 0, passed: false },
+    error_percent: { measured: 100, limit: 0, passed: false },
+  });
+  const [unauthorized, unavailable, mixed, timeout] = loadFailure.requests_by_step;
+  assert.deepEqual(unauthorized.http_errors_by_status, { 401: unauthorized.requests });
+  assert.deepEqual(unavailable.http_errors_by_status, { 503: unavailable.requests });
+  assert.deepEqual(mixed.http_errors_by_status, {
+    429: Math.ceil(mixed.requests / 2),
+    503: Math.floor(mixed.requests / 2),
+  });
+  assert.ok(mixed.http_errors_by_status[503] > 0);
+  assert.deepEqual(timeout.http_errors_by_status, {});
+  assert.equal(timeout.transport_errors, metrics.timeouts);
+  assert.equal(
+    loadFailure.requests_by_step.reduce((sum, row) => sum + row.requests, 0),
+    metrics.requests,
+  );
+  calls.length = 0;
+  const subset = await checkLoad('folder-subset', 1, { request_ids: ['5xx', '4xx'] });
+  assert.equal(subset.requests_by_step.length, 2);
+  assert.deepEqual(Object.keys(subset.requests_by_step[0].http_errors_by_status), ['401']);
+  assert.deepEqual(Object.keys(subset.requests_by_step[1].http_errors_by_status), ['503']);
+  assert.ok(calls.every((path) => ['/load/unauthorized', '/load/unavailable'].includes(path)));
+  collection.requests = [request('timeline', '/load/timeline', [], [])];
+  const timelineReport = await checkLoad('timeline', 1, { duration_seconds: 3 });
+  const { timeline } = timelineReport;
+  assert.equal(timeline[0].start_ms, 0);
+  assert.equal(timeline[0].first_error_ms, null);
+  assert.ok(timeline[0].requests > 0);
+  const firstFailedWindow = timeline.find((window) => window.errors > 0);
+  assert.ok(firstFailedWindow.first_error_ms >= 1200 && firstFailedWindow.first_error_ms < 3000);
+  assert.equal(timeline.at(-1).end_ms, timelineReport.metrics.duration_ms);
+  assert.equal(
+    timeline.reduce((sum, window) => sum + window.requests, 0),
+    timelineReport.metrics.requests,
+  );
+  assert.equal(
+    timeline.reduce((sum, window) => sum + window.errors, 0),
+    timelineReport.metrics.http_errors,
+  );
+  for (const [index, window] of timeline.entries()) {
+    assert.ok(window.p95_ms <= window.p99_ms);
+    if (index > 0) assert.equal(window.start_ms, timeline[index - 1].end_ms);
+    if (window.first_error_ms !== null) {
+      assert.ok(window.first_error_ms >= window.start_ms && window.first_error_ms <= window.end_ms);
+    }
+  }
   collection.requests = [request('bad', '/load/{{missing}}', [], [])];
   const invalid = await checkLoad('invalid-flow', 2);
   assert.equal(invalid.outcome, 'preparation_error');
   assert.equal(invalid.metrics.requests, 0);
+  assert.deepEqual(invalid.preparation_failure, { step: 1, missing_variable: 'missing' });
   await writeFile(
     scenarioPath,
     JSON.stringify({ profile: 'spike', vus: 2, duration_seconds: 2, phase_seconds: 1 }),

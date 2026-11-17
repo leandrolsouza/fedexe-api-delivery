@@ -73,4 +73,34 @@ mod tests {
         fs::remove_file(path).unwrap();
         fs::remove_dir(directory).unwrap();
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn preserves_saved_workspace_when_windows_blocks_replacement() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let directory =
+            std::env::temp_dir().join(format!("fedexe-workspace-locked-{}", std::process::id()));
+        let path = directory.join("workspace.json");
+        let saved = r#"{"version":1,"collections":[{"name":"Saved"}]}"#;
+        let changed = r#"{"version":1,"collections":[{"name":"Changed"}]}"#;
+        write_atomic(&path, saved).unwrap();
+
+        // Allow readers to reopen the workspace while denying rename and deletion.
+        const FILE_SHARE_READ: u32 = 1;
+        let lock = OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+
+        assert!(write_atomic(&path, changed).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+
+        drop(lock);
+        write_atomic(&path, changed).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

@@ -1,0 +1,7 @@
+Escolha entre seis temas de interface ou configure temas claro e escuro separados para acompanhar a preferência do sistema.
+
+Restaure um workspace a partir de um backup local do Fedexe. Revise o conteúdo antes de substituir suas coleções, ambientes e configurações e exporte uma cópia do workspace atual pela tela de confirmação.
+
+Acompanhe a taxa de requisições, as latências p95 e p99 e a taxa de erros ao longo dos testes de carga. A linha do tempo também está disponível nos relatórios JSON do desktop e da CLI.
+
+O editor agora destaca variáveis nas URLs e oferece controles próprios para o corpo da requisição e o tempo limite.

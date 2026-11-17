@@ -32,7 +32,7 @@ const localizedNotes = {
 
 const manifest = {
   version,
-  notes: localizedNotes['pt-BR'],
+  notes: localizedNotes['en-US'],
   localizedNotes,
   platforms: {
     'windows-x86_64': {

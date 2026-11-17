@@ -27,17 +27,15 @@ import {
   History,
   Info,
   Layers3,
-  LoaderCircle,
   LockKeyhole,
   Monitor,
-  Moon,
+  Palette,
   MoreHorizontal,
   Play,
   Plus,
   Search,
   ShieldCheck,
   Square,
-  Sun,
   Terminal,
   Trash2,
   TriangleAlert,
@@ -46,6 +44,7 @@ import {
 import { toast } from 'sonner';
 import {
   pair,
+  DEFAULT_TIMEOUT_MS,
   redactSecrets,
   requestsForRun,
   safeEnvironment,
@@ -53,6 +52,7 @@ import {
   type Environment,
   type HistoryItem,
   type RequestItem,
+  type RedirectPolicy,
   type RunResult,
   type RunFailureReason,
   type RunRow,
@@ -66,6 +66,8 @@ import { native, normalizeError, runCollection } from '../lib/transport';
 import { PairEditor } from './PairEditor';
 import { LoadRunner } from './LoadRunner';
 import { MethodBadge } from './RequestEditor';
+import { TimeoutInput } from './TimeoutInput';
+import { ThemeSettingsPanel } from './ThemeSettings';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { Dropdown } from './ui/dropdown';
@@ -513,6 +515,16 @@ export function RunnerView({
   onResults: (result: RunResult) => void;
 }) {
   const [loadMode, setLoadMode] = useState(false);
+  const requestDefaults = {
+    defaultTimeoutMs: workspace.settings.defaultTimeoutMs,
+    defaultRedirectPolicy: native ? workspace.settings.defaultRedirectPolicy : undefined,
+  };
+  const [showLoadResults, setShowLoadResults] = useState(false);
+  const [showFunctionalResults, setShowFunctionalResults] = useState(false);
+  const analysing = loadMode ? showLoadResults : showFunctionalResults;
+  const configurationHeading = useRef<HTMLHeadingElement>(null);
+  const functionalHeading = useRef<HTMLHeadingElement>(null);
+  const focusFunctionalScreen = useRef(false);
   const [collectionId, setCollectionId] = useState(workspace.collections[0]?.id || '');
   const collection =
     workspace.collections.find((c) => c.id === collectionId) ?? workspace.collections[0];
@@ -520,6 +532,7 @@ export function RunnerView({
   const [scope, setScope] = useState<RunScope>('collection');
   const [folder, setFolder] = useState('');
   const [selection, setSelection] = useState<string[]>([]);
+  const [folderExclusions, setFolderExclusions] = useState<Set<string>>(() => new Set());
   const [runPlan, setRunPlan] = useState<{
     requests: RequestItem[];
     context: string;
@@ -545,7 +558,11 @@ export function RunnerView({
   const [delayInput, setDelayInput] = useState('0');
   const [cancelling, setCancelling] = useState(false);
   const environment = workspace.environments.find((env) => env.id === environmentId);
-  const chosen = requestsForRun(collection, scope, folder, selection);
+  const scopedRequests = requestsForRun(collection, scope, folder, selection);
+  const chosen =
+    scope === 'folder'
+      ? scopedRequests.filter(({ id }) => !folderExclusions.has(id))
+      : scopedRequests;
   const iterations = Number(iterationsInput);
   const delay = Number(delayInput);
   const validOptions =
@@ -558,8 +575,9 @@ export function RunnerView({
     delay <= 60000;
   const plannedSteps = chosen.length * (validOptions ? iterations : 1);
   const chosenIds = new Set(chosen.map(({ id }) => id));
-  const choosingRequests = scope === 'selection' && !runPlan;
-  const requests = runPlan?.requests ?? (choosingRequests ? (collection?.requests ?? []) : chosen);
+  const choosingRequests = scope === 'selection' || scope === 'folder';
+  const previewRequests = scope === 'selection' ? (collection?.requests ?? []) : scopedRequests;
+  const requests = runPlan?.requests ?? [];
   const activeRequest = activeStep === undefined ? undefined : runPlan?.requests[activeStep];
   const totalSteps = runPlan?.requests.length ?? 0;
   const currentStep = activeStep ?? Math.min(rows.length, totalSteps - 1);
@@ -663,11 +681,24 @@ export function RunnerView({
     setCancelling(false);
   }, []);
   useEffect(() => {
+    if (focusFunctionalScreen.current) {
+      (showFunctionalResults ? functionalHeading : configurationHeading).current?.focus();
+      focusFunctionalScreen.current = false;
+    }
+  }, [showFunctionalResults]);
+  function navigateFunctional(show: boolean) {
+    focusFunctionalScreen.current = true;
+    setShowFunctionalResults(show);
+  }
+  useEffect(() => {
     if (!initialFolder) return;
     setLoadMode(false);
+    setShowLoadResults(false);
+    setShowFunctionalResults(false);
     setCollectionId(initialFolder.collectionId);
     setScope('folder');
     setFolder(initialFolder.folder);
+    setFolderExclusions(new Set());
     setEnvironmentId(initialFolder.environmentId);
     setSelection([]);
     clearRun();
@@ -677,6 +708,7 @@ export function RunnerView({
     setBusy(true);
     setRunning(true);
     clearRun();
+    navigateFunctional(true);
     setRunPlan({
       requests: Array.from({ length: plannedSteps }, (_, index) => chosen[index % chosen.length]),
       context,
@@ -688,6 +720,7 @@ export function RunnerView({
         collection,
         environment,
         requests: chosen,
+        defaults: requestDefaults,
       });
       const nativeCollection = prepareCollection(
         snapshot.collection,
@@ -695,6 +728,7 @@ export function RunnerView({
         snapshot.requests,
         stopOnFailure,
         native,
+        snapshot.defaults,
       );
       const redactRows = (rows: RunRow[]) =>
         rows.map((row) => ({
@@ -735,25 +769,127 @@ export function RunnerView({
       setBusy(false);
     }
   }
+  const requestPreview = (
+    <section className={cn('runner-request-picker', !loadMode && 'surface')}>
+      <div className="surface-heading">
+        <div>
+          <h3>{t(choosingRequests ? 'Selecione as requisições' : 'Requisições no escopo')}</h3>
+          <p>
+            {choosingRequests
+              ? t('{0} de {1} requisições selecionadas', chosen.length, previewRequests.length)
+              : chosenLabel}
+          </p>
+        </div>
+        {choosingRequests && previewRequests.length > 0 && (
+          <div className="load-actions">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={busy || chosen.length === previewRequests.length}
+              onClick={() =>
+                scope === 'folder'
+                  ? setFolderExclusions(new Set())
+                  : setSelection(previewRequests.map(({ id }) => id))
+              }
+            >
+              {t('Marcar todas')}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={busy || chosen.length === 0}
+              onClick={() =>
+                scope === 'folder'
+                  ? setFolderExclusions(new Set(previewRequests.map(({ id }) => id)))
+                  : setSelection([])
+              }
+            >
+              {t('Desmarcar todas')}
+            </Button>
+          </div>
+        )}
+      </div>
+      {previewRequests.length > 0 ? (
+        <div className="runner-table-scroll">
+          <table className="runner-table">
+            <thead>
+              <tr>
+                {choosingRequests && <th scope="col" aria-label={t('Seleção')} />}
+                <th scope="col">{t('Método')}</th>
+                <th scope="col">{t('Requisição')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previewRequests.map((request) => (
+                <tr key={request.id}>
+                  {choosingRequests && (
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={t('Executar {0}', request.name)}
+                        disabled={busy}
+                        checked={chosenIds.has(request.id)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          if (scope === 'folder') {
+                            setFolderExclusions((current) => {
+                              const next = new Set(current);
+                              if (checked) next.delete(request.id);
+                              else next.add(request.id);
+                              return next;
+                            });
+                            return;
+                          }
+                          setSelection((current) =>
+                            checked
+                              ? [...current, request.id]
+                              : current.filter((id) => id !== request.id),
+                          );
+                        }}
+                      />
+                    </td>
+                  )}
+                  <td>
+                    <MethodBadge method={request.method} small />
+                  </td>
+                  <th scope="row" className="runner-request-name">
+                    {request.name}
+                  </th>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="runner-empty">{t('Nenhuma requisição no escopo')}</p>
+      )}
+    </section>
+  );
   return (
     <div className="workspace-page runner-page">
-      <PageHeading
-        eyebrow={t('CONFIANÇA EM CADA ENTREGA')}
-        title={t('Teste o fluxo. Não só o endpoint.')}
-        description={t(
-          'Execute suas coleções em sequência e encontre os detalhes que fazem a diferença.',
-        )}
-        action={
-          <span className="local-pill">
-            <ShieldCheck size={14} />
-            {' ' + t('Execução local')}
-          </span>
-        }
-      />
-      <div className="runner-layout">
-        <section className="surface runner-configuration">
+      {!analysing && (
+        <PageHeading
+          eyebrow={t('CONFIANÇA EM CADA ENTREGA')}
+          title={t('Teste o fluxo. Não só o endpoint.')}
+          description={t(
+            'Execute suas coleções em sequência e encontre os detalhes que fazem a diferença.',
+          )}
+          action={
+            <span className="local-pill">
+              <ShieldCheck size={14} />
+              {' ' + t('Execução local')}
+            </span>
+          }
+        />
+      )}
+      <div className={cn('runner-layout', analysing && 'runner-analysis-layout')}>
+        <section className="surface runner-configuration" hidden={analysing}>
           <div className="surface-heading">
-            <h3>{t('Configurar execução')}</h3>
+            <h3 ref={configurationHeading} tabIndex={-1}>
+              {t('Configurar execução')}
+            </h3>
           </div>
           <div className="runner-fields">
             <label className="field-label">
@@ -766,9 +902,9 @@ export function RunnerView({
                   const next = event.target.value === 'load';
                   if (next && scope === 'selection') {
                     setScope('collection');
-                    clearRun();
                   }
                   setLoadMode(next);
+                  setShowLoadResults(false);
                 }}
               >
                 <option value="functional">{t('Teste funcional')}</option>
@@ -785,8 +921,8 @@ export function RunnerView({
                 onChange={(e) => {
                   setCollectionId(e.target.value);
                   setFolder('');
+                  setFolderExclusions(new Set());
                   setSelection([]);
-                  clearRun();
                 }}
               >
                 <option value="" disabled>
@@ -807,7 +943,6 @@ export function RunnerView({
                 value={environment?.id ?? ''}
                 onChange={(e) => {
                   setEnvironmentId(e.target.value);
-                  clearRun();
                 }}
               >
                 <option value="">{t('Selecione um ambiente')}</option>
@@ -826,7 +961,6 @@ export function RunnerView({
                 disabled={busy}
                 onChange={(event) => {
                   setScope(event.target.value as RunScope);
-                  clearRun();
                 }}
               >
                 <option value="collection">{t('Coleção inteira')}</option>
@@ -843,7 +977,7 @@ export function RunnerView({
                   value={collection?.folders.includes(folder) ? folder : ''}
                   onChange={(event) => {
                     setFolder(event.target.value);
-                    clearRun();
+                    setFolderExclusions(new Set());
                   }}
                 >
                   <option value="">{t('Selecione uma pasta')}</option>
@@ -912,26 +1046,18 @@ export function RunnerView({
           </div>
           {!loadMode && (
             <div className="runner-start">
-              {running ? (
-                <Button
-                  variant="secondary"
-                  disabled={cancelling}
-                  onClick={() => {
-                    setCancelling(true);
-                    onCancel();
-                  }}
-                >
-                  <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
-                </Button>
-              ) : (
-                <Button
-                  onClick={run}
-                  disabled={busy || !chosen.length || !environment || !validOptions}
-                >
-                  <Play size={15} fill="currentColor" />
-                  {' ' + t('Executar') + ' '}
-                  {formatNumber(plannedSteps)}{' '}
-                  {plannedSteps === 1 ? t('requisição') : t('requisições')}
+              <Button
+                onClick={run}
+                disabled={busy || !chosen.length || !environment || !validOptions}
+              >
+                <Play size={15} fill="currentColor" />
+                {' ' + t('Executar') + ' '}
+                {formatNumber(plannedSteps)}{' '}
+                {plannedSteps === 1 ? t('requisição') : t('requisições')}
+              </Button>
+              {runPlan && (
+                <Button variant="secondary" onClick={() => navigateFunctional(true)}>
+                  {t('Ver resultados')}
                 </Button>
               )}
               <span>
@@ -943,32 +1069,37 @@ export function RunnerView({
         </section>
         {loadMode && (
           <section className="surface load-panel">
-            <div className="surface-heading">
-              <h3>{t('Teste de carga')}</h3>
-            </div>
             <LoadRunner
+              requestPicker={scope === 'folder' && folder ? requestPreview : undefined}
+              exportRequestIds={
+                scope === 'folder' && chosen.length !== scopedRequests.length
+                  ? chosen.map(({ id }) => id)
+                  : undefined
+              }
+              showResults={showLoadResults}
+              onShowResults={setShowLoadResults}
               context={context}
               collection={collection}
               environment={environment}
               requests={chosen}
+              defaults={requestDefaults}
               busy={busy}
               setBusy={setBusy}
               onCancel={onCancel}
             />
           </section>
         )}
-        <section className="surface runner-results" hidden={loadMode}>
+        {!loadMode && !showFunctionalResults && requestPreview}
+        <section className="surface runner-results" hidden={loadMode || !showFunctionalResults}>
           <div className="runner-results-header">
             <div className="surface-heading">
               <div>
-                <h3>
+                <h3 ref={functionalHeading} tabIndex={-1}>
                   {running
                     ? t('Execução em andamento')
                     : result
                       ? outcomeLabel[result.outcome]
-                      : choosingRequests
-                        ? t('Selecione as requisições')
-                        : t('Requisições no escopo')}
+                      : t('Resultados da execução')}
                 </h3>
                 <p>{runPlan?.context ?? context}</p>
                 <p role="status" aria-atomic="true">
@@ -980,12 +1111,23 @@ export function RunnerView({
                   {running && activeRequest && ` · ${activeRequest.name}`}
                 </p>
               </div>
-              {running && <LoaderCircle className="spin purple-text" size={20} />}
-              {!running && runPlan && scope === 'selection' && (
-                <Button variant="outline" size="sm" disabled={busy} onClick={clearRun}>
-                  {t('Editar seleção')}
+              <div className="load-actions">
+                {running && (
+                  <Button
+                    variant="secondary"
+                    disabled={cancelling}
+                    onClick={() => {
+                      setCancelling(true);
+                      onCancel();
+                    }}
+                  >
+                    <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
+                  </Button>
+                )}
+                <Button variant="secondary" onClick={() => navigateFunctional(false)}>
+                  <ArrowLeft size={15} /> {t('Voltar à configuração')}
                 </Button>
-              )}
+              </div>
             </div>
             {(running || rows.length > 0 || result) && (
               <div className="run-summary">
@@ -1136,7 +1278,6 @@ export function RunnerView({
                 <table className="runner-table" aria-label={t('Resultados da execução')}>
                   <thead>
                     <tr>
-                      {choosingRequests && <th scope="col" aria-label={t('Seleção')} />}
                       <th scope="col" aria-label={t('Etapa')}>
                         #
                       </th>
@@ -1164,25 +1305,6 @@ export function RunnerView({
                             ref={targetIndex === index ? targetRow : undefined}
                             tabIndex={-1}
                           >
-                            {choosingRequests && (
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  aria-label={t('Executar {0}', request.name)}
-                                  disabled={busy}
-                                  checked={chosenIds.has(request.id)}
-                                  onChange={(event) => {
-                                    const checked = event.target.checked;
-                                    setSelection((current) =>
-                                      checked
-                                        ? [...current, request.id]
-                                        : current.filter((id) => id !== request.id),
-                                    );
-                                    clearRun();
-                                  }}
-                                />
-                              </td>
-                            )}
                             <td>{formatNumber(index + 1)}</td>
                             <td>
                               <MethodBadge method={request.method} small />
@@ -1370,11 +1492,15 @@ export function RunnerView({
           </div>
         </section>
       </div>
-      <div className="runner-footnote">
-        <Info size={14} />
-        {' ' +
-          t('O ambiente é capturado no início. Tokens extraídos só existem durante esta execução.')}
-      </div>
+      {!analysing && (
+        <div className="runner-footnote">
+          <Info size={14} />
+          {' ' +
+            t(
+              'O ambiente é capturado no início. Tokens extraídos só existem durante esta execução.',
+            )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1570,6 +1696,14 @@ export function HistoryView({
   );
 }
 
+const settingsSections = [
+  { label: 'Aparência', icon: Monitor },
+  { label: 'Temas', icon: Palette },
+  { label: 'Padrões de requisição', icon: Clock3 },
+  { label: 'Dados e backups', icon: HardDrive },
+  { label: 'Atualizações e sobre', icon: Info },
+] as const;
+
 export function SettingsView({
   workspace,
   onChange,
@@ -1578,6 +1712,7 @@ export function SettingsView({
   onBackup,
   onDrive,
   updates,
+  version,
 }: {
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
@@ -1586,8 +1721,10 @@ export function SettingsView({
   onBackup: () => void;
   onDrive?: () => void;
   updates: React.ReactNode;
+  version: string;
 }) {
   const settings = workspace.settings;
+  const [section, setSection] = useState<(typeof settingsSections)[number]['label']>('Aparência');
   const locale = useLocale();
   const update = (patch: Partial<Workspace['settings']>) =>
     onChange({ ...workspace, settings: { ...settings, ...patch } });
@@ -1598,153 +1735,197 @@ export function SettingsView({
   return (
     <div className="workspace-page settings-page">
       <PageHeading
-        eyebrow={t('DO SEU JEITO')}
-        title={t('Um workspace com a sua cara.')}
-        description={t('Ajuste os detalhes e deixe o Fedexe trabalhar no seu ritmo.')}
+        title={t('Configurações')}
+        description={t('Gerencie as preferências do Fedexe API e do workspace.')}
       />
-      <section className="surface settings-surface">
-        <label className="field-label workspace-name-field">
-          {t('Idioma da interface')}
-          <select
-            className="input"
-            value={locale}
-            onChange={(event) => {
-              try {
-                setLocale(event.target.value as Locale);
-              } catch {
-                toast.error(t('Não foi possível salvar a preferência de idioma.'));
-              }
-            }}
-          >
-            <option value="en-US" lang="en-US">
-              English (US)
-            </option>
-            <option value="pt-BR" lang="pt-BR">
-              Português (Brasil)
-            </option>
-          </select>
-        </label>
-      </section>
-      {updates}
-      <section className="surface settings-surface">
-        <div className="settings-section-heading">
-          <Monitor size={20} />
-          <div>
-            <h3>{t('Aparência')}</h3>
-            <p>{t('Conforto visual para cada momento do dia.')}</p>
-          </div>
-        </div>
-        <div className="theme-options">
-          {(
-            [
-              { value: 'light', label: t('Claro'), icon: Sun },
-              { value: 'dark', label: t('Escuro'), icon: Moon },
-              { value: 'system', label: t('Sistema'), icon: Monitor },
-            ] as const
-          ).map((theme) => (
+      <div className="settings-layout">
+        <nav className="settings-menu" aria-label={t('Configurações')}>
+          {settingsSections.map(({ label, icon: Icon }) => (
             <button
-              key={theme.value}
-              className={cn('theme-option', settings.theme === theme.value && 'selected')}
-              onClick={() => update({ theme: theme.value })}
+              key={label}
+              type="button"
+              aria-current={section === label ? 'true' : undefined}
+              onClick={() => setSection(label)}
             >
-              <div className={`theme-preview preview-${theme.value}`}>
-                <i />
-                <span />
-                <span />
-                <span />
-              </div>
-              <span>
-                <theme.icon size={15} />
-                {theme.label}
-                {settings.theme === theme.value && <Check size={15} />}
-              </span>
+              <Icon size={17} aria-hidden="true" />
+              {t(label)}
             </button>
           ))}
-        </div>
-        <SettingToggle
-          title={t('Interface compacta')}
-          description={t('Reduza os espaçamentos na árvore de coleções.')}
-          checked={settings.compact}
-          onChange={(compact) => update({ compact })}
-        />
-        <SettingToggle
-          title={t('Quebra de linha nas respostas')}
-          description={t('Leia respostas longas sem rolar horizontalmente.')}
-          checked={settings.wrap}
-          onChange={(wrap) => update({ wrap })}
-        />
-      </section>
-      <section className="surface settings-surface">
-        <div className="settings-section-heading">
-          <HardDrive size={20} />
-          <div>
-            <h3>{t('Seu espaço, seus dados')}</h3>
-            <p>{t('Sem nuvem obrigatória. Sem contas. Sem surpresas.')}</p>
-          </div>
-        </div>
-        <label className="field-label workspace-name-field">
-          {t('Nome do workspace')}
-          <input
-            className="input"
-            maxLength={60}
-            value={settings.workspaceName}
-            onChange={(e) => update({ workspaceName: e.target.value })}
-          />
-        </label>
-        <div className="data-information">
-          <span>
-            <Database size={16} />
-            {' ' + t('Armazenamento local')}
-          </span>
-          <strong>
-            {formatNumber(size / 1024, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} KB
-          </strong>
-        </div>
-        <div className="settings-backup-actions">
-          <Button
-            variant="outline"
-            onClick={() => {
-              download(
-                `fedexe-backup-${new Date().toISOString().slice(0, 10)}.json`,
-                JSON.stringify(exportableWorkspace(workspace), null, 2),
-              );
-              onBackup();
-            }}
-          >
-            <ArrowDownToLine size={15} />
-            {' ' + t('Exportar backup')}
-          </Button>
-          <Button variant="outline" onClick={onImport}>
-            <FileJson2 size={15} />
-            {' ' + t('Importar dados')}
-          </Button>
-          {onDrive && (
-            <Button variant="outline" onClick={onDrive}>
-              {t('Backups no Google Drive')}
-            </Button>
+        </nav>
+        <div className="settings-content">
+          {section === 'Aparência' && (
+            <section className="surface settings-surface">
+              <div className="settings-section-heading">
+                <h2>{t('Aparência')}</h2>
+              </div>
+              <label className="field-label workspace-name-field">
+                {t('Idioma da interface')}
+                <select
+                  className="input"
+                  value={locale}
+                  onChange={(event) => {
+                    try {
+                      setLocale(event.target.value as Locale);
+                    } catch {
+                      toast.error(t('Não foi possível salvar a preferência de idioma.'));
+                    }
+                  }}
+                >
+                  <option value="en-US" lang="en-US">
+                    English (US)
+                  </option>
+                  <option value="pt-BR" lang="pt-BR">
+                    Português (Brasil)
+                  </option>
+                </select>
+              </label>
+              <SettingToggle
+                title={t('Interface compacta')}
+                description={t('Reduza os espaçamentos na árvore de coleções.')}
+                checked={settings.compact}
+                onChange={(compact) => update({ compact })}
+              />
+              <SettingToggle
+                title={t('Quebra de linha nas respostas')}
+                description={t('Leia respostas longas sem rolar horizontalmente.')}
+                checked={settings.wrap}
+                onChange={(wrap) => update({ wrap })}
+              />
+            </section>
+          )}
+          {section === 'Temas' && <ThemeSettingsPanel settings={settings} onChange={update} />}
+          {section === 'Padrões de requisição' && (
+            <section className="surface settings-surface">
+              <div className="settings-section-heading">
+                <h2>{t('Padrões de requisição')}</h2>
+              </div>
+              <div className="settings-default-field">
+                <TimeoutInput
+                  label={t('Timeout padrão do workspace (ms)')}
+                  value={settings.defaultTimeoutMs}
+                  placeholder={String(DEFAULT_TIMEOUT_MS)}
+                  onChange={(defaultTimeoutMs) => update({ defaultTimeoutMs })}
+                />
+                <p className="field-hint">
+                  {t(
+                    'Usado em requisições sem um timeout próprio. Deixe em branco para usar 30 segundos.',
+                  )}
+                </p>
+                {settings.defaultTimeoutMs !== undefined &&
+                  settings.defaultTimeoutMs !== DEFAULT_TIMEOUT_MS && (
+                    <Button
+                      variant="outline"
+                      onClick={() => update({ defaultTimeoutMs: undefined })}
+                    >
+                      {t('Restaurar padrão de 30 segundos')}
+                    </Button>
+                  )}
+              </div>
+              {native && (
+                <div className="settings-default-field">
+                  <label className="field-label">
+                    {t('Redirecionamento padrão do workspace')}
+                    <select
+                      className="input"
+                      value={settings.defaultRedirectPolicy ?? 'none'}
+                      aria-describedby="workspace-redirect-hint"
+                      onChange={(event) =>
+                        update({ defaultRedirectPolicy: event.target.value as RedirectPolicy })
+                      }
+                    >
+                      <option value="none">{t('Não seguir')}</option>
+                      <option value="same_origin">{t('Seguir apenas na mesma origem')}</option>
+                    </select>
+                  </label>
+                  <p className="field-hint" id="workspace-redirect-hint">
+                    {t(
+                      'Cada requisição pode usar o padrão do workspace ou definir sua própria regra.',
+                    )}
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+          {section === 'Dados e backups' && (
+            <section className="surface settings-surface">
+              <div className="settings-section-heading">
+                <h2>{t('Dados e backups')}</h2>
+              </div>
+              <label className="field-label workspace-name-field">
+                {t('Nome do workspace')}
+                <input
+                  className="input"
+                  maxLength={60}
+                  value={settings.workspaceName}
+                  onChange={(e) => update({ workspaceName: e.target.value })}
+                />
+              </label>
+              <div className="data-information">
+                <span>
+                  <Database size={16} />
+                  {' ' + t('Armazenamento local')}
+                </span>
+                <strong>
+                  {formatNumber(size / 1024, {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                  })}{' '}
+                  KB
+                </strong>
+              </div>
+              <div className="settings-backup-actions">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    download(
+                      `fedexe-backup-${new Date().toISOString().slice(0, 10)}.json`,
+                      JSON.stringify(exportableWorkspace(workspace), null, 2),
+                    );
+                    onBackup();
+                  }}
+                >
+                  <ArrowDownToLine size={15} />
+                  {' ' + t('Exportar backup')}
+                </Button>
+                <Button variant="outline" onClick={onImport}>
+                  <FileJson2 size={15} />
+                  {' ' + t('Importar dados')}
+                </Button>
+                {onDrive && (
+                  <Button variant="outline" onClick={onDrive}>
+                    {t('Backups no Google Drive')}
+                  </Button>
+                )}
+              </div>
+              <p className="field-hint">
+                {native
+                  ? t(
+                      'O workspace é salvo em JSON. Segredos marcados ficam no Gerenciador de Credenciais do Windows.',
+                    )
+                  : t(
+                      'O navegador salva o workspace localmente e mantém os segredos apenas na sessão.',
+                    )}
+              </p>
+            </section>
+          )}
+          {section === 'Atualizações e sobre' && (
+            <>
+              {updates}
+              <section className="about-card">
+                <img className="brand-mark" src="/favicon.svg" alt="" />
+                <div>
+                  <h2>Fedexe API</h2>
+                  <p>{t('Versão {0}', version)}</p>
+                </div>
+                <Button variant="outline" onClick={onHelp}>
+                  {t('Conhecer o projeto') + ' '}
+                  <ArrowUpRight size={14} />
+                </Button>
+              </section>
+            </>
           )}
         </div>
-        <p className="field-hint">
-          {native
-            ? t(
-                'O workspace é salvo em JSON. Segredos marcados ficam no Gerenciador de Credenciais do Windows.',
-              )
-            : t('O navegador salva o workspace localmente e mantém os segredos apenas na sessão.')}
-        </p>
-      </section>
-      <section className="about-card">
-        <span className="brand-mark">
-          f<span>↗</span>
-        </span>
-        <div>
-          <h3>{t('Feito para quem constrói.')}</h3>
-          <p>{t('Fedexe API · Interface 0.2 · MIT · Local-first')}</p>
-        </div>
-        <Button variant="outline" onClick={onHelp}>
-          {t('Conhecer o projeto') + ' '}
-          <ArrowUpRight size={14} />
-        </Button>
-      </section>
+      </div>
     </div>
   );
 }
