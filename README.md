@@ -1,72 +1,71 @@
 # Fedexe API
 
-Cliente HTTP desktop local sob licença MIT. Rust + Tauri 2, com interface React, TypeScript, Tailwind CSS e componentes no padrão shadcn/ui. Sem conta e sem serviços de nuvem obrigatórios.
+Fedexe API is a local HTTP client for Windows. Organize requests, test APIs interactively, and run saved workflows from the desktop app or in CI. The app uses Rust and Tauri 2 with React, TypeScript, Vite, and Tailwind CSS. It requires no account or cloud service.
 
-A partir da 1.2, a interface abre em inglês quando o perfil ainda não tem preferência de idioma. Para mudar para português do Brasil, abra **Settings → Interface language** e selecione **Português (Brasil)**. A escolha fica salva no perfil local.
+## Install on Windows
 
-**Vindo da 1.0.x?** Baixe o instalador da [versão 1.1.0](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) e execute-o sobre a instalação existente. A série 1.0.x não tem atualizador. A partir da 1.1, o Fedexe verifica versões estáveis na abertura e em **Settings → Updates** (ou **Configurações → Atualizações** em português).
+Download and run the Windows x64 `*-setup.exe` from the [latest stable release](https://github.com/leandrolsouza/fedexe-api-delivery/releases/latest). The NSIS installer installs the app for the current Windows user.
 
-## Executar
+Fedexe opens in English on a new profile. To switch languages, go to **Settings → Interface language** and select **Português (Brasil)**. The app saves the choice locally.
 
-Instale Node.js 22.17+, Rust com o toolchain MSVC, as ferramentas de build C++ da Microsoft e o WebView2.
+Published builds with the updater enabled check for stable releases on startup and in **Settings → Updates**. If you're upgrading from 1.0.x, run the [1.1.0 installer](https://github.com/leandrolsouza/fedexe-api-delivery/releases/tag/v1.1.0) over your existing installation to get in-app updates.
+
+## What you can do
+
+- Organize requests into collections and folders. Work across tabs with independent drafts, history, a desktop request console, and global search.
+- Configure query parameters, headers, authentication, request bodies, and per-request timeouts. Reuse values with `{{variable}}` references.
+- Inspect formatted responses and headers, copy the preview, or save the full response body on Windows.
+- Validate responses with declarative checks and pass extracted values to later requests. Add pre-request and post-response JavaScript in the editor and desktop collection runner.
+- Run a saved collection or folder against an environment, repeat it, and export results. Run load tests with virtual users, live metrics, and optional p99 and error-rate thresholds.
+- Import cURL commands, Postman collections and environments, or OpenAPI 3.0 and 3.1 definitions. Export collection data and back up your workspace as JSON.
+- Choose a light or dark theme, follow the system theme, or use the compact layout.
+
+Press `Ctrl+S` to save a request, `Ctrl+Enter` to send it, or `Ctrl+K` to search. The runner uses saved requests.
+
+### Local data and request behavior
+
+The Windows app saves the workspace as JSON using atomic replacement and stores recognized credentials and environment secrets in Windows Credential Manager. Workspace backups omit stored secret values. The browser preview keeps its own workspace in browser storage and keeps secrets in session storage.
+
+The default timeout is 30 seconds. The desktop engine verifies TLS certificates and can optionally follow same-origin redirects. Response previews are limited to 256 KiB, and runner JSON validation supports bodies up to 16 MiB. The runner can stop on the first failure and preserves partial results when canceled.
+
+Google Drive backup is optional and disabled in standard builds. See the [interface guide](docs/INTERFACE.md) for setup and feature details.
+
+## Run from source
+
+For Windows desktop development, install Node.js 22.17 or later, Rust with the MSVC toolchain, Microsoft C++ Build Tools, and WebView2. Run these commands in PowerShell from the repository root.
 
 ```powershell
 npm ci
 npm run tauri dev
 ```
 
-Para experimentar a coleção **Acme API**, suba `node tools/test-server.mjs` em outro terminal. No app, mantenha o ambiente **Local** e envie **List users**, ou abra o **Collection runner** e execute as 8 etapas. Os usuários são fictícios e alterações no servidor de exemplo não são persistidas. Para testar uma resposta grande, envie GET para `http://127.0.0.1:8787/large`.
+### Try the sample API
 
-### Prévia no navegador
+In a second terminal, run `node tools/test-server.mjs`. In Fedexe, select the **Local** environment, open **Acme API**, and send **List users**. You can also open the collection runner and run the whole collection. Send `GET http://127.0.0.1:8787/large` to try a large response. The sample server listens on loopback, uses fictional data, and discards changes.
+
+### Browser preview
 
 ```powershell
 npm run dev
 ```
 
-Abra `http://127.0.0.1:1420`. Os envios são reais via `fetch`, sujeitos a CORS; a versão desktop usa o motor Rust e não tem essa restrição. Coleções, ambientes e configurações ficam no armazenamento local de cada contexto (navegador e desktop não compartilham seus dados).
+Open `http://127.0.0.1:1420`. Requests use the browser's `fetch` API and are subject to CORS. Use the desktop app to test the Rust HTTP engine, Windows Credential Manager, or the updater.
 
-### Build desktop
+## Run collections in CI
+
+Download the `*_cli_windows-x64.zip` from the [latest stable release](https://github.com/leandrolsouza/fedexe-api-delivery/releases/latest), or build it with `npm run build:cli` after `npm ci`. Use Node.js 22.17 or later and keep `fedexe.mjs` and `fedexe-runner.exe` in the same folder. A local build places them in `dist-cli`.
+
+Export a collection and an environment from Fedexe. Use an empty environment export for collections that have no environment variables.
 
 ```powershell
-npm run build
-cargo run --release --locked --features custom-protocol
+node dist-cli/fedexe.mjs run --collection ./collection.json --environment ./environment.json --report ./fedexe-report.json
 ```
 
-Para gerar o instalador Windows por usuário, execute `.\node_modules\.bin\tauri.cmd build --ci -- --locked` no PowerShell. O pacote NSIS fica em `target/release/bundle/nsis`. A versão do instalador vem de `tauri.conf.json`.
+The report path must point to a new file. For load testing, export a scenario from the desktop runner and use the CLI's `load` command. See the [CLI guide](docs/CLI.md) for secrets, performance thresholds, exit codes, and a GitHub Actions example.
 
-Execute manualmente o workflow **Windows installer** no commit da release. Ele confere as versões do Tauri, npm e Cargo, gera o pacote e valida a instalação e a preservação do workspace em outro runner Windows.
+## Build and verify
 
-Para publicar uma versão estável com o atualizador habilitado, siga o [procedimento de assinatura e publicação](docs/UPDATER.md).
-
-### Runner por CLI
-
-O Fedexe executa testes funcionais e de carga a partir de coleções ou pastas exportadas. Veja o [guia do runner para CI](docs/CLI.md) para compilar, configurar segredos e aplicar limites de desempenho no pipeline.
-
-### Validar a instalação em outro Windows
-
-1. Copie o instalador x64 e o arquivo `.sha256` para a máquina de teste. Compare a primeira coluna do arquivo com o resultado de `Get-FileHash -LiteralPath "<instalador.exe>" -Algorithm SHA256`.
-2. Instale e abra o Fedexe. Importe uma coleção Postman e dois ambientes de teste. Configure os segredos no app e selecione cada ambiente no runner. Confira se as requisições chegam aos destinos esperados, se o token extraído é usado na etapa seguinte e se uma validação propositalmente incorreta aparece no relatório.
-3. Feche e reabra o app. Confirme que coleções, ambientes e configurações reaparecem e que os valores secretos ficam mascarados. Exporte um backup e confira que os valores secretos de ambiente não aparecem no JSON.
-4. Instale um pacote mais novo sobre essa instalação com dados de teste. Abra o Fedexe e repita uma rodada com os dados já salvos. Registre as versões anterior e nova, o build do Windows e os resultados.
-
-## Interface
-
-- Coleções e pastas, abas, rascunhos, ordenação e persistência local.
-- Editor HTTP com query, autorização, headers, corpo, testes e extrações.
-- Respostas formatadas, cópia da prévia e download do corpo completo no desktop.
-- Ambientes, variáveis e segredos no Gerenciador de Credenciais do Windows.
-- Runner sequencial com diagnóstico por etapa e relatório exportável.
-- Testes de carga no desktop com usuários virtuais, quatro perfis, métricas ao vivo e exportação do cenário para o CLI.
-- Histórico, busca global, atalhos, importação/exportação JSON e backup.
-- Temas claro/escuro/sistema, modo compacto e controles nativos de janela.
-
-Use `{{variavel}}` nas configurações para reutilizar valores. Salve requisições com `Ctrl+S` e envie com `Ctrl+Enter`. O runner usa a versão salva. `Ctrl+K` abre a busca global.
-
-O desktop grava o workspace em JSON com substituição atômica e guarda os valores secretos de ambiente no Gerenciador de Credenciais do Windows. O navegador usa o armazenamento local e mantém os segredos na sessão. Veja [docs/INTERFACE.md](docs/INTERFACE.md) para o mapa de entregas e os limites conhecidos.
-
-O timeout padrão é de 30 segundos. No desktop, cada endpoint pode seguir redirecionamentos na mesma origem e a validação TLS permanece ativa. A prévia é limitada a 256 KiB e a validação de JSON no runner a 16 MiB. O runner permite continuar ou parar na primeira falha e preserva o resumo parcial ao cancelar.
-
-## Verificar
+Run the frontend build before the Rust tests because Tauri embeds `dist` when compiling with `custom-protocol`.
 
 ```powershell
 npm run build
@@ -75,6 +74,20 @@ cargo test --locked --features custom-protocol
 npm run format:check
 ```
 
-Em um checkout limpo, rode o build do frontend antes dos testes Rust com `custom-protocol`. O Tauri incorpora os arquivos de `dist` ao compilar esses testes.
+After the frontend build, run `cargo run --release --locked --features custom-protocol` to start the release build locally. To package the Windows installer, run `.\node_modules\.bin\tauri.cmd build --ci -- --locked`. The installer is written to `target/release/bundle/nsis`, and its version comes from `tauri.conf.json`.
 
-O cenário automatizado roda 100 requisições em um servidor local e cobre a extração de token, o uso em requisições subsequentes e a validação de JSON de 10 MiB. Também verifica o truncamento da prévia avulsa.
+The [Windows installer workflow](.github/workflows/windows.yml) checks that the Tauri, npm, and Cargo versions match, builds the package, and verifies installation and workspace preservation. Follow the [updater publishing guide](docs/UPDATER.md) to sign and publish a stable release.
+
+The Rust test suite includes a 100-request local scenario that checks token extraction and reuse, validation of 10 MiB JSON responses, and preview truncation.
+
+For manual installer validation on a second Windows machine:
+
+1. Compare the first column of the attached `.sha256` file with the output of `Get-FileHash -LiteralPath "<installer.exe>" -Algorithm SHA256`.
+2. Import a Postman collection and two test environments. Run the collection against both and verify that requests reach the expected destinations, extracted values reach the next step, and a deliberately failing check appears in the report.
+3. Reopen the app and confirm that your workspace is restored. Export a backup and verify that stored environment secrets are absent from the JSON.
+4. Install a newer build over the existing one and rerun the collection. Record both app versions, the Windows build, and the results.
+
+## Project links
+
+- [Interface and feature guide](docs/INTERFACE.md), [CLI reference](docs/CLI.md), [updater publishing guide](docs/UPDATER.md), and [roadmap](ROADMAP.md) are in Brazilian Portuguese.
+- Fedexe API is available under the [MIT License](LICENSE).
