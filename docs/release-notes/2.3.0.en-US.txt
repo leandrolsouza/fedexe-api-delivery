@@ -1,0 +1,11 @@
+Manage local workspaces from a dedicated page: search, create, open, rename, duplicate, export backups, and delete with confirmation. Workspace deletion cleans up its credentials while protecting credentials still used by other workspaces.
+
+Application appearance preferences are now shared across workspaces, while workspace settings and request console history remain separate.
+
+Variable references in the URL, body, parameters, and headers show origin icons and tooltips identifying their collection or environment. Use the variable panel to create missing variables, edit values, mark or unmark secrets, delete with confirmation, or rename variables and update matching declarations, request references, extractions, drafts, and literal script accesses across the workspace.
+
+Click an origin icon to open the corresponding variables and focus the selected row. Back to request and Alt + Left Arrow restore the original request and tab, select the exact reference, and preserve editor and field scroll positions, including repeated references.
+
+Load test results now emphasize key metrics, group secondary measurements, show expandable request failures, simplify unconfigured thresholds, and combine preparation failures into a diagnostic with an action to open the request. Report export is available in the header.
+
+Run collections from each collection's actions menu. The fixed collection runner block has been removed from the sidebar to leave more room for requests.

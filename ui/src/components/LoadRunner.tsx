@@ -1,8 +1,8 @@
 import { toast } from 'sonner';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, Download, Play, Square } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, CircleAlert, Download, Play, Square } from 'lucide-react';
 import { prepareCollection } from '../lib/collection-runner';
-import { formatNumber, t, type Message } from '../lib/i18n';
+import { t, type Message } from '../lib/i18n';
 import {
   prepareLoadVariables,
   runLoad,
@@ -22,7 +22,7 @@ import { hasScripts } from '../lib/scripts';
 import { native, normalizeError } from '../lib/transport';
 import { download } from '../lib/utils';
 import { Button } from './ui/button';
-import { LoadResults } from './LoadResults';
+import { LoadResults, LoadMetricSummary, formatLoadTime } from './LoadResults';
 import { LoadTimeline } from './LoadTimeline';
 
 const profiles = {
@@ -44,20 +44,6 @@ const fields: Field[] = [
   ['max_error_percent', 'Limite de erros (%)', 0, 100, 0],
 ];
 
-const metricLabels: Record<keyof LoadMetrics, Message> = {
-  duration_ms: 'Duração (ms)',
-  requests: 'Requisições concluídas',
-  rps: 'Requisições/s (RPS)',
-  mean_ms: 'Latência média (ms)',
-  p95_ms: 'p95 (ms)',
-  p99_ms: 'p99 (ms)',
-  error_percent: 'Taxa de erros (%)',
-  http_errors: 'Respostas HTTP 4xx/5xx',
-  transport_errors: 'Erros de transporte',
-  timeouts: 'Timeouts',
-  validation_failures: 'Etapas com falha de validação',
-};
-
 type Props = {
   requestPicker?: ReactNode;
   exportRequestIds?: string[];
@@ -71,6 +57,7 @@ type Props = {
   busy: boolean;
   setBusy: (busy: boolean) => void;
   onCancel: () => void;
+  onOpenRequest: (collectionId: string, requestId: string) => void;
 };
 
 export function LoadRunner({
@@ -86,6 +73,7 @@ export function LoadRunner({
   busy,
   setBusy,
   onCancel,
+  onOpenRequest,
 }: Props) {
   const [profile, setProfile] = useState<LoadOptions['profile']>('constant');
   const [values, setValues] = useState<Record<NumericField, string>>({
@@ -103,7 +91,16 @@ export function LoadRunner({
   const [runNumber, setRunNumber] = useState(0);
   const [report, setReport] = useState<LoadReport>();
   const [runContext, setRunContext] = useState('');
-  const [requestNames, setRequestNames] = useState<string[]>([]);
+  const [runRequests, setRunRequests] = useState<
+    { collectionId: string; id: string; name: string }[]
+  >([]);
+  const requestNames = runRequests.map(({ name }) => name);
+  const preparationFailure = report?.preparation_failure;
+  const failedRequest = preparationFailure ? runRequests[preparationFailure.step - 1] : undefined;
+  const canOpenFailedRequest =
+    failedRequest &&
+    collection?.id === failedRequest.collectionId &&
+    collection.requests.some(({ id }) => id === failedRequest.id);
   const [running, setRunning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [approvedScriptScope, setApprovedScriptScope] = useState('');
@@ -187,7 +184,7 @@ export function LoadRunner({
     setRunNumber((number) => number + 1);
     setReport(undefined);
     setRunContext(context);
-    setRequestNames(requests.map(({ name }) => name));
+    setRunRequests(requests.map(({ id, name }) => ({ collectionId: collection.id, id, name })));
     navigateToResults(true);
     try {
       const flow = prepareCollection(collection, environment, requests, false, false, defaults);
@@ -246,9 +243,20 @@ export function LoadRunner({
           {t(showResults ? 'Resultados do teste de carga' : 'Teste de carga')}
         </h2>
         {showResults ? (
-          <Button type="button" variant="secondary" onClick={() => navigateToResults(false)}>
-            <ArrowLeft size={15} /> {t('Voltar à configuração')}
-          </Button>
+          <div className="load-actions">
+            {report && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => download('fedexe-load-report.json', JSON.stringify(report, null, 2))}
+              >
+                <Download size={14} /> {t('Exportar relatório de carga')}
+              </Button>
+            )}
+            <Button type="button" variant="secondary" onClick={() => navigateToResults(false)}>
+              <ArrowLeft size={15} /> {t('Voltar à configuração')}
+            </Button>
+          </div>
         ) : (
           (running || report) && (
             <Button type="button" variant="secondary" onClick={() => navigateToResults(true)}>
@@ -350,7 +358,6 @@ export function LoadRunner({
             )}
           </div>
         )}
-        {requestPicker}
         <div className="load-actions">
           <Button
             type="submit"
@@ -387,6 +394,7 @@ export function LoadRunner({
             <Download size={14} /> {t('Exportar cenário')}
           </Button>
         </div>
+        {requestPicker}
       </form>
       <div className="runner-fields" hidden={!showResults}>
         {runContext && <p className="field-hint">{runContext}</p>}
@@ -395,17 +403,68 @@ export function LoadRunner({
             {t(preparing ? 'Executando o pré-script da coleção…' : 'Teste de carga em andamento')}
           </p>
         )}
-        {verdict && <p role="status">{verdict}</p>}
-        {report?.preparation_failure && (
-          <p>
-            {report.preparation_failure.missing_variable
-              ? t(
-                  'Etapa {0}: variável ausente {1}.',
-                  report.preparation_failure.step,
-                  report.preparation_failure.missing_variable,
-                )
-              : t('Falha de preparação na etapa {0}.', report.preparation_failure.step)}
-          </p>
+        {verdict && !preparationFailure && (
+          <div className="load-run-status" role="status">
+            <span>
+              {report?.outcome === 'completed' && report.exit_code !== 1 ? (
+                <CheckCircle2 size={16} aria-hidden="true" />
+              ) : (
+                <CircleAlert size={16} aria-hidden="true" />
+              )}{' '}
+              {verdict}
+            </span>
+            {metrics && (
+              <span className="load-duration">
+                {t('Duração')}: {formatLoadTime(metrics.duration_ms)}
+              </span>
+            )}
+          </div>
+        )}
+        {preparationFailure && (
+          <section
+            className="load-preparation-diagnostic"
+            aria-label={t('Execução interrompida na etapa {0}', preparationFailure.step)}
+          >
+            <div className="load-diagnostic-heading" role="status">
+              <h3>
+                <CircleAlert size={18} aria-hidden="true" />
+                {t('Execução interrompida na etapa {0}', preparationFailure.step)}
+              </h3>
+              {metrics && (
+                <span className="load-duration">
+                  {t('Duração')}: {formatLoadTime(metrics.duration_ms)}
+                </span>
+              )}
+            </div>
+            <p>
+              {failedRequest
+                ? t('Não foi possível preparar a requisição {0}.', failedRequest.name)
+                : t('Não foi possível preparar uma requisição do fluxo.')}
+            </p>
+            {preparationFailure.missing_variable && (
+              <p>
+                {t('Variável não definida:')}{' '}
+                <code data-variable-reference={preparationFailure.missing_variable} tabIndex={0}>
+                  {preparationFailure.missing_variable}
+                </code>
+              </p>
+            )}
+            {preparationFailure.missing_variable && (
+              <p className="load-diagnostic-hint">
+                {t('Confira o ambiente selecionado ou a etapa que deveria criar essa variável.')}
+              </p>
+            )}
+            {canOpenFailedRequest && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => onOpenRequest(failedRequest.collectionId, failedRequest.id)}
+              >
+                {t('Abrir requisição')}
+              </Button>
+            )}
+          </section>
         )}
         {(running || metrics || report) && (
           <div className="runner-tabs" role="tablist" aria-label={t('Resultados da execução')}>
@@ -449,21 +508,8 @@ export function LoadRunner({
               hidden={resultTab !== 'summary'}
               tabIndex={0}
             >
+              {metrics && <LoadMetricSummary metrics={metrics} />}
               {report && <LoadResults report={report} requestNames={requestNames} />}
-              {metrics && (
-                <dl className="load-metrics" aria-label={t('Métricas de carga')}>
-                  {(Object.keys(metricLabels) as (keyof LoadMetrics)[]).map((key) => (
-                    <div key={key}>
-                      <dt>{t(metricLabels[key])}</dt>
-                      <dd>
-                        {metrics[key] === null
-                          ? '—'
-                          : formatNumber(metrics[key], { maximumFractionDigits: 2 })}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
             </div>
             <div
               id="load-panel-timeline"
@@ -476,7 +522,7 @@ export function LoadRunner({
             </div>
           </>
         )}
-        {(report || running) && (
+        {running && (
           <div className="load-actions">
             {running && (
               <Button
@@ -490,15 +536,6 @@ export function LoadRunner({
                 }}
               >
                 <Square size={14} /> {cancelling ? t('Cancelando…') : t('Cancelar execução')}
-              </Button>
-            )}
-            {report && (
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => download('fedexe-load-report.json', JSON.stringify(report, null, 2))}
-              >
-                <Download size={14} /> {t('Exportar relatório de carga')}
               </Button>
             )}
           </div>

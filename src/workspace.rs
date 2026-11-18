@@ -89,6 +89,20 @@ pub fn load_workspace(
 }
 
 #[tauri::command]
+pub fn delete_workspace(app: AppHandle, workspace_id: Option<String>) -> Result<(), String> {
+    remove_workspace(&data_dir(&app)?, workspace_id.as_deref())
+}
+
+fn remove_workspace(dir: &Path, workspace_id: Option<&str>) -> Result<(), String> {
+    let target = path(dir, workspace_id)?;
+    match fs::remove_file(target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn save_workspace(
     app: AppHandle,
     contents: String,
@@ -150,6 +164,27 @@ mod tests {
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0].id, id);
         assert_eq!(workspaces[0].name.as_deref(), Some("Other project"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn deletes_only_the_selected_workspace_and_rejects_invalid_ids() {
+        let dir = std::env::temp_dir().join(format!("fedexe-delete-test-{}", std::process::id()));
+        let id = "a2123456-1234-4321-a123-b01234567890";
+        let original = path(&dir, None).unwrap();
+        let additional = path(&dir, Some(id)).unwrap();
+        write_atomic(&original, "original").unwrap();
+        write_atomic(&additional, "additional").unwrap();
+        assert!(remove_workspace(&dir, Some("../workspace")).is_err());
+        assert!(remove_workspace(&dir, Some("original")).is_err());
+        assert_eq!(fs::read_to_string(&original).unwrap(), "original");
+        assert_eq!(fs::read_to_string(&additional).unwrap(), "additional");
+        remove_workspace(&dir, Some(id)).unwrap();
+        assert!(!additional.exists());
+        assert_eq!(fs::read_to_string(&original).unwrap(), "original");
+        remove_workspace(&dir, Some(id)).unwrap();
+        remove_workspace(&dir, None).unwrap();
+        assert!(!original.exists());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -1,3 +1,12 @@
+import { duplicateLocalWorkspace } from './lib/workspace-duplication';
+import { deleteWorkspaceData } from './lib/workspace-deletion';
+import type { VariableReferenceLocation } from './lib/variable-reference-location';
+import { WorkspacesView } from './components/WorkspacesView';
+import { applyAppPreferences, saveAppPreferences } from './lib/app-preferences';
+import { renameWorkspaceVariable } from './lib/variable-rename';
+import type { VariableTarget } from './components/VariableUrlInput';
+import { VariableInspector, type ScopedVariable } from './components/VariableInspector';
+import { pair, resolvedVariables } from './lib/models';
 import { DriveBackups } from './components/DriveBackups';
 import { Notifications, useNotifications, type Notice } from './components/Notifications';
 import { PostmanWorkspaceDialog } from './components/PostmanWorkspaceDialog';
@@ -9,6 +18,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -16,6 +26,7 @@ import {
 import {
   ArrowDown,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
@@ -67,7 +78,10 @@ import {
   listLocalWorkspaces,
   originalWorkspaceId,
   readLocalWorkspace,
+  removeLocalWorkspace,
+  renameLocalWorkspace,
   rememberActiveWorkspace,
+  workspaceLastOpened,
   writeLocalWorkspace,
   type WorkspaceSummary,
 } from './lib/local-workspaces';
@@ -116,6 +130,7 @@ import {
   consoleAttemptFactory,
   postResponseTrace,
   selectRequestConsole,
+  deleteRequestConsole,
 } from './lib/request-console';
 import { RequestConsole } from './components/RequestConsole';
 import { cn, download, uid } from './lib/utils';
@@ -161,7 +176,9 @@ type EditDialog = {
   title: string;
   description: string;
   initial: string;
-  action: (name: string) => void;
+  maxLength?: number;
+  submitLabel?: string;
+  action: (name: string) => void | boolean;
 };
 type ConfirmDialog = { title: string; description: string; label: string; action: () => void };
 const driveEnabled = native && import.meta.env.VITE_FEDEXE_GOOGLE_DRIVE === 'true';
@@ -184,6 +201,7 @@ function loadEditorPreferences(): { layout: RequestLayout; requestShare: number 
   }
 }
 const navigationItems = [
+  { id: 'workspaces', label: 'Workspaces', icon: Box },
   { id: 'collections', label: 'Coleções', icon: Layers3 },
   { id: 'environments', label: 'Ambientes', icon: Globe2 },
   { id: 'runner', label: 'Runner de coleções', icon: Play },
@@ -192,13 +210,27 @@ const navigationItems = [
   { id: 'drive', label: 'Backups no Google Drive', icon: HardDrive },
 ] as const;
 
+const toolTabs = [
+  { id: 'runner', label: 'Runner de coleções', icon: Play },
+  { id: 'environments', label: 'Ambientes', icon: Globe2 },
+  { id: 'history', label: 'Histórico', icon: History },
+  { id: 'console', label: 'Console de requisições', icon: Terminal },
+  { id: 'workspaces', label: 'Workspaces', icon: Box },
+  { id: 'workspace-settings', label: 'Configurações do workspace', icon: Settings2 },
+  { id: 'settings', label: 'Configurações do aplicativo', icon: Settings2 },
+] as const;
+type ToolView = (typeof toolTabs)[number]['id'];
+function isToolView(view: View): view is ToolView {
+  return toolTabs.some((tab) => tab.id === view);
+}
+
 async function initialState(workspaceId: string) {
   let workspace: Workspace | undefined;
   try {
     const raw = await readLocalWorkspace(workspaceId, native);
     if (raw === null && workspaceId !== originalWorkspaceId)
       throw new Error(t('O workspace selecionado não foi encontrado.'));
-    workspace = loadWorkspace(raw);
+    workspace = applyAppPreferences(loadWorkspace(raw));
     return {
       ...(await loadSecrets(workspace, native)),
       workspaceId,
@@ -227,6 +259,10 @@ export function App() {
   const [initial, setInitial] = useState<InitialWorkspace>();
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [switching, setSwitching] = useState(false);
+  const [deletingWorkspace, setDeletingWorkspace] = useState(false);
+  const [renamingWorkspace, setRenamingWorkspace] = useState(false);
+  const [duplicatingWorkspace, setDuplicatingWorkspace] = useState(false);
+  const [initialView, setInitialView] = useState<View>('collections');
   const switchPending = useRef(false);
   useEffect(() => {
     let disposed = false;
@@ -235,11 +271,14 @@ export function App() {
         { id: originalWorkspaceId, name: null },
       ]);
       const preferred = lastActiveWorkspace();
-      const id = available.some((entry) => entry.id === preferred)
-        ? preferred
-        : originalWorkspaceId;
+      const id = available.some((entry) => entry.id === preferred) ? preferred : available[0].id;
       const state = await initialState(id);
       if (disposed) return;
+      try {
+        rememberActiveWorkspace(id);
+      } catch {
+        /* Optional local access history. */
+      }
       selectRequestConsole(id);
       setWorkspaces(available);
       setInitial(state);
@@ -254,6 +293,7 @@ export function App() {
     current: WorkspaceSummary,
     next: WorkspaceSummary,
     create = false,
+    destination: View = 'collections',
   ) {
     if (switchPending.current || current.id === next.id) return;
     switchPending.current = true;
@@ -277,10 +317,122 @@ export function App() {
         ...entries.map((entry) => (entry.id === current.id ? current : entry)),
         ...(create ? [next] : []),
       ]);
+      setInitialView(destination);
       setInitial(state);
     } catch (error) {
       toast.error(t('Não foi possível abrir o workspace. {0}', normalizeError(error).message));
     } finally {
+      switchPending.current = false;
+      setSwitching(false);
+    }
+  }
+
+  async function duplicateWorkspace(source: WorkspaceSummary, name: string) {
+    if (switchPending.current) return;
+    switchPending.current = true;
+    setSwitching(true);
+    setDuplicatingWorkspace(true);
+    try {
+      const copy = await duplicateLocalWorkspace(source.id, name, native);
+      setWorkspaces((entries) => [...entries, copy]);
+      toast.success(t('Workspace duplicado'));
+    } catch (error) {
+      toast.error(t('Não foi possível duplicar o workspace. {0}', normalizeError(error).message));
+    } finally {
+      setDuplicatingWorkspace(false);
+      switchPending.current = false;
+      setSwitching(false);
+    }
+  }
+
+  async function renameWorkspace(target: WorkspaceSummary, name: string): Promise<boolean> {
+    if (switchPending.current) return false;
+    switchPending.current = true;
+    setSwitching(true);
+    setRenamingWorkspace(true);
+    try {
+      const savedName = await renameLocalWorkspace(target.id, name, native);
+      setWorkspaces((entries) =>
+        entries.map((entry) => (entry.id === target.id ? { ...entry, name: savedName } : entry)),
+      );
+      toast.success(t('Workspace renomeado'));
+      return true;
+    } catch (error) {
+      toast.error(t('Não foi possível renomear o workspace. {0}', normalizeError(error).message));
+      return false;
+    } finally {
+      setRenamingWorkspace(false);
+      switchPending.current = false;
+      setSwitching(false);
+    }
+  }
+
+  async function deleteWorkspace(current: WorkspaceSummary, target: WorkspaceSummary) {
+    if (switchPending.current) return;
+    switchPending.current = true;
+    setSwitching(true);
+    setDeletingWorkspace(true);
+    let created: WorkspaceSummary | undefined;
+    let deleted = false;
+    try {
+      let replacement: InitialWorkspace | undefined;
+      if (target.id === current.id) {
+        for (const entry of workspaces) {
+          if (entry.id === target.id) continue;
+          const state = await initialState(entry.id);
+          if (!state.error) {
+            replacement = state;
+            break;
+          }
+        }
+        if (!replacement) {
+          created = { id: uid(), name: t('Meu workspace') };
+          await writeLocalWorkspace(
+            created.id,
+            JSON.stringify(createEmptyWorkspace(created.name!)),
+            native,
+          );
+          replacement = await initialState(created.id);
+          if (replacement.error) throw new Error(replacement.error);
+        }
+      }
+      const result = await deleteWorkspaceData(target.id, native);
+      deleted = true;
+      deleteRequestConsole(target.id);
+      setWorkspaces((entries) => [
+        ...entries
+          .filter((entry) => entry.id !== target.id)
+          .map((entry) => (entry.id === current.id ? current : entry)),
+        ...(created ? [created] : []),
+      ]);
+      if (replacement) {
+        try {
+          rememberActiveWorkspace(replacement.workspaceId);
+        } catch (error) {
+          toast.error(
+            t('Não foi possível lembrar o workspace ativo. {0}', normalizeError(error).message),
+          );
+        }
+        selectRequestConsole(replacement.workspaceId);
+        setInitialView('workspaces');
+        setInitial(replacement);
+      }
+      toast.success(t('Workspace excluído'));
+      if (result.cleanupError)
+        toast.error(
+          t('O workspace foi excluído, mas não foi possível concluir a limpeza das credenciais.'),
+        );
+    } catch (error) {
+      if (created && !deleted) {
+        try {
+          await removeLocalWorkspace(created.id, native);
+        } catch {
+          setWorkspaces((entries) => [...entries, created!]);
+        }
+      }
+      toast.error(t('Não foi possível excluir o workspace. {0}', normalizeError(error).message));
+    } finally {
+      setDeletingWorkspace(false);
       switchPending.current = false;
       setSwitching(false);
     }
@@ -291,26 +443,48 @@ export function App() {
     <WorkspaceApp
       key={initial.workspaceId}
       initial={initial}
+      initialView={initialView}
       workspaces={workspaces}
       switching={switching}
+      deletingWorkspace={deletingWorkspace}
+      renamingWorkspace={renamingWorkspace}
+      renameWorkspace={renameWorkspace}
+      duplicatingWorkspace={duplicatingWorkspace}
+      duplicateWorkspace={duplicateWorkspace}
       changeWorkspace={changeWorkspace}
+      deleteWorkspace={deleteWorkspace}
     />
   );
 }
 
 function WorkspaceApp({
+  initialView,
   initial,
   workspaces,
   switching,
+  deletingWorkspace,
+  renamingWorkspace,
+  renameWorkspace,
+  duplicatingWorkspace,
+  duplicateWorkspace,
   changeWorkspace,
+  deleteWorkspace,
 }: {
+  deleteWorkspace: (current: WorkspaceSummary, target: WorkspaceSummary) => Promise<void>;
+  initialView: View;
   initial: InitialWorkspace;
   workspaces: WorkspaceSummary[];
   switching: boolean;
+  deletingWorkspace: boolean;
+  renamingWorkspace: boolean;
+  duplicatingWorkspace: boolean;
+  duplicateWorkspace: (source: WorkspaceSummary, name: string) => Promise<void>;
+  renameWorkspace: (target: WorkspaceSummary, name: string) => Promise<boolean>;
   changeWorkspace: (
     current: WorkspaceSummary,
     next: WorkspaceSummary,
     create?: boolean,
+    destination?: View,
   ) => Promise<void>;
 }) {
   const updates = useUpdates();
@@ -339,7 +513,27 @@ function WorkspaceApp({
   const [saveAttempt, setSaveAttempt] = useState(0);
   const [persisted, setPersisted] = useState<Workspace>();
   const [autosave] = useState(() => createWorkspaceAutosave({ ...initial, native }));
-  const [view, setView] = useState<View>('collections');
+  const [view, setCurrentView] = useState<View>(initialView);
+  const [openTools, setOpenTools] = useState<ToolView[]>(
+    isToolView(initialView) ? [initialView] : [],
+  );
+  const mainContentRef = useRef<HTMLDivElement>(null);
+  const scrollPositions = useRef<Partial<Record<View, number>>>({});
+  const visibleView = useRef<View>(view);
+  const setView = useCallback((next: View) => {
+    if (mainContentRef.current)
+      scrollPositions.current[visibleView.current] = mainContentRef.current.scrollTop;
+    visibleView.current = next;
+    if (isToolView(next)) {
+      setOpenTools((current) => (current.includes(next) ? current : [...current, next]));
+    }
+    setCurrentView(next);
+  }, []);
+  useLayoutEffect(() => {
+    const content = mainContentRef.current;
+    if (!content) return;
+    content.scrollTop = scrollPositions.current[view] ?? 0;
+  }, [view]);
   const [{ layout: requestLayout, requestShare }, setEditorPreferences] =
     useState(loadEditorPreferences);
   const setRequestLayout = (layout: RequestLayout) =>
@@ -460,6 +654,25 @@ function WorkspaceApp({
   const [editDialog, setEditDialog] = useState<EditDialog>();
   const [editName, setEditName] = useState('');
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog>();
+  const [variableReturn, setVariableReturn] = useState<{
+    collectionId: string;
+    requestId: string;
+    tab: string;
+    location?: VariableReferenceLocation;
+  }>();
+  const [requestTabRestore, setRequestTabRestore] = useState<{
+    requestId: string;
+    tab: string;
+    location?: VariableReferenceLocation;
+    token: string;
+  }>();
+  const requestEditorTabs = useRef(new Map<string, string>());
+  const [variableFocus, setVariableFocus] = useState<{
+    source: 'collection' | 'environment';
+    ownerId: string;
+    id: string;
+    request: string;
+  }>();
   const [collectionSettings, setCollectionSettings] = useState<string>();
   const [collectionSettingsTab, setCollectionSettingsTab] =
     useState<(typeof collectionSettingsTabs)[number]>('Variáveis');
@@ -528,6 +741,9 @@ function WorkspaceApp({
     }
     return true;
   }
+
+  const canChangeWorkspaceRef = useRef(canChangeWorkspace);
+  canChangeWorkspaceRef.current = canChangeWorkspace;
 
   function createLocalWorkspace() {
     if (!canChangeWorkspace()) return;
@@ -893,10 +1109,12 @@ function WorkspaceApp({
     title: string,
     description: string,
     initialName: string,
-    action: (name: string) => void,
+    action: (name: string) => void | boolean,
+    maxLength?: number,
+    submitLabel?: string,
   ) {
     setEditName(initialName);
-    setEditDialog({ title, description, initial: initialName, action });
+    setEditDialog({ title, description, initial: initialName, action, maxLength, submitLabel });
   }
   function createCollection() {
     askName(t('Nova coleção'), t('Um novo espaço para organizar suas APIs.'), '', (name) => {
@@ -1063,6 +1281,16 @@ function WorkspaceApp({
     return [
       { label: t('Nova requisição'), icon: <Plus size={14} />, action: () => addRequest(c.id) },
       { label: t('Nova pasta'), icon: <FolderPlus size={14} />, action: () => createFolder(c) },
+      {
+        label: t('Executar coleção'),
+        icon: <Play size={14} />,
+        separatorBefore: true,
+        disabled: busy || !c.requests.length,
+        action: () => {
+          setRunnerFolder({ collectionId: c.id });
+          setView('runner');
+        },
+      },
       {
         label: t('Renomear'),
         icon: <Pencil size={14} />,
@@ -1298,7 +1526,6 @@ function WorkspaceApp({
                   setRunnerFolder({
                     collectionId: c.id,
                     folder,
-                    environmentId: workspace.activeEnvironment,
                   });
                   setView('runner');
                 },
@@ -1436,7 +1663,7 @@ function WorkspaceApp({
         restoring.current = true;
         ++restoreInspection.current;
         setRestoreReport(undefined);
-        setWorkspace(snapshot);
+        setWorkspace(applyAppPreferences(snapshot));
         setStorageBlocked(false);
         setDrafts({});
         setResponses({});
@@ -1468,7 +1695,7 @@ function WorkspaceApp({
           : () => setView('collections');
       case 'restoreFailed':
       case 'localBackup':
-        return () => setView('settings');
+        return () => setView('workspace-settings');
       case 'imported':
       case 'importFailed':
         if (importReports[notice.id]) return () => setImportReport(importReports[notice.id]);
@@ -1664,6 +1891,288 @@ function WorkspaceApp({
 
   const canToggleAllFolders =
     !treeSearch && workspace.collections.some((c) => c.folders.length > 0);
+  function variableContext(owner?: HTMLElement) {
+    const collectionId =
+      owner?.closest<HTMLElement>('[data-variable-collection-id]')?.dataset.variableCollectionId ??
+      collectionSettings ??
+      active.collectionId;
+    const environmentId =
+      owner?.closest<HTMLElement>('[data-variable-environment-id]')?.dataset
+        .variableEnvironmentId ?? workspace.activeEnvironment;
+    return {
+      currentCollection: workspace.collections.find((c) => c.id === collectionId),
+      currentEnvironment: workspace.environments.find((e) => e.id === environmentId),
+    };
+  }
+  function variableCreationTargets(owner?: HTMLElement): VariableTarget[] {
+    const { currentCollection, currentEnvironment } = variableContext(owner);
+    return [
+      ...(currentCollection
+        ? [
+            {
+              source: 'collection' as const,
+              id: currentCollection.id,
+              label: t('Coleção') + ': ' + currentCollection.name,
+            },
+          ]
+        : []),
+      ...(currentEnvironment
+        ? [
+            {
+              source: 'environment' as const,
+              id: currentEnvironment.id,
+              label: t('Ambiente') + ': ' + currentEnvironment.name,
+            },
+          ]
+        : []),
+    ];
+  }
+  const returnRequest = variableReturn
+    ? workspace.collections
+        .find((c) => c.id === variableReturn.collectionId)
+        ?.requests.find((r) => r.id === variableReturn.requestId)
+    : undefined;
+  function rememberVariableReturn(location?: VariableReferenceLocation) {
+    if (view === 'collections' && request && collection)
+      setVariableReturn({
+        collectionId: collection.id,
+        requestId: request.id,
+        tab: requestEditorTabs.current.get(request.id) ?? (active.bodyShortcut ? 'body' : 'params'),
+        location,
+      });
+  }
+  function returnToVariableRequest() {
+    if (!variableReturn || !returnRequest) return;
+    setRequestTabRestore({
+      requestId: variableReturn.requestId,
+      tab: variableReturn.tab,
+      location: variableReturn.location,
+      token: uid(),
+    });
+    setCollectionSettings(undefined);
+    setVariableFocus(undefined);
+    setVariableReturn(undefined);
+    openRequest(variableReturn.collectionId, variableReturn.requestId);
+  }
+  const returnShortcutHeld = useRef(false);
+  useEffect(() => {
+    const canReturn =
+      !!variableReturn &&
+      !!returnRequest &&
+      ((view === 'environments' &&
+        variableFocus?.source === 'environment' &&
+        !collectionSettings) ||
+        (variableFocus?.source === 'collection' && collectionSettings === variableFocus.ownerId));
+    const handle = (event: KeyboardEvent) => {
+      if (
+        event.key !== 'ArrowLeft' ||
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.isComposing
+      )
+        return;
+      if (returnShortcutHeld.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (event.defaultPrevented || !canReturn || updates.progress || switching) return;
+      event.preventDefault();
+      event.stopPropagation();
+      returnShortcutHeld.current = true;
+      const blocked = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].some(
+        (dialog) =>
+          dialog.getClientRects().length &&
+          !dialog.classList.contains('collection-settings-dialog'),
+      );
+      if (blocked) return;
+      returnToVariableRequest();
+    };
+    const release = (event: Event) => {
+      if (
+        returnShortcutHeld.current &&
+        event instanceof KeyboardEvent &&
+        event.key === 'ArrowLeft'
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      returnShortcutHeld.current = false;
+    };
+    window.addEventListener('keydown', handle, true);
+    window.addEventListener('keyup', release, true);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', handle, true);
+      window.removeEventListener('keyup', release, true);
+      window.removeEventListener('blur', release);
+    };
+  }, [
+    variableReturn,
+    returnRequest,
+    view,
+    variableFocus,
+    collectionSettings,
+    updates.progress,
+    switching,
+  ]);
+  function closeCollectionSettings() {
+    setCollectionSettings(undefined);
+    if (variableFocus?.source === 'collection') {
+      setVariableFocus(undefined);
+      setVariableReturn(undefined);
+    }
+  }
+  function openVariableOrigin(variable: ScopedVariable, location?: VariableReferenceLocation) {
+    if (
+      variable.source === 'collection' &&
+      variable.collectionId &&
+      workspace.collections.some(
+        (c) => c.id === variable.collectionId && c.variables.some((row) => row.id === variable.id),
+      )
+    ) {
+      rememberVariableReturn(location);
+      setVariableFocus({
+        source: 'collection',
+        ownerId: variable.collectionId,
+        id: variable.id,
+        request: uid(),
+      });
+      setCollectionSettingsTab('Variáveis');
+      setCollectionScriptsExpanded(false);
+      setCollectionSettings(variable.collectionId);
+    } else if (
+      variable.source === 'environment' &&
+      variable.environmentId &&
+      workspace.environments.some(
+        (env) =>
+          env.id === variable.environmentId && env.variables.some((row) => row.id === variable.id),
+      )
+    ) {
+      rememberVariableReturn(location);
+      setVariableFocus({
+        source: 'environment',
+        ownerId: variable.environmentId,
+        id: variable.id,
+        request: uid(),
+      });
+      setCollectionSettings(undefined);
+      setView('environments');
+    }
+  }
+  function requestVariableRename(_variable: unknown, name: string) {
+    if (busy) {
+      toast.info(t('Aguarde a execução atual terminar.'));
+      return;
+    }
+    askName(
+      t('Renomear variável'),
+      t(
+        'O novo nome será aplicado às variáveis de mesmo nome e às referências em todas as coleções, ambientes e rascunhos deste workspace. Nomes literais nos scripts também serão atualizados.',
+      ),
+      name,
+      (nextName) => {
+        if (busy) {
+          toast.info(t('Aguarde a execução atual terminar.'));
+          return false;
+        }
+        if (nextName === name) return;
+        const result = renameWorkspaceVariable(workspace, drafts, name, nextName);
+        const sessionCollision = [...scriptSessions.current.values()].some((changes) =>
+          changes.has(nextName),
+        );
+        if (typeof result === 'string' || sessionCollision) {
+          toast.error(
+            t(
+              result === 'invalid'
+                ? 'Use letras, números, ponto, hífen ou sublinhado no nome.'
+                : 'Já existe uma variável ou extração com esse nome no workspace.',
+            ),
+          );
+          return false;
+        }
+        setWorkspace(result.workspace);
+        setDrafts(result.drafts);
+        for (const changes of scriptSessions.current.values()) {
+          if (changes.has(name)) {
+            const value = changes.get(name)!;
+            changes.delete(name);
+            changes.set(nextName, value);
+          }
+        }
+        toast.success(t('Variável renomeada e referências atualizadas'));
+      },
+    );
+  }
+  function requestVariableDeletion(variable: ScopedVariable, name: string) {
+    const { id, source, collectionId, environmentId, label } = variable;
+    setConfirmDialog({
+      title: t('Excluir variável?'),
+      description: t(
+        'Excluir “{0}” de {1}? As referências a essa variável serão mantidas.',
+        name,
+        label,
+      ),
+      label: t('Excluir variável'),
+      action: () => {
+        if (source === 'session')
+          scriptSessions.current.get(JSON.stringify([collectionId, environmentId]))?.delete(id);
+        else if (source === 'collection' && collectionId)
+          updateCollection(collectionId, (current) => ({
+            ...current,
+            variables: current.variables.filter((row) => row.id !== id),
+          }));
+        else if (source === 'environment' && environmentId)
+          setWorkspace((current) => ({
+            ...current,
+            environments: current.environments.map((item) =>
+              item.id === environmentId
+                ? { ...item, variables: item.variables.filter((row) => row.id !== id) }
+                : item,
+            ),
+          }));
+        toast.success(t('Variável excluída'));
+      },
+    });
+  }
+  function createVariable(name: string, value: string, target: VariableTarget, secret: boolean) {
+    const upsert = (rows: Pair[]) => {
+      const index = rows.map((row) => row.key).lastIndexOf(name);
+      return index < 0
+        ? [...rows, { ...pair(name, value), secret }]
+        : rows.map((row, i) =>
+            i === index ? { ...row, value, enabled: true, secret: row.secret || secret } : row,
+          );
+    };
+    const exists =
+      target.source === 'collection'
+        ? workspace.collections.some((c) => c.id === target.id)
+        : workspace.environments.some((e) => e.id === target.id);
+    if (!exists) return;
+    if (target.source === 'collection')
+      updateCollection(target.id, (current) => ({
+        ...current,
+        variables: upsert(current.variables),
+      }));
+    else
+      setWorkspace((current) => ({
+        ...current,
+        environments: current.environments.map((item) =>
+          item.id === target.id ? { ...item, variables: upsert(item.variables) } : item,
+        ),
+      }));
+    for (const [key, changes] of scriptSessions.current) {
+      const [collectionId, environmentId] = JSON.parse(key) as [string, string | null];
+      if (
+        (target.source === 'collection' ? collectionId : environmentId) === target.id &&
+        changes.get(name) === null
+      )
+        changes.delete(name);
+    }
+    toast.success(t('Variável criada'));
+  }
   const settingsCollection = workspace.collections.find((c) => c.id === collectionSettings);
   const updateCollectionAuth = (auth: Auth) => {
     if (settingsCollection)
@@ -1721,22 +2230,37 @@ function WorkspaceApp({
               </button>
             }
             items={[
-              ...workspaces.map((entry) => {
-                const active = entry.id === workspaceSummary.id;
-                const label =
-                  (active ? workspaceSummary.name : entry.name) ||
-                  (entry.id === originalWorkspaceId
-                    ? t('Meu workspace')
-                    : t('Workspace {0}', entry.id.slice(0, 8)));
-                return {
-                  label: active ? t('{0} (ativo)', label) : label,
-                  icon: active ? <Check size={14} /> : <Box size={14} />,
-                  disabled: active,
-                  action: () => {
-                    if (canChangeWorkspace()) void changeWorkspace(workspaceSummary, entry);
-                  },
-                };
-              }),
+              ...[...workspaces]
+                .sort((a, b) => {
+                  if (a.id === initial.workspaceId) return -1;
+                  if (b.id === initial.workspaceId) return 1;
+                  return (workspaceLastOpened(b.id) ?? '').localeCompare(
+                    workspaceLastOpened(a.id) ?? '',
+                  );
+                })
+                .slice(0, 5)
+                .map((entry) => {
+                  const active = entry.id === workspaceSummary.id;
+                  const label =
+                    (active ? workspaceSummary.name : entry.name) ||
+                    (entry.id === originalWorkspaceId
+                      ? t('Meu workspace')
+                      : t('Workspace {0}', entry.id.slice(0, 8)));
+                  return {
+                    label: active ? t('{0} (ativo)', label) : label,
+                    icon: active ? <Check size={14} /> : <Box size={14} />,
+                    disabled: active,
+                    action: () => {
+                      if (canChangeWorkspace()) void changeWorkspace(workspaceSummary, entry);
+                    },
+                  };
+                }),
+              {
+                label: t('Ver todos os workspaces'),
+                icon: <Box size={14} />,
+                action: () => setView('workspaces'),
+                separatorBefore: true,
+              },
               {
                 label: t('Novo workspace'),
                 icon: <Plus size={14} />,
@@ -1746,7 +2270,7 @@ function WorkspaceApp({
               {
                 label: t('Configurar workspace'),
                 icon: <Settings2 size={14} />,
-                action: () => setView('settings'),
+                action: () => setView('workspace-settings'),
                 separatorBefore: true,
               },
               {
@@ -1781,8 +2305,8 @@ function WorkspaceApp({
           </button>
           <button
             className="profile-avatar"
-            aria-label={t('Configurações do meu workspace')}
-            onClick={() => setView('settings')}
+            aria-label={t('Configurações do workspace')}
+            onClick={() => setView('workspace-settings')}
           >
             {t('EU')}
           </button>
@@ -1827,9 +2351,9 @@ function WorkspaceApp({
         <div className="rail-bottom">
           <button
             className={cn('rail-button', view === 'settings' && 'active')}
-            aria-label={t('Configurações')}
+            aria-label={t('Configurações do aplicativo')}
             aria-current={view === 'settings' ? 'page' : undefined}
-            title={t('Configurações')}
+            title={t('Configurações do aplicativo')}
             onClick={() => setView('settings')}
           >
             <Settings2 size={20} strokeWidth={1.7} />
@@ -2023,16 +2547,6 @@ function WorkspaceApp({
             </div>
           )}
         </div>
-        <button className="runner-sidebar-link" onClick={() => setView('runner')}>
-          <span>
-            <Play size={13} fill="currentColor" />
-          </span>
-          <div>
-            <strong>{t('Runner de coleções')}</strong>
-            <small>{t('Seu fluxo, de ponta a ponta.')}</small>
-          </div>
-          <ArrowUpRight size={15} />
-        </button>
         <div
           className="collections-resizer"
           role="separator"
@@ -2106,7 +2620,11 @@ function WorkspaceApp({
                           ? t('Notificações')
                           : view === 'drive'
                             ? t('Backups no Google Drive')
-                            : t('Configurações')}
+                            : view === 'workspaces'
+                              ? t('Workspaces')
+                              : view === 'workspace-settings'
+                                ? t('Configurações do workspace')
+                                : t('Configurações do aplicativo')}
             </span>
             {view === 'collections' && request?.folder && (
               <>
@@ -2194,73 +2712,134 @@ function WorkspaceApp({
           </div>
         )}
         <div
+          ref={mainContentRef}
           className={cn('main-content', view === 'collections' && request && 'with-request-editor')}
         >
+          {(view === 'collections' || isToolView(view)) && (
+            <nav className="request-tabbar" aria-label={t('Requisições abertas')}>
+              {tabs.map((tab) => {
+                const c = workspace.collections.find((c) => c.id === tab.collectionId);
+                const saved = c?.requests.find((r) => r.id === tab.requestId);
+                const item = drafts[tab.requestId] || saved;
+                return (
+                  item && (
+                    <div
+                      className={cn(
+                        'request-tab',
+                        view === 'collections' && active.requestId === tab.requestId && 'active',
+                      )}
+                      key={tab.requestId}
+                    >
+                      <button
+                        aria-current={
+                          view === 'collections' && active.requestId === tab.requestId
+                            ? 'page'
+                            : undefined
+                        }
+                        onClick={() => {
+                          setActive(tab);
+                          setView('collections');
+                        }}
+                      >
+                        <MethodBadge method={item.method} small />
+                        <span>{item.name}</span>
+                        {drafts[item.id] && <span className="dirty-dot" />}
+                      </button>
+                      <button
+                        className="close-tab"
+                        aria-label={t('Fechar aba {0}', item.name)}
+                        onClick={() => closeTab(tab)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )
+                );
+              })}
+              {openTools.map((id) => {
+                const tab = toolTabs.find((item) => item.id === id)!;
+                const Icon = tab.icon;
+                return (
+                  <div key={id} className={cn('request-tab', view === id && 'active')}>
+                    <button
+                      aria-current={view === id ? 'page' : undefined}
+                      onClick={() => setView(id)}
+                    >
+                      <Icon size={14} />
+                      <span>{t(tab.label)}</span>
+                    </button>
+                    <button
+                      className="close-tab"
+                      aria-label={t('Fechar aba {0}', t(tab.label))}
+                      disabled={id === 'runner' && busy}
+                      onClick={() => {
+                        setOpenTools((current) => current.filter((item) => item !== id));
+                        if (view === id) setView('collections');
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+              <button
+                className="new-tab"
+                aria-label={t('Nova requisição')}
+                title={t('Nova requisição (Ctrl N)')}
+                onClick={() => addRequest()}
+              >
+                <Plus size={17} />
+              </button>
+              <div className="tabbar-spacer" />
+              <button className="tabbar-run" onClick={() => setView('runner')}>
+                <Play size={12} />
+                {' ' + t('Executar coleção')}
+              </button>
+            </nav>
+          )}
           {view === 'collections' ? (
             <>
-              <nav className="request-tabbar" aria-label={t('Requisições abertas')}>
-                {tabs.map((tab) => {
-                  const c = workspace.collections.find((c) => c.id === tab.collectionId);
-                  const saved = c?.requests.find((r) => r.id === tab.requestId);
-                  const item = drafts[tab.requestId] || saved;
-                  return (
-                    item && (
-                      <div
-                        className={cn(
-                          'request-tab',
-                          active.requestId === tab.requestId && 'active',
-                        )}
-                        key={tab.requestId}
-                      >
-                        <button
-                          aria-current={active.requestId === tab.requestId ? 'page' : undefined}
-                          onClick={() => setActive(tab)}
-                        >
-                          <MethodBadge method={item.method} small />
-                          <span>{item.name}</span>
-                          {drafts[item.id] && <span className="dirty-dot" />}
-                        </button>
-                        <button
-                          className="close-tab"
-                          aria-label={t('Fechar aba {0}', item.name)}
-                          onClick={() => closeTab(tab)}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    )
-                  );
-                })}
-                <button
-                  className="new-tab"
-                  aria-label={t('Nova requisição')}
-                  title={t('Nova requisição (Ctrl N)')}
-                  onClick={() => addRequest()}
-                >
-                  <Plus size={17} />
-                </button>
-                <div className="tabbar-spacer" />
-                <button className="tabbar-run" onClick={() => setView('runner')}>
-                  <Play size={12} />
-                  {' ' + t('Executar coleção')}
-                </button>
-              </nav>
               {request && collection ? (
                 <RequestEditor
                   key={active.bodyShortcut ?? request.id}
                   initialTab={active.bodyShortcut ? 'body' : 'params'}
+                  onRestoreTab={() => setRequestTabRestore(undefined)}
+                  restoreTab={
+                    requestTabRestore?.requestId === request.id ? requestTabRestore : undefined
+                  }
+                  onTabChange={(tab) => requestEditorTabs.current.set(request.id, tab)}
                   request={request}
                   defaultTimeoutMs={defaultTimeoutMs}
                   defaultRedirectPolicy={defaultRedirectPolicy}
                   collection={collection}
                   environment={environment}
                   sessionVariables={variableSession}
-                  onSaveVariable={({ id, source }, value) => {
+                  creationTargets={variableCreationTargets()}
+                  onCreateVariable={createVariable}
+                  onRenameVariable={requestVariableRename}
+                  onDeleteVariable={(variable, name) =>
+                    requestVariableDeletion(
+                      {
+                        ...variable,
+                        collectionId: collection.id,
+                        environmentId: environment?.id,
+                        label:
+                          variable.source === 'collection'
+                            ? collection.name + t(' (coleção)')
+                            : variable.source === 'environment'
+                              ? (environment?.name ?? '')
+                              : t('Sessão de scripts'),
+                      },
+                      name,
+                    )
+                  }
+                  onSaveVariable={({ id, source }, value, secret) => {
                     if (source === 'session') {
                       variableSession?.set(id, value);
                       return;
                     }
-                    const updateVariable = (row: Pair) => (row.id === id ? { ...row, value } : row);
+                    const updateVariable = (row: Pair) =>
+                      row.id === id ? { ...row, value, secret } : row;
                     if (source === 'collection') {
                       updateCollection(collection.id, (current) => ({
                         ...current,
@@ -2342,20 +2921,117 @@ function WorkspaceApp({
                 </div>
               )}
             </>
-          ) : view === 'environments' ? (
-            <EnvironmentsView workspace={workspace} onChange={setWorkspace} />
-          ) : view === 'runner' ? null : view === 'history' ? (
+          ) : view === 'notifications' ? (
+            <Notifications items={notices} markRead={markRead} actionFor={noticeAction} />
+          ) : null}
+          <div hidden={view !== 'environments'}>
+            <EnvironmentsView
+              onReturnToRequest={
+                returnRequest && variableReturn && variableFocus?.source === 'environment'
+                  ? returnToVariableRequest
+                  : undefined
+              }
+              returnRequestName={returnRequest?.name}
+              workspace={workspace}
+              onChange={setWorkspace}
+              variableTarget={
+                variableFocus?.source === 'environment'
+                  ? {
+                      environmentId: variableFocus.ownerId,
+                      id: variableFocus.id,
+                      request: variableFocus.request,
+                    }
+                  : undefined
+              }
+            />
+          </div>
+          <div hidden={view !== 'history'}>
             <HistoryView
               history={workspace.history}
               onOpen={openHistory}
               onClear={() => setWorkspace((current) => ({ ...current, history: [] }))}
             />
-          ) : view === 'console' ? (
+          </div>
+          <div hidden={view !== 'console'}>
             <RequestConsole collections={workspace.collections} onOpenRequest={openRequest} />
-          ) : view === 'notifications' ? (
-            <Notifications items={notices} markRead={markRead} actionFor={noticeAction} />
-          ) : view === 'drive' ? null : (
+          </div>
+          {view === 'workspaces' && (
+            <WorkspacesView
+              entries={workspaces}
+              current={initial.workspaceId}
+              workspace={workspace}
+              native={native}
+              deleting={deletingWorkspace}
+              renaming={renamingWorkspace}
+              duplicating={duplicatingWorkspace}
+              onDuplicate={(entry) => {
+                if (!canChangeWorkspace()) return;
+                askName(
+                  t('Duplicar workspace'),
+                  t('Dê um nome à cópia do workspace.'),
+                  t('{0} (cópia)', (entry.name || t('Meu workspace')).slice(0, 50)),
+                  (name) => {
+                    if (!canChangeWorkspaceRef.current()) return false;
+                    void duplicateWorkspace(entry, name);
+                  },
+                  60,
+                  t('Duplicar workspace'),
+                );
+              }}
+              onRename={(entry) => {
+                if (!canChangeWorkspace()) return;
+                askName(
+                  t('Renomear workspace'),
+                  t('Dê um nome ao workspace.'),
+                  entry.name || '',
+                  (name) => {
+                    if (!canChangeWorkspaceRef.current()) return false;
+                    if (name === entry.name) return;
+                    void renameWorkspace(entry, name).then((saved) => {
+                      if (saved && entry.id === initial.workspaceId)
+                        setWorkspace((current) => ({
+                          ...current,
+                          settings: { ...current.settings, workspaceName: name },
+                        }));
+                    });
+                  },
+                  60,
+                );
+              }}
+              onDelete={(entry) => {
+                if (!canChangeWorkspace()) return;
+                setConfirmDialog({
+                  title: t('Excluir workspace?'),
+                  description:
+                    t(
+                      'O workspace “{0}” e suas coleções, ambientes, histórico e configurações serão apagados deste dispositivo. Esta ação não pode ser desfeita.',
+                      entry.name || t('Meu workspace'),
+                    ) +
+                    (workspaces.length === 1
+                      ? ' ' + t('Um novo workspace vazio será criado.')
+                      : ''),
+                  label: t('Excluir workspace'),
+                  action: () => {
+                    if (canChangeWorkspaceRef.current())
+                      void deleteWorkspace(workspaceSummary, entry);
+                  },
+                });
+              }}
+              onCreate={createLocalWorkspace}
+              onOpen={(entry) => {
+                if (entry.id === initial.workspaceId) setView('collections');
+                else if (canChangeWorkspace()) void changeWorkspace(workspaceSummary, entry);
+              }}
+              onConfigure={(entry) => {
+                if (entry.id === initial.workspaceId) setView('workspace-settings');
+                else if (canChangeWorkspace())
+                  void changeWorkspace(workspaceSummary, entry, false, 'workspace-settings');
+              }}
+            />
+          )}
+          <div hidden={view !== 'workspace-settings'}>
             <SettingsView
+              scope="workspace"
               workspace={workspace}
               onChange={setWorkspace}
               onImport={() => setImportOpen(true)}
@@ -2364,7 +3040,25 @@ function WorkspaceApp({
               updates={<UpdateSettings updates={updates} />}
               version={version}
             />
-          )}
+          </div>
+          <div hidden={view !== 'settings'}>
+            <SettingsView
+              workspace={workspace}
+              onChange={(next) => {
+                try {
+                  saveAppPreferences(next.settings);
+                  setWorkspace(next);
+                } catch {
+                  toast.error(t('Não foi possível salvar as preferências do aplicativo.'));
+                }
+              }}
+              onImport={() => setImportOpen(true)}
+              onBackup={() => addNotice('localBackup')}
+              onDrive={driveEnabled ? () => setView('drive') : undefined}
+              updates={<UpdateSettings updates={updates} />}
+              version={version}
+            />
+          </div>
           {driveEnabled && (
             <div hidden={view !== 'drive'}>
               <DriveBackups
@@ -2384,6 +3078,8 @@ function WorkspaceApp({
             <RunnerView
               workspace={workspace}
               initialFolder={runnerFolder}
+              drafts={drafts}
+              onOpenRequest={openRequest}
               busy={busy}
               setBusy={setBusy}
               onCancel={cancelExecution}
@@ -2535,7 +3231,7 @@ function WorkspaceApp({
           onSubmit={(e) => {
             e.preventDefault();
             if (!editName.trim() || !editDialog) return;
-            editDialog.action(editName.trim());
+            if (editDialog.action(editName.trim()) === false) return;
             setEditDialog(undefined);
           }}
         >
@@ -2547,7 +3243,7 @@ function WorkspaceApp({
               value={editName}
               onChange={(e) => setEditName(e.target.value)}
               required
-              maxLength={100}
+              maxLength={editDialog?.maxLength ?? 100}
               placeholder={t('Um nome fácil de encontrar')}
             />
           </label>
@@ -2556,7 +3252,8 @@ function WorkspaceApp({
               {t('Cancelar')}
             </Button>
             <Button type="submit">
-              {editDialog?.initial ? t('Salvar nome') : t('Criar')} <ArrowRight size={14} />
+              {editDialog?.submitLabel ?? (editDialog?.initial ? t('Salvar nome') : t('Criar'))}{' '}
+              <ArrowRight size={14} />
             </Button>
           </div>
         </form>
@@ -2808,6 +3505,7 @@ function WorkspaceApp({
             { label: t('Enviar requisição'), keys: ['Ctrl', 'Enter'] },
             { label: t('Salvar requisição'), keys: ['Ctrl', 'S'] },
             { label: t('Nova requisição'), keys: ['Ctrl', 'N'] },
+            { label: t('Voltar à requisição'), keys: ['Alt', '←'] },
             { label: t('Alternar painel de coleções'), keys: ['Ctrl', '\\'] },
             { label: t('Fechar diálogo'), keys: ['Esc'] },
           ].map((shortcut) => (
@@ -2895,7 +3593,7 @@ function WorkspaceApp({
       <Dialog
         open={!!collectionSettings}
         onOpenChange={(open) => {
-          if (!open) setCollectionSettings(undefined);
+          if (!open) closeCollectionSettings();
         }}
         title={t('Configurações da coleção · {0}', settingsCollection?.name || '')}
         description={t('Variáveis, autorização e scripts da coleção')}
@@ -2942,6 +3640,12 @@ function WorkspaceApp({
             >
               {collectionSettingsTab === 'Variáveis' && (
                 <PairEditor
+                  focusVariable={
+                    variableFocus?.source === 'collection' &&
+                    variableFocus.ownerId === settingsCollection.id
+                      ? variableFocus
+                      : undefined
+                  }
                   searchable
                   kind={t('variável')}
                   rows={settingsCollection.variables}
@@ -2977,7 +3681,23 @@ function WorkspaceApp({
             </div>
             <div className="dialog-footer">
               <span className="muted">{t('Alterações salvas automaticamente')}</span>
-              <Button onClick={() => setCollectionSettings(undefined)}>
+              {returnRequest &&
+                variableReturn &&
+                variableFocus?.source === 'collection' &&
+                variableFocus.ownerId === settingsCollection.id && (
+                  <Button
+                    variant="outline"
+                    title={returnRequest.name}
+                    onClick={returnToVariableRequest}
+                    aria-label={t('Voltar à requisição')}
+                    aria-keyshortcuts="Alt+ArrowLeft"
+                  >
+                    <ArrowLeft size={14} />
+                    {t('Voltar à requisição')}
+                    <kbd className="return-request-shortcut">Alt ←</kbd>
+                  </Button>
+                )}
+              <Button onClick={closeCollectionSettings}>
                 {t('Concluir') + ' '}
                 <Check size={14} />
               </Button>
@@ -3079,6 +3799,82 @@ function WorkspaceApp({
           </Button>
         </div>
       </Dialog>
+      <VariableInspector
+        onNavigateVariable={openVariableOrigin}
+        onRenameVariable={requestVariableRename}
+        onDeleteVariable={requestVariableDeletion}
+        getCreationTargets={variableCreationTargets}
+        onCreateVariable={createVariable}
+        scopeKey={JSON.stringify([
+          view,
+          active.collectionId,
+          active.requestId,
+          workspace.activeEnvironment,
+          collectionSettings,
+        ])}
+        resolve={(name, owner) => {
+          const { currentCollection, currentEnvironment } = variableContext(owner);
+          const session = currentCollection
+            ? scriptSessions.current.get(
+                JSON.stringify([currentCollection.id, currentEnvironment?.id]),
+              )
+            : undefined;
+          const sessionValue =
+            view === 'collections' && !collectionSettings ? session?.get(name) : undefined;
+          if (sessionValue === null) return undefined;
+          if (sessionValue !== undefined)
+            return {
+              id: name,
+              value: sessionValue,
+              source: 'session',
+              secret: true,
+              collectionId: currentCollection?.id,
+              environmentId: currentEnvironment?.id,
+              label: t('Sessão de scripts'),
+            };
+          const variable = currentCollection
+            ? resolvedVariables(currentCollection, currentEnvironment).get(name)
+            : currentEnvironment?.variables
+                .filter((row) => row.enabled && row.key === name)
+                .map((row) => ({ ...row, source: 'environment' as const }))
+                .at(-1);
+          return variable
+            ? {
+                ...variable,
+                collectionId: currentCollection?.id,
+                environmentId: currentEnvironment?.id,
+                label:
+                  variable.source === 'collection'
+                    ? (currentCollection?.name ?? '') + t(' (coleção)')
+                    : (currentEnvironment?.name ?? ''),
+              }
+            : undefined;
+        }}
+        onSave={(variable, value, secret) => {
+          const { id, source, collectionId, environmentId } = variable;
+          if (source === 'session') {
+            scriptSessions.current
+              .get(JSON.stringify([collectionId, environmentId]))
+              ?.set(id, value);
+            return;
+          }
+          const updateVariable = (row: Pair) => (row.id === id ? { ...row, value, secret } : row);
+          if (source === 'collection' && collectionId)
+            updateCollection(collectionId, (current) => ({
+              ...current,
+              variables: current.variables.map(updateVariable),
+            }));
+          else if (source === 'environment')
+            setWorkspace((current) => ({
+              ...current,
+              environments: current.environments.map((item) =>
+                item.id === environmentId
+                  ? { ...item, variables: item.variables.map(updateVariable) }
+                  : item,
+              ),
+            }));
+        }}
+      />
       <Toaster
         position="bottom-right"
         theme={theme === 'dark' ? 'dark' : 'light'}

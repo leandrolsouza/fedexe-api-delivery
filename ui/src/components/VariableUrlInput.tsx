@@ -1,5 +1,5 @@
 import { useRef, useState, type InputHTMLAttributes } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Braces, CircleHelp, Eye, EyeOff, Globe2, Layers3, Pencil, Trash2 } from 'lucide-react';
 import { t } from '../lib/i18n';
 import { Button } from './ui/button';
 
@@ -8,6 +8,70 @@ export type EditableVariable = {
   source: 'collection' | 'environment' | 'session';
   value: string;
   secret?: boolean;
+  sourceName?: string;
+};
+
+export function variableSourceLabel(source?: EditableVariable['source']) {
+  return t(
+    source === 'collection'
+      ? 'Coleção'
+      : source === 'environment'
+        ? 'Ambiente'
+        : source === 'session'
+          ? 'Sessão de scripts'
+          : 'Ausente',
+  );
+}
+
+export function variableOriginLabel(variable?: EditableVariable) {
+  const kind = variableSourceLabel(variable?.source);
+  return variable?.sourceName ? kind + ': ' + variable.sourceName : kind;
+}
+
+export function VariableSourceIcon({ source }: { source?: EditableVariable['source'] }) {
+  const Icon =
+    source === 'collection'
+      ? Layers3
+      : source === 'environment'
+        ? Globe2
+        : source === 'session'
+          ? Braces
+          : CircleHelp;
+  return <Icon size={14} aria-hidden="true" />;
+}
+
+export function VariableOriginBadge({
+  name,
+  variable,
+  offset,
+}: {
+  name: string;
+  variable?: EditableVariable;
+  offset?: number;
+}) {
+  const props = {
+    className: 'url-variable-origin',
+    'data-variable-origin-icon': 'true',
+    'data-variable-reference': name,
+    'data-variable-offset': offset,
+    title: variableOriginLabel(variable),
+  };
+  const icon = <VariableSourceIcon source={variable?.source} />;
+  return variable && ['collection', 'environment'].includes(variable.source) ? (
+    <button {...props} type="button" aria-label={name + ' · ' + variableOriginLabel(variable)}>
+      {icon}
+    </button>
+  ) : (
+    <span {...props} aria-hidden="true">
+      {icon}
+    </span>
+  );
+}
+
+export type VariableTarget = { source: 'collection' | 'environment'; id: string; label: string };
+export type VariableCreation = {
+  creationTargets?: VariableTarget[];
+  onCreateVariable?: (name: string, value: string, target: VariableTarget, secret: boolean) => void;
 };
 
 export function VariableUrlInput({
@@ -15,13 +79,20 @@ export function VariableUrlInput({
   resolveVariable,
   sourceLabel,
   onSaveVariable,
+  onDeleteVariable,
+  onRenameVariable,
+  creationTargets,
+  onCreateVariable,
   ...inputProps
-}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value'> & {
-  value: string;
-  resolveVariable: (name: string) => EditableVariable | undefined;
-  sourceLabel: (source: EditableVariable['source']) => string;
-  onSaveVariable: (variable: EditableVariable, value: string) => void;
-}) {
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value'> &
+  VariableCreation & {
+    value: string;
+    resolveVariable: (name: string) => EditableVariable | undefined;
+    sourceLabel: (source: EditableVariable['source']) => string;
+    onSaveVariable: (variable: EditableVariable, value: string, secret: boolean) => void;
+    onDeleteVariable?: (variable: EditableVariable, name: string) => void;
+    onRenameVariable?: (variable: EditableVariable, name: string) => void;
+  }) {
   const input = useRef<HTMLInputElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const mirrorText = useRef<HTMLSpanElement>(null);
@@ -31,10 +102,13 @@ export function VariableUrlInput({
   const match = matches.find(({ index }) => index === active?.index);
   const name = match?.[1].trim();
   const variable = name ? resolveVariable(name) : undefined;
+  const sourceSummary = matches
+    .map((token) => `${token[1].trim()}: ${variableOriginLabel(resolveVariable(token[1].trim()))}`)
+    .join('; ');
 
   function syncScroll() {
     if (input.current && mirrorText.current) {
-      mirrorText.current.style.transform = `translateX(${-input.current.scrollLeft}px)`;
+      mirrorText.current.style.left = `${-input.current.scrollLeft}px`;
     }
   }
 
@@ -54,11 +128,21 @@ export function VariableUrlInput({
   const decoratedValue = matches.map((token) => {
     const before = value.slice(end, token.index);
     end = token.index + token[0].length;
+    const tokenVariable = resolveVariable(token[1].trim());
     return (
       <span key={token.index}>
-        {before}
-        <span className="url-variable-token" data-variable-index={token.index}>
-          {token[0]}
+        <span aria-hidden="true">{before}</span>
+        <span
+          className="url-variable-token"
+          data-variable-index={token.index}
+          data-variable-source={resolveVariable(token[1].trim())?.source ?? 'missing'}
+        >
+          <VariableOriginBadge
+            name={token[1].trim()}
+            variable={tokenVariable}
+            offset={token.index}
+          />
+          <span aria-hidden="true">{token[0]}</span>
         </span>
       </span>
     );
@@ -70,6 +154,10 @@ export function VariableUrlInput({
       onMouseMove={(event) => {
         if (popover.current?.contains(document.activeElement) || event.buttons) return;
         const target = event.target;
+        if (target instanceof Element && target.closest('[data-variable-origin-icon]')) {
+          close(false);
+          return;
+        }
         if (target !== input.current) return;
         syncScroll();
         const token = Array.from(
@@ -96,10 +184,10 @@ export function VariableUrlInput({
         }
       }}
     >
-      <div className="url-input url-variable-mirror" ref={mirror} aria-hidden="true">
+      <div className="url-input url-variable-mirror" ref={mirror}>
         <span ref={mirrorText}>
           {decoratedValue}
-          {value.slice(end)}
+          <span aria-hidden="true">{value.slice(end)}</span>
         </span>
       </div>
       <input
@@ -128,6 +216,8 @@ export function VariableUrlInput({
           open(token.index, element, true);
         }}
         aria-keyshortcuts="Alt+ArrowDown"
+        title={inputProps.title ?? sourceSummary}
+        aria-description={sourceSummary || undefined}
       />
       {active && name && (
         <div
@@ -140,11 +230,36 @@ export function VariableUrlInput({
           <VariableValue
             key={JSON.stringify([active.index, active.keyboard, variable?.source, variable?.id])}
             name={name}
+            creationTargets={creationTargets}
+            onCreateVariable={
+              onCreateVariable
+                ? (name, value, target, secret) => {
+                    onCreateVariable(name, value, target, secret);
+                    close(true);
+                  }
+                : undefined
+            }
             variable={variable}
+            onDelete={
+              variable && onDeleteVariable
+                ? () => {
+                    onDeleteVariable(variable, name);
+                    close(true);
+                  }
+                : undefined
+            }
+            onRename={
+              variable && onRenameVariable
+                ? () => {
+                    onRenameVariable(variable, name);
+                    close(true);
+                  }
+                : undefined
+            }
             label={variable ? sourceLabel(variable.source) : t('Ausente')}
             autoFocus={active.keyboard}
-            onSave={(value) => {
-              if (variable) onSaveVariable(variable, value);
+            onSave={(value, secret) => {
+              if (variable) onSaveVariable(variable, value, secret);
               close(true);
             }}
           />
@@ -154,43 +269,79 @@ export function VariableUrlInput({
   );
 }
 
-function VariableValue({
+export function VariableValue({
   name,
   variable,
   label,
   autoFocus,
   onSave,
-}: {
+  onDelete,
+  onRename,
+  creationTargets = [],
+  onCreateVariable,
+}: VariableCreation & {
   name: string;
   variable?: EditableVariable;
   label: string;
   autoFocus: boolean;
-  onSave: (value: string) => void;
+  onSave: (value: string, secret: boolean) => void;
+  onDelete?: () => void;
+  onRename?: () => void;
 }) {
   const [value, setValue] = useState(variable?.value ?? '');
   const [visible, setVisible] = useState(false);
+  const [targetKey, setTargetKey] = useState('');
+  const [secret, setSecret] = useState(variable?.secret ?? false);
+  const isSecret = secret;
+  const dirty = !!variable && (value !== variable.value || secret !== !!variable.secret);
+  const target =
+    creationTargets.find((item) => `${item.source}:${item.id}` === targetKey) ?? creationTargets[0];
+  const canCreate = !variable && !!name.trim() && !!target && !!onCreateVariable;
+  const submit = () => {
+    if (variable) {
+      if (dirty) onSave(value, secret);
+    } else if (canCreate) onCreateVariable(name, value, target, secret);
+  };
 
   return (
     <>
       <code>{`{{${name}}}`}</code>
-      {variable && (
+      {canCreate && (
+        <label className="variable-create-target">
+          <span className="variable-source-label">
+            <VariableSourceIcon source={target?.source} />
+            {t('Criar em')}
+          </span>
+          <select
+            value={target ? `${target.source}:${target.id}` : ''}
+            onChange={(event) => setTargetKey(event.target.value)}
+          >
+            {creationTargets.map((item) => (
+              <option key={`${item.source}:${item.id}`} value={`${item.source}:${item.id}`}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {(variable || canCreate) && (
         <div className="url-variable-value">
           <input
             aria-label={t('Valor de {0}', name)}
-            type={variable.secret && !visible ? 'password' : 'text'}
-            placeholder={variable.secret ? t('Segredo') : t('Valor')}
+            type={isSecret && !visible ? 'password' : 'text'}
+            placeholder={isSecret ? t('Segredo') : t('Valor')}
             value={value}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return;
               event.preventDefault();
-              if (value !== variable.value) onSave(value);
+              submit();
             }}
             spellCheck={false}
             autoComplete="off"
             autoFocus={autoFocus}
           />
-          {variable.secret && (
+          {isSecret && (
             <button
               className="inline-icon"
               type="button"
@@ -203,20 +354,69 @@ function VariableValue({
           )}
         </div>
       )}
+      {(canCreate || (variable && variable.source !== 'session')) && (
+        <label className="variable-create-secret">
+          <input
+            type="checkbox"
+            checked={secret}
+            onChange={(event) => {
+              setSecret(event.target.checked);
+              setVisible(false);
+            }}
+          />
+          {t('Marcar como segredo')}
+        </label>
+      )}
       <div className="url-variable-footer">
-        <span>{label}</span>
-        {variable && (
+        <span
+          className="variable-source-label"
+          title={t(
+            variable?.source === 'collection'
+              ? 'Coleção'
+              : variable?.source === 'environment'
+                ? 'Ambiente'
+                : variable?.source === 'session'
+                  ? 'Sessão de scripts'
+                  : 'Ausente',
+          )}
+        >
+          <VariableSourceIcon source={variable?.source} />
+          {label}
+        </span>
+        {(variable || canCreate) && (
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            disabled={value === variable.value}
-            onClick={() => onSave(value)}
+            disabled={!!variable && !dirty}
+            onClick={submit}
           >
-            {t('Salvar')}
+            {t(variable ? 'Salvar' : 'Criar variável')}
           </Button>
         )}
       </div>
+      {variable && onRename && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="variable-rename-button"
+          onClick={onRename}
+        >
+          <Pencil size={13} aria-hidden="true" /> {t('Renomear variável')}
+        </Button>
+      )}
+      {variable && onDelete && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="variable-delete-button"
+          onClick={onDelete}
+        >
+          <Trash2 size={13} aria-hidden="true" /> {t('Excluir variável')}
+        </Button>
+      )}
     </>
   );
 }

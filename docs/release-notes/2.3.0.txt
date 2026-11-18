@@ -1,0 +1,11 @@
+Gerencie workspaces locais em uma página dedicada: busque, crie, abra, renomeie, duplique, exporte backups e exclua com confirmação. A exclusão limpa as credenciais do workspace e protege as que ainda são usadas por outros workspaces.
+
+As preferências de aparência do aplicativo agora são compartilhadas entre workspaces, enquanto as configurações de cada workspace e o histórico do console de requisições permanecem separados.
+
+Referências a variáveis na URL, body, parâmetros e headers mostram ícones e tooltips com a coleção ou o ambiente de origem. Pelo painel, crie variáveis ausentes, edite valores, marque ou desmarque segredos, exclua com confirmação ou renomeie variáveis e atualize declarações de mesmo nome, referências nas requisições, extrações, rascunhos e acessos literais nos scripts em todo o workspace.
+
+Clique no ícone de origem para abrir as variáveis correspondentes e focar a linha selecionada. Voltar à requisição e Alt + seta para a esquerda restauram a requisição e a aba de origem, selecionam a referência exata e preservam a rolagem dos editores e campos, inclusive com referências repetidas.
+
+Os resultados dos testes de carga destacam as métricas principais, agrupam medições secundárias, mostram falhas por requisição em detalhes expansíveis, simplificam os limites não configurados e reúnem falhas de preparação em um diagnóstico com ação para abrir a requisição. A exportação do relatório fica no cabeçalho.
+
+Execute coleções pelo menu de ações de cada coleção. O bloco fixo do runner foi removido do rodapé da barra lateral para deixar mais espaço para as requisições.

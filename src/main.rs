@@ -399,6 +399,7 @@ fn main() {
             workspace::load_workspace,
             workspace::save_workspace,
             workspace::list_workspaces,
+            workspace::delete_workspace,
             #[cfg(windows)]
             credentials::read_secret,
             #[cfg(windows)]

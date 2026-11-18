@@ -1,6 +1,8 @@
+import { VariableFieldOrigins } from './VariableFieldOrigins';
+import type { EditableVariable } from './VariableUrlInput';
 import { t } from '../lib/i18n';
 import { Eye, EyeOff, LockKeyhole, Plus, Search, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { pair, type Pair } from '../lib/models';
 import { Button } from './ui/button';
 
@@ -12,6 +14,8 @@ export function PairEditor({
   maskValue,
   markSecrets = false,
   searchable = false,
+  resolveVariable,
+  focusVariable,
 }: {
   rows: Pair[];
   onChange: (rows: Pair[]) => void;
@@ -20,11 +24,26 @@ export function PairEditor({
   maskValue?: (row: Pair) => boolean;
   markSecrets?: boolean;
   searchable?: boolean;
+  resolveVariable?: (name: string) => EditableVariable | undefined;
+  focusVariable?: { id: string; request: string };
 }) {
   const [visible, setVisible] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [focusedRow, setFocusedRow] = useState<string>();
   const newRow = useRef<string>(undefined);
+  const keyInputs = useRef(new Map<string, HTMLInputElement>());
+  useEffect(() => {
+    if (!focusVariable) return;
+    setSearch('');
+    setFocusedRow(focusVariable.id);
+    const frame = requestAnimationFrame(() => {
+      const input = keyInputs.current.get(focusVariable.id);
+      input?.focus();
+      input?.select();
+      input?.closest('.pair-row')?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusVariable?.id, focusVariable?.request]);
   const query = search.trim().toLowerCase();
   const displayed = query
     ? rows.filter((row) => row.id === focusedRow || row.key.toLowerCase().includes(query))
@@ -54,12 +73,13 @@ export function PairEditor({
         </div>
         {displayed.map((row) => (
           <div
-            className={`pair-row ${!row.enabled ? 'row-disabled' : ''}`}
+            className={`pair-row ${!row.enabled ? 'row-disabled' : ''} ${focusedRow === row.id && focusVariable?.id === row.id ? 'variable-target' : ''}`}
+            data-variable-id={row.id}
             role="row"
             key={row.id}
-            onFocus={searchable ? () => setFocusedRow(row.id) : undefined}
+            onFocus={searchable || variables ? () => setFocusedRow(row.id) : undefined}
             onBlur={
-              searchable
+              searchable || variables
                 ? (event) => {
                     if (!event.currentTarget.contains(event.relatedTarget))
                       setFocusedRow(undefined);
@@ -75,18 +95,16 @@ export function PairEditor({
                 aria-label={t('Ativar {0}', row.key || kind)}
               />
             </div>
-            <div role="cell">
+            <div role="cell" className="variable-origin-field">
               <input
-                ref={
-                  searchable
-                    ? (input) => {
-                        if (input && newRow.current === row.id) {
-                          newRow.current = undefined;
-                          input.focus();
-                        }
-                      }
-                    : undefined
-                }
+                ref={(input) => {
+                  if (input) keyInputs.current.set(row.id, input);
+                  else keyInputs.current.delete(row.id);
+                  if (searchable && input && newRow.current === row.id) {
+                    newRow.current = undefined;
+                    input.focus();
+                  }
+                }}
                 className="table-input mono"
                 value={row.key}
                 placeholder={variables ? t('nome_da_variavel') : t('Chave')}
@@ -94,6 +112,7 @@ export function PairEditor({
                 onChange={(event) => update(row.id, { key: event.target.value })}
                 spellCheck={false}
               />
+              <VariableFieldOrigins value={row.key} resolveVariable={resolveVariable} />
             </div>
             <div className="pair-value" role="cell">
               <input
@@ -109,6 +128,11 @@ export function PairEditor({
                 onChange={(event) => update(row.id, { value: event.target.value })}
                 spellCheck={false}
                 autoComplete="off"
+              />
+              <VariableFieldOrigins
+                value={row.value}
+                resolveVariable={resolveVariable}
+                masked={!!maskValue?.(row) || (!!row.secret && !visible.includes(row.id))}
               />
               {row.secret && !maskValue && (
                 <button

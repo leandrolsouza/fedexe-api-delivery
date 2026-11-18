@@ -1,3 +1,5 @@
+import { VariableFieldOrigins } from './VariableFieldOrigins';
+import type { EditableVariable } from './VariableUrlInput';
 import { t } from '../lib/i18n';
 import { File, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -38,9 +40,11 @@ function FilePicker({ path, onChange }: { path: string; onChange: (path: string)
 export function FileBodyEditor({
   request,
   onChange,
+  resolveVariable,
 }: {
   request: RequestItem;
   onChange: (value: Partial<RequestItem>) => void;
+  resolveVariable?: (name: string) => EditableVariable | undefined;
 }) {
   if (!native)
     return (
@@ -69,13 +73,16 @@ export function FileBodyEditor({
             checked={row.enabled}
             onChange={(event) => update(row.id, { enabled: event.target.checked })}
           />
-          <input
-            className="input mono"
-            aria-label={t('Nome da parte')}
-            placeholder={t('Nome')}
-            value={row.key}
-            onChange={(event) => update(row.id, { key: event.target.value })}
-          />
+          <div className="variable-origin-field">
+            <input
+              className="input mono"
+              aria-label={t('Nome da parte')}
+              placeholder={t('Nome')}
+              value={row.key}
+              onChange={(event) => update(row.id, { key: event.target.value })}
+            />
+            <VariableFieldOrigins value={row.key} resolveVariable={resolveVariable} />
+          </div>
           <select
             className="input"
             aria-label={t('Tipo da parte')}
@@ -90,13 +97,16 @@ export function FileBodyEditor({
           {row.kind === 'file' ? (
             <FilePicker path={row.value} onChange={(value) => update(row.id, { value })} />
           ) : (
-            <input
-              className="input mono"
-              aria-label={t('Valor do campo')}
-              placeholder={t('Valor')}
-              value={row.value}
-              onChange={(event) => update(row.id, { value: event.target.value })}
-            />
+            <div className="variable-origin-field">
+              <input
+                className="input mono"
+                aria-label={t('Valor do campo')}
+                placeholder={t('Valor')}
+                value={row.value}
+                onChange={(event) => update(row.id, { value: event.target.value })}
+              />
+              <VariableFieldOrigins value={row.value} resolveVariable={resolveVariable} />
+            </div>
           )}
           <Button
             variant="ghost"

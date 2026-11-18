@@ -11,6 +11,8 @@ export type View =
   | 'runner'
   | 'history'
   | 'console'
+  | 'workspaces'
+  | 'workspace-settings'
   | 'settings'
   | 'drive'
   | 'notifications';

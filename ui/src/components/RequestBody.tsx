@@ -1,3 +1,5 @@
+import { refreshVariableOrigins, variableOriginDecorations } from './variable-origin-decorations';
+import { VariableSourceIcon, type EditableVariable } from './VariableUrlInput';
 import { javascript } from '@codemirror/lang-javascript';
 import { syntaxHighlighting } from '@codemirror/language';
 import { Transaction } from '@codemirror/state';
@@ -16,18 +18,21 @@ function BodyCode({
   source,
   onChange,
   format,
+  resolveVariable,
 }: {
   label: string;
   source: string;
   onChange: (source: string) => void;
   format?: RawBodyFormat;
+  resolveVariable?: (name: string) => EditableVariable | undefined;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const editor = useRef<EditorView | null>(null);
-  const latest = useRef({ source, onChange });
+  const latest = useRef({ source, onChange, resolveVariable });
+  const icons = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    latest.current = { source, onChange };
+    latest.current = { source, onChange, resolveVariable };
     const view = editor.current;
     if (view && !view.state.doc.eq(view.state.toText(source))) {
       view.dispatch({
@@ -35,7 +40,8 @@ function BodyCode({
         annotations: Transaction.addToHistory.of(false),
       });
     }
-  }, [source, onChange]);
+    view?.dispatch({ effects: refreshVariableOrigins.of(null) });
+  }, [source, onChange, resolveVariable]);
 
   const highlight = format === 'javascript' || format === 'json';
   useLayoutEffect(() => {
@@ -46,6 +52,12 @@ function BodyCode({
       extensions: [
         basicSetup,
         EditorView.lineWrapping,
+        variableOriginDecorations(
+          (name) => latest.current.resolveVariable?.(name),
+          (source) =>
+            icons.current?.querySelector('[data-source="' + (source ?? 'missing') + '"] svg') ??
+            undefined,
+        ),
         ...(highlight ? [javascript(), syntaxHighlighting(classHighlighter)] : []),
         EditorView.contentAttributes.of({
           'aria-label': label,
@@ -66,7 +78,18 @@ function BodyCode({
     };
   }, [highlight, label]);
 
-  return <div className="body-code" ref={host} />;
+  return (
+    <>
+      <div ref={icons} hidden>
+        {(['collection', 'environment', 'session', undefined] as const).map((source) => (
+          <span key={source ?? 'missing'} data-source={source ?? 'missing'}>
+            <VariableSourceIcon source={source} />
+          </span>
+        ))}
+      </div>
+      <div className="body-code" ref={host} />
+    </>
+  );
 }
 
 const modes = [
@@ -81,9 +104,11 @@ const modes = [
 export default function RequestBody({
   request,
   onChange,
+  resolveVariable,
 }: {
   request: RequestItem;
   onChange: (patch: Partial<RequestItem>) => void;
+  resolveVariable?: (name: string) => EditableVariable | undefined;
 }) {
   const { bodyType, body, rawFormat } = request;
   const mode = bodyType === 'json' || bodyType === 'text' ? 'raw' : bodyType;
@@ -166,13 +191,19 @@ export default function RequestBody({
         </div>
       )}
       {mode === 'urlencoded' && (
-        <PairEditor kind={t('campo')} rows={request.form} onChange={(form) => onChange({ form })} />
+        <PairEditor
+          resolveVariable={resolveVariable}
+          kind={t('campo')}
+          rows={request.form}
+          onChange={(form) => onChange({ form })}
+        />
       )}
       {(mode === 'multipart' || mode === 'binary') && (
-        <FileBodyEditor request={request} onChange={onChange} />
+        <FileBodyEditor request={request} onChange={onChange} resolveVariable={resolveVariable} />
       )}
       {mode === 'raw' && (
         <BodyCode
+          resolveVariable={resolveVariable}
           label={t('Corpo da requisição')}
           source={body}
           format={format}
@@ -184,6 +215,7 @@ export default function RequestBody({
           <div>
             <span>{t('Consulta GraphQL')}</span>
             <BodyCode
+              resolveVariable={resolveVariable}
               label={t('Consulta GraphQL')}
               source={graphql.query}
               onChange={(query) => onChange({ graphql: { ...graphql, query } })}
@@ -192,6 +224,7 @@ export default function RequestBody({
           <div>
             <span>{t('Variáveis GraphQL')}</span>
             <BodyCode
+              resolveVariable={resolveVariable}
               label={t('Variáveis GraphQL')}
               source={graphql.variables}
               format="json"

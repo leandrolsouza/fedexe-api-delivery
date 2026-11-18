@@ -1,6 +1,6 @@
 {
   "productName": "Fedexe API",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "identifier": "app.fedexe.api",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -34,15 +34,23 @@
         "https://github.com/leandrolsouza/fedexe-api-delivery/releases/latest/download/latest.json"
       ],
       "requireSignedVersion": true,
-      "windows": { "installMode": "passive" }
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
     "windows": {
-      "nsis": { "installMode": "currentUser" }
+      "nsis": {
+        "installMode": "currentUser"
+      }
     }
   }
 }

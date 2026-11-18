@@ -138,7 +138,11 @@ export function selectRequestConsole(id: string) {
 }
 
 export function clearRequestConsole() {
-  attemptsByWorkspace.delete(workspaceId);
+  deleteRequestConsole(workspaceId);
+}
+
+export function deleteRequestConsole(id: string) {
+  attemptsByWorkspace.delete(id);
   notify();
 }
 

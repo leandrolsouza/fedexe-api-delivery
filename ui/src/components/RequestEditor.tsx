@@ -1,5 +1,9 @@
+import {
+  restoreVariableReference,
+  type VariableReferenceLocation,
+} from '../lib/variable-reference-location';
 import { formatNumber, t } from '../lib/i18n';
-import { lazy, Suspense, useState, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -66,7 +70,7 @@ import { CodeViewer } from './CodeViewer';
 import { hasScripts, type ScriptResult } from '../lib/scripts';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
 import { AuthFields, AuthType, authLabel } from './AuthFields';
-import { VariableUrlInput, type EditableVariable } from './VariableUrlInput';
+import { VariableUrlInput, type EditableVariable, type VariableCreation } from './VariableUrlInput';
 
 export type RequestLayout = 'request' | 'split' | 'response';
 
@@ -111,10 +115,17 @@ export function RequestEditor({
   defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
   defaultRedirectPolicy = 'none',
   initialTab = 'params',
+  restoreTab,
+  onRestoreTab,
+  onTabChange,
   collection,
   environment,
   sessionVariables,
   onSaveVariable,
+  onDeleteVariable,
+  onRenameVariable,
+  creationTargets,
+  onCreateVariable,
   onChange,
   onSave,
   dirty,
@@ -135,10 +146,17 @@ export function RequestEditor({
   defaultTimeoutMs?: number;
   defaultRedirectPolicy?: RedirectPolicy;
   initialTab?: 'params' | 'body';
+  restoreTab?: { tab: string; token: string; location?: VariableReferenceLocation };
+  onRestoreTab?: () => void;
+  onTabChange?: (tab: string) => void;
   collection: Collection;
   environment?: Environment;
   sessionVariables?: ReadonlyMap<string, string | null>;
-  onSaveVariable: (variable: EditableVariable, value: string) => void;
+  onSaveVariable: (variable: EditableVariable, value: string, secret: boolean) => void;
+  onDeleteVariable?: (variable: EditableVariable, name: string) => void;
+  onRenameVariable?: (variable: EditableVariable, name: string) => void;
+  creationTargets?: VariableCreation['creationTargets'];
+  onCreateVariable?: VariableCreation['onCreateVariable'];
   onChange: (value: RequestItem) => void;
   onSave: () => void;
   dirty: boolean;
@@ -156,6 +174,59 @@ export function RequestEditor({
   onRequestShareChange: (share: number) => void;
 }) {
   const [tab, setTab] = useState<string>(initialTab);
+  const editorRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!restoreTab) return;
+    setTab(restoreTab.tab);
+    if (!restoreTab.location) {
+      onRestoreTab?.();
+      return;
+    }
+    const root = editorRoot.current;
+    if (!root) return;
+    let frame = 0,
+      settle = 0,
+      restored = false;
+    const attempt = () => {
+      frame = 0;
+      if (
+        restored ||
+        root.querySelector('.request-tabs-list [aria-selected="true"]')?.id !==
+          'tab-' + restoreTab.tab
+      )
+        return;
+      const apply = restoreVariableReference(root, restoreTab.location!);
+      if (!apply) return;
+      restored = true;
+      observer.disconnect();
+      frame = requestAnimationFrame(() => {
+        apply();
+        settle = requestAnimationFrame(() => {
+          apply();
+          onRestoreTab?.();
+        });
+      });
+    };
+    const schedule = () => {
+      if (!restored && !frame) frame = requestAnimationFrame(attempt);
+    };
+    const observer = new MutationObserver(schedule);
+    observer.observe(root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['aria-selected'],
+    });
+    schedule();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      cancelAnimationFrame(settle);
+    };
+  }, [restoreTab?.token]);
+  useEffect(() => {
+    onTabChange?.(tab);
+  }, [tab, onTabChange]);
   const [urlInput, setUrlInput] = useState<string>();
   const [responseTab, setResponseTab] = useState('body');
   const [format, setFormat] = useState('pretty');
@@ -189,6 +260,20 @@ export function RequestEditor({
   } catch {
     // The send action reports request configuration errors.
   }
+  const variableValues = resolvedVariables(collection, environment);
+  const resolveVariable = (name: string): EditableVariable | undefined => {
+    const sessionValue = sessionVariables?.get(name);
+    if (sessionValue === null) return undefined;
+    if (sessionValue !== undefined)
+      return { id: name, value: sessionValue, source: 'session', secret: true };
+    const variable = variableValues.get(name);
+    return variable
+      ? {
+          ...variable,
+          sourceName: variable.source === 'collection' ? collection.name : environment?.name,
+        }
+      : undefined;
+  };
   const missing = references?.variables.filter(({ source }) => !source) ?? [];
   const empty = references?.variables.filter(({ empty }) => empty) ?? [];
   const tabs = [
@@ -271,7 +356,7 @@ export function RequestEditor({
     : [];
   testResults.push(...scriptResults);
   return (
-    <div className="request-page">
+    <div className="request-page" ref={editorRoot} data-request-editor={request.id}>
       <div className="request-heading">
         <div className="request-heading-title">
           <span className="request-type-icon">
@@ -350,14 +435,7 @@ export function RequestEditor({
           <VariableUrlInput
             aria-label={t('URL da requisição')}
             value={urlInput ?? urlWithQuery(request)}
-            resolveVariable={(name) => {
-              const sessionValue = sessionVariables?.get(name);
-              if (sessionValue === null) return undefined;
-              if (sessionValue !== undefined) {
-                return { id: name, value: sessionValue, source: 'session', secret: true };
-              }
-              return resolvedVariables(collection, environment).get(name);
-            }}
+            resolveVariable={resolveVariable}
             sourceLabel={(source) =>
               source === 'collection'
                 ? collection.name + t(' (coleção)')
@@ -366,6 +444,10 @@ export function RequestEditor({
                   : t('Sessão de scripts')
             }
             onSaveVariable={onSaveVariable}
+            onDeleteVariable={onDeleteVariable}
+            onRenameVariable={onRenameVariable}
+            creationTargets={creationTargets}
+            onCreateVariable={onCreateVariable}
             onFocus={(event) => setUrlInput(event.currentTarget.value)}
             onChange={(event) => {
               const url = event.target.value;
@@ -466,7 +548,11 @@ export function RequestEditor({
                     <h3>{t('Parâmetros de query')}</h3>
                     <span>{t('As linhas ativas aparecem na URL na ordem da tabela.')}</span>
                   </div>
-                  <PairEditor rows={request.params} onChange={(params) => update({ params })} />
+                  <PairEditor
+                    resolveVariable={resolveVariable}
+                    rows={request.params}
+                    onChange={(params) => update({ params })}
+                  />
                   <div className="section-heading path-parameters-heading">
                     <h3>{t('Parâmetros de caminho')}</h3>
                     <span>
@@ -477,6 +563,7 @@ export function RequestEditor({
                     </span>
                   </div>
                   <PairEditor
+                    resolveVariable={resolveVariable}
                     kind={t('parâmetro de caminho')}
                     rows={request.pathParams ?? []}
                     onChange={(pathParams) => update({ pathParams })}
@@ -515,6 +602,7 @@ export function RequestEditor({
                   </span>
                 </div>
                 <PairEditor
+                  resolveVariable={resolveVariable}
                   kind="header"
                   rows={request.headers}
                   onChange={(headers) => update({ headers })}
@@ -571,7 +659,11 @@ export function RequestEditor({
             )}
             {tab === 'body' && (
               <Suspense fallback={<p role="status">{t('Carregando editor…')}</p>}>
-                <RequestBody request={request} onChange={update} />
+                <RequestBody
+                  request={request}
+                  onChange={update}
+                  resolveVariable={resolveVariable}
+                />
               </Suspense>
             )}
             {tab === 'scripts' && (

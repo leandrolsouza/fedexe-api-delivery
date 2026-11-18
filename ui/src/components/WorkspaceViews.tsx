@@ -99,13 +99,26 @@ export function PageHeading({
 export function EnvironmentsView({
   workspace,
   onChange,
+  variableTarget,
+  onReturnToRequest,
+  returnRequestName,
 }: {
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
+  onReturnToRequest?: () => void;
+  returnRequestName?: string;
+  variableTarget?: { environmentId: string; id: string; request: string };
 }) {
   const [selected, setSelected] = useState(
     workspace.activeEnvironment || workspace.environments[0]?.id || '',
   );
+  useEffect(() => {
+    if (
+      variableTarget &&
+      workspace.environments.some((env) => env.id === variableTarget.environmentId)
+    )
+      setSelected(variableTarget.environmentId);
+  }, [variableTarget?.environmentId, variableTarget?.request]);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [confirm, setConfirm] = useState(false);
@@ -132,16 +145,35 @@ export function EnvironmentsView({
     toast.success(t('Ambiente criado'));
   }
   return (
-    <div className="workspace-page">
+    <div
+      className="workspace-page"
+      data-variable-environment-id={selected}
+      data-variable-collection-id=""
+    >
       <PageHeading
         eyebrow={t('CADA CONTEXTO, UM AMBIENTE')}
         title={t('Mude o ambiente. Não o seu fluxo.')}
         description={t('As mesmas requisições, prontas para qualquer etapa do seu projeto.')}
         action={
-          <Button onClick={() => setCreating(true)}>
-            <Plus size={16} />
-            {' ' + t('Novo ambiente')}
-          </Button>
+          <div className="load-actions">
+            {onReturnToRequest && (
+              <Button
+                variant="outline"
+                title={returnRequestName}
+                onClick={onReturnToRequest}
+                aria-label={t('Voltar à requisição')}
+                aria-keyshortcuts="Alt+ArrowLeft"
+              >
+                <ArrowLeft size={14} />
+                {t('Voltar à requisição')}
+                <kbd className="return-request-shortcut">Alt ←</kbd>
+              </Button>
+            )}
+            <Button onClick={() => setCreating(true)}>
+              <Plus size={16} />
+              {' ' + t('Novo ambiente')}
+            </Button>
+          </div>
         }
       />
       <div className="stat-cards env-stat-cards">
@@ -296,6 +328,9 @@ export function EnvironmentsView({
             </div>
             <div className="environment-editor-body">
               <PairEditor
+                focusVariable={
+                  variableTarget?.environmentId === environment.id ? variableTarget : undefined
+                }
                 key={environment.id}
                 kind={t('variável')}
                 variables
@@ -498,10 +533,12 @@ function RunFailureGroups({
   );
 }
 
-export type RunnerFolder = { collectionId: string; folder: string; environmentId: string };
+export type RunnerFolder = { collectionId: string; folder?: string };
 
 export function RunnerView({
   workspace,
+  drafts,
+  onOpenRequest,
   initialFolder,
   busy,
   setBusy,
@@ -510,6 +547,8 @@ export function RunnerView({
 }: {
   workspace: Workspace;
   initialFolder?: RunnerFolder;
+  drafts: Record<string, RequestItem>;
+  onOpenRequest: (collectionId: string, requestId: string) => void;
   busy: boolean;
   setBusy: (busy: boolean) => void;
   onCancel: () => void;
@@ -529,7 +568,6 @@ export function RunnerView({
   const [collectionId, setCollectionId] = useState(workspace.collections[0]?.id || '');
   const collection =
     workspace.collections.find((c) => c.id === collectionId) ?? workspace.collections[0];
-  const [environmentId, setEnvironmentId] = useState('');
   const [scope, setScope] = useState<RunScope>('collection');
   const [folder, setFolder] = useState('');
   const [selection, setSelection] = useState<string[]>([]);
@@ -557,7 +595,7 @@ export function RunnerView({
   const [iterationsInput, setIterationsInput] = useState('1');
   const [delayInput, setDelayInput] = useState('0');
   const [cancelling, setCancelling] = useState(false);
-  const environment = workspace.environments.find((env) => env.id === environmentId);
+  const environment = workspace.environments.find((env) => env.id === workspace.activeEnvironment);
   const scopedRequests = requestsForRun(collection, scope, folder, selection);
   const chosen =
     scope === 'folder'
@@ -644,7 +682,7 @@ export function RunnerView({
     scope === 'folder'
       ? folder
       : t(scope === 'selection' ? 'Requisições selecionadas' : 'Coleção inteira'),
-    environment?.name,
+    environment ? t('Ambiente: {0}', environment.name) : undefined,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -695,10 +733,9 @@ export function RunnerView({
     setShowLoadResults(false);
     setShowFunctionalResults(false);
     setCollectionId(initialFolder.collectionId);
-    setScope('folder');
-    setFolder(initialFolder.folder);
+    setScope(initialFolder.folder === undefined ? 'collection' : 'folder');
+    setFolder(initialFolder.folder ?? '');
     setFolderExclusions(new Set());
-    setEnvironmentId(initialFolder.environmentId);
     setSelection([]);
     clearRun();
   }, [initialFolder, clearRun]);
@@ -883,7 +920,10 @@ export function RunnerView({
           }
         />
       )}
-      <div className={cn('runner-layout', analysing && 'runner-analysis-layout')}>
+      <div
+        className={cn('runner-layout', analysing && 'runner-analysis-layout')}
+        data-variable-collection-id={collection?.id}
+      >
         <section className="surface runner-configuration" hidden={analysing}>
           <div className="surface-heading">
             <h3 ref={configurationHeading} tabIndex={-1}>
@@ -930,24 +970,6 @@ export function RunnerView({
                 {workspace.collections.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field-label">
-              {t('Ambiente de execução')}
-              <select
-                disabled={busy}
-                className="input"
-                value={environment?.id ?? ''}
-                onChange={(e) => {
-                  setEnvironmentId(e.target.value);
-                }}
-              >
-                <option value="">{t('Selecione um ambiente')}</option>
-                {workspace.environments.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.name}
                   </option>
                 ))}
               </select>
@@ -1039,9 +1061,30 @@ export function RunnerView({
             )}
             <p className="field-hint">
               {t(
-                'O runner usa as requisições salvas. Salve suas alterações no editor antes de executar.',
+                'O runner executa a versão salva das requisições. A configuração do teste não precisa ser salva.',
               )}
             </p>
+            {collection?.requests.filter((item) => drafts[item.id]).length ? (
+              <div className="runner-drafts">
+                <strong>{t('Alterações fora desta execução')}</strong>
+                <p>
+                  {t(
+                    'Estas requisições têm alterações não salvas. Você pode executar a versão salva ou abrir uma aba para revisar e salvar:',
+                  )}
+                </p>
+                {collection.requests
+                  .filter((item) => drafts[item.id])
+                  .map((item) => (
+                    <Button
+                      key={item.id}
+                      variant="outline"
+                      onClick={() => onOpenRequest(collection.id, item.id)}
+                    >
+                      {item.name}
+                    </Button>
+                  ))}
+              </div>
+            ) : null}
           </div>
           {!loadMode && (
             <div className="runner-start">
@@ -1069,6 +1112,7 @@ export function RunnerView({
         {loadMode && (
           <section className="surface load-panel">
             <LoadRunner
+              onOpenRequest={onOpenRequest}
               requestPicker={scope === 'folder' && folder ? requestPreview : undefined}
               exportRequestIds={
                 scope === 'folder' && chosen.length !== scopedRequests.length
@@ -1692,13 +1736,16 @@ export function HistoryView({
 const settingsSections = [
   { label: 'Aparência', icon: Monitor },
   { label: 'Temas', icon: Palette },
-  { label: 'Padrões de requisição', icon: Clock3 },
   { label: 'IA', icon: Sparkles },
-  { label: 'Dados e backups', icon: HardDrive },
   { label: 'Atualizações e sobre', icon: Info },
+] as const;
+const workspaceSections = [
+  { label: 'Dados e backups', icon: HardDrive },
+  { label: 'Padrões de requisição', icon: Clock3 },
 ] as const;
 
 export function SettingsView({
+  scope = 'app',
   workspace,
   onChange,
   onImport,
@@ -1707,6 +1754,7 @@ export function SettingsView({
   updates,
   version,
 }: {
+  scope?: 'app' | 'workspace';
   workspace: Workspace;
   onChange: (workspace: Workspace) => void;
   onImport: () => void;
@@ -1716,7 +1764,10 @@ export function SettingsView({
   version: string;
 }) {
   const settings = workspace.settings;
-  const [section, setSection] = useState<(typeof settingsSections)[number]['label']>('Aparência');
+  const sections = scope === 'app' ? settingsSections : workspaceSections;
+  const [section, setSection] = useState<
+    (typeof settingsSections)[number]['label'] | (typeof workspaceSections)[number]['label']
+  >(scope === 'app' ? 'Aparência' : 'Dados e backups');
   const locale = useLocale();
   const update = (patch: Partial<Workspace['settings']>) =>
     onChange({ ...workspace, settings: { ...settings, ...patch } });
@@ -1727,12 +1778,16 @@ export function SettingsView({
   return (
     <div className="workspace-page settings-page">
       <PageHeading
-        title={t('Configurações')}
-        description={t('Gerencie as preferências do Fedexe API e do workspace.')}
+        title={t(scope === 'app' ? 'Configurações do aplicativo' : 'Configurações do workspace')}
+        description={
+          scope === 'app'
+            ? t('Preferências aplicadas a todos os workspaces neste dispositivo.')
+            : workspace.settings.workspaceName || t('Meu workspace')
+        }
       />
       <div className="settings-layout">
         <nav className="settings-menu" aria-label={t('Configurações')}>
-          {settingsSections.map(({ label, icon: Icon }) => (
+          {sections.map(({ label, icon: Icon }) => (
             <button
               key={label}
               type="button"

@@ -86,3 +86,22 @@ export function prepareSecrets(workspace: Workspace) {
   );
   return { sanitized, values };
 }
+
+// Inspect references without retrieving credential values from the vault.
+export function workspaceSecretAddresses(workspace: Workspace, native: boolean) {
+  const locations = new Map<string, CredentialAddress>();
+  const slots = workspace.credentialSlots && new Set(workspace.credentialSlots);
+  mapWorkspaceCredentials(workspace, (scope, owner, field, value, publicValue) => {
+    const legacy = address(scope, owner, field);
+    const key = secretKey(legacy);
+    if (value === publicValue && (slots ? slots.has(key) : native && scope === 'environment')) {
+      const revision = workspace.credentialRevisions?.[key];
+      const location = revision === undefined ? legacy : revisionAddress(revision);
+      locations.set(secretKey(location), location);
+    }
+    return value;
+  });
+  for (const location of workspace.retiredCredentials ?? [])
+    locations.set(secretKey(location), location);
+  return locations;
+}
