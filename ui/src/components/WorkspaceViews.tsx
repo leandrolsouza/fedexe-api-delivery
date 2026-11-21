@@ -1,6 +1,7 @@
 import {
   formatDate,
   formatNumber,
+  localeNames,
   setLocale,
   t,
   useLocale,
@@ -574,7 +575,10 @@ export function RunnerView({
   const [folderExclusions, setFolderExclusions] = useState<Set<string>>(() => new Set());
   const [runPlan, setRunPlan] = useState<{
     requests: RequestItem[];
-    context: string;
+    collectionName: string;
+    scope: RunScope;
+    folder: string;
+    environmentName: string;
     iterations: number;
     requestsPerIteration: number;
   }>();
@@ -677,15 +681,23 @@ export function RunnerView({
     reportReturnTarget.current = null;
     setReportOrigin(undefined);
   }, [runnerTab]);
-  const context = [
-    collection?.name,
-    scope === 'folder'
-      ? folder
-      : t(scope === 'selection' ? 'Requisições selecionadas' : 'Coleção inteira'),
-    environment ? t('Ambiente: {0}', environment.name) : undefined,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  function describeRun(
+    collectionName: string | undefined,
+    scope: RunScope,
+    folder: string,
+    environmentName: string | undefined,
+  ) {
+    return [
+      collectionName,
+      scope === 'folder'
+        ? folder
+        : t(scope === 'selection' ? 'Requisições selecionadas' : 'Coleção inteira'),
+      environmentName === undefined ? undefined : t('Ambiente: {0}', environmentName),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
+  const context = describeRun(collection?.name, scope, folder, environment?.name);
   const notRunLabel =
     result?.outcome === 'cancelled'
       ? t('Não executada por cancelamento')
@@ -747,7 +759,10 @@ export function RunnerView({
     navigateFunctional(true);
     setRunPlan({
       requests: Array.from({ length: plannedSteps }, (_, index) => chosen[index % chosen.length]),
-      context,
+      collectionName: collection.name,
+      scope,
+      folder,
+      environmentName: environment.name,
       iterations,
       requestsPerIteration: chosen.length,
     });
@@ -1144,7 +1159,16 @@ export function RunnerView({
                       ? outcomeLabel[result.outcome]
                       : t('Resultados da execução')}
                 </h3>
-                <p>{runPlan?.context ?? context}</p>
+                <p>
+                  {runPlan
+                    ? describeRun(
+                        runPlan.collectionName,
+                        runPlan.scope,
+                        runPlan.folder,
+                        runPlan.environmentName,
+                      )
+                    : context}
+                </p>
                 <p role="status" aria-atomic="true">
                   {runPlan ? completedLabel : chosenLabel}
                   {running &&
@@ -1818,12 +1842,11 @@ export function SettingsView({
                     }
                   }}
                 >
-                  <option value="en-US" lang="en-US">
-                    English (US)
-                  </option>
-                  <option value="pt-BR" lang="pt-BR">
-                    Português (Brasil)
-                  </option>
+                  {Object.entries(localeNames).map(([code, name]) => (
+                    <option key={code} value={code} lang={code}>
+                      {name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <SettingToggle

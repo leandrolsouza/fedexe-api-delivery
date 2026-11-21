@@ -286,7 +286,7 @@ export function RequestEditor({
     { id: 'auth', label: t('Autorização'), icon: <LockKeyhole size={12} /> },
     {
       id: 'headers',
-      label: 'Headers',
+      label: t('Cabeçalhos'),
       count: request.headers.filter((p) => p.enabled && p.key).length,
     },
     { id: 'body', label: t('Corpo'), dot: request.bodyType !== 'none' },
@@ -1122,7 +1122,7 @@ export function RequestEditor({
                   >
                     {[
                       { id: 'body', label: t('Corpo') },
-                      { id: 'headers', label: 'Headers', count: response.headers.length },
+                      { id: 'headers', label: t('Cabeçalhos'), count: response.headers.length },
                       {
                         id: 'tests',
                         label: t('Resultados dos testes'),

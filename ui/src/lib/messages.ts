@@ -588,6 +588,7 @@ export const messages = {
   Nenhum: 'None',
   Adicionar: 'Add',
   Parâmetros: 'Params',
+  Cabeçalhos: 'Headers',
   Autorização: 'Authorization',
   Corpo: 'Body',
   Testes: 'Tests',

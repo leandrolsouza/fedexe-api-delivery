@@ -2717,83 +2717,92 @@ function WorkspaceApp({
         >
           {(view === 'collections' || isToolView(view)) && (
             <nav className="request-tabbar" aria-label={t('Requisições abertas')}>
-              {tabs.map((tab) => {
-                const c = workspace.collections.find((c) => c.id === tab.collectionId);
-                const saved = c?.requests.find((r) => r.id === tab.requestId);
-                const item = drafts[tab.requestId] || saved;
-                return (
-                  item && (
+              <div className="request-tab-strip">
+                {tabs.map((tab) => {
+                  const c = workspace.collections.find((c) => c.id === tab.collectionId);
+                  const saved = c?.requests.find((r) => r.id === tab.requestId);
+                  const item = drafts[tab.requestId] || saved;
+                  return (
+                    item && (
+                      <div
+                        className={cn(
+                          'request-tab',
+                          view === 'collections' && active.requestId === tab.requestId && 'active',
+                        )}
+                        key={tab.requestId}
+                      >
+                        <button
+                          aria-current={
+                            view === 'collections' && active.requestId === tab.requestId
+                              ? 'page'
+                              : undefined
+                          }
+                          onClick={() => {
+                            setActive(tab);
+                            setView('collections');
+                          }}
+                        >
+                          <MethodBadge method={item.method} small />
+                          <span>{item.name}</span>
+                          {drafts[item.id] && <span className="dirty-dot" />}
+                        </button>
+                        <button
+                          className="close-tab"
+                          aria-label={t('Fechar aba {0}', item.name)}
+                          onClick={() => closeTab(tab)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    )
+                  );
+                })}
+                {openTools.map((id) => {
+                  const tab = toolTabs.find((item) => item.id === id)!;
+                  const Icon = tab.icon;
+                  return (
                     <div
-                      className={cn(
-                        'request-tab',
-                        view === 'collections' && active.requestId === tab.requestId && 'active',
-                      )}
-                      key={tab.requestId}
+                      key={id}
+                      className={cn('request-tab', 'tool-tab', view === id && 'active')}
                     >
                       <button
-                        aria-current={
-                          view === 'collections' && active.requestId === tab.requestId
-                            ? 'page'
-                            : undefined
-                        }
-                        onClick={() => {
-                          setActive(tab);
-                          setView('collections');
-                        }}
+                        aria-current={view === id ? 'page' : undefined}
+                        onClick={() => setView(id)}
                       >
-                        <MethodBadge method={item.method} small />
-                        <span>{item.name}</span>
-                        {drafts[item.id] && <span className="dirty-dot" />}
+                        <Icon size={14} />
+                        <span>{t(tab.label)}</span>
                       </button>
                       <button
                         className="close-tab"
-                        aria-label={t('Fechar aba {0}', item.name)}
-                        onClick={() => closeTab(tab)}
+                        aria-label={t('Fechar aba {0}', t(tab.label))}
+                        disabled={id === 'runner' && busy}
+                        onClick={() => {
+                          setOpenTools((current) => current.filter((item) => item !== id));
+                          if (view === id) setView('collections');
+                        }}
                       >
                         <X size={12} />
                       </button>
                     </div>
-                  )
-                );
-              })}
-              {openTools.map((id) => {
-                const tab = toolTabs.find((item) => item.id === id)!;
-                const Icon = tab.icon;
-                return (
-                  <div key={id} className={cn('request-tab', view === id && 'active')}>
-                    <button
-                      aria-current={view === id ? 'page' : undefined}
-                      onClick={() => setView(id)}
-                    >
-                      <Icon size={14} />
-                      <span>{t(tab.label)}</span>
-                    </button>
-                    <button
-                      className="close-tab"
-                      aria-label={t('Fechar aba {0}', t(tab.label))}
-                      disabled={id === 'runner' && busy}
-                      onClick={() => {
-                        setOpenTools((current) => current.filter((item) => item !== id));
-                        if (view === id) setView('collections');
-                      }}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+                <button
+                  className="new-tab"
+                  aria-label={t('Nova requisição')}
+                  title={t('Nova requisição (Ctrl N)')}
+                  onClick={() => addRequest()}
+                >
+                  <Plus size={17} />
+                </button>
+              </div>
               <button
-                className="new-tab"
-                aria-label={t('Nova requisição')}
-                title={t('Nova requisição (Ctrl N)')}
-                onClick={() => addRequest()}
+                className="tabbar-run"
+                aria-label={t('Executar coleção')}
+                title={t('Executar coleção')}
+                onClick={() => setView('runner')}
               >
-                <Plus size={17} />
-              </button>
-              <div className="tabbar-spacer" />
-              <button className="tabbar-run" onClick={() => setView('runner')}>
                 <Play size={12} />
-                {' ' + t('Executar coleção')}
+                <span>{t('Executar coleção')}</span>
               </button>
             </nav>
           )}
