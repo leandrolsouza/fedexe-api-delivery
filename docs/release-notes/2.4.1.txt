@@ -1,0 +1,5 @@
+O Fedexe agora importa os scripts de pasta do Postman e os executa no editor de requisições e no Runner. Os scripts de pré-requisição e pós-resposta rodam na ordem coleção, pastas ancestrais e requisição.
+
+Os scripts importados podem ler o nome da requisição com pm.info.requestName, listar variáveis com toObject(), gerar UUIDs com {{$guid}} e usar asserções de JSON e at.least.
+
+Reimporte o JSON original do Postman para recuperar scripts de pasta omitidos por versões anteriores do Fedexe.

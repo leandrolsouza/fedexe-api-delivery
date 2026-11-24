@@ -1,5 +1,5 @@
 import type { Scripts, ScriptResult } from './scripts';
-import { isInFolder } from './folders';
+import { FOLDER_SEPARATOR, isInFolder } from './folders';
 import { t } from './i18n';
 import { uid } from './utils';
 import { isTheme, type ThemeSettings } from './themes';
@@ -124,6 +124,8 @@ export type RequestItem = {
 };
 export type Collection = {
   scripts?: Scripts;
+  folderPreRequests?: Record<string, string[]>;
+  folderPostResponses?: Record<string, string[]>;
   id: string;
   name: string;
   description: string;
@@ -133,6 +135,66 @@ export type Collection = {
   requests: RequestItem[];
 };
 export type Environment = { id: string; name: string; color: string; variables: Pair[] };
+
+export function hasScripts(scripts?: Scripts) {
+  return Boolean(scripts?.before?.trim() || scripts?.after?.trim());
+}
+
+export function folderScripts(
+  collection: Collection,
+  folder: string,
+  phase: keyof Scripts,
+): [string, string][] {
+  const scripts =
+    phase === 'before' ? collection.folderPreRequests : collection.folderPostResponses;
+  if (!scripts || !folder) return [];
+  const scopes: [string, string][] = [];
+  const segments = folder.split(FOLDER_SEPARATOR);
+  for (let depth = 1; depth <= segments.length; depth++) {
+    const path = segments.slice(0, depth).join(FOLDER_SEPARATOR);
+    if (!Object.hasOwn(scripts, path)) continue;
+    for (const source of scripts[path]) scopes.push([path, source]);
+  }
+  return scopes;
+}
+
+export function mapFolderScriptPaths(
+  collection: Collection,
+  destinations: (path: string) => string[],
+) {
+  const remap = (scripts?: Record<string, string[]>) =>
+    scripts &&
+    Object.fromEntries(
+      Object.entries(scripts).flatMap(([path, sources]) =>
+        destinations(path).map((destination) => [destination, sources]),
+      ),
+    );
+  return {
+    folderPreRequests: remap(collection.folderPreRequests),
+    folderPostResponses: remap(collection.folderPostResponses),
+  };
+}
+
+export function hasPostResponseScripts(collection: Collection, request: RequestItem) {
+  return Boolean(
+    collection.scripts?.after?.trim() ||
+    request.scripts?.after?.trim() ||
+    folderScripts(collection, request.folder, 'after').some(([, source]) => source.trim()),
+  );
+}
+
+export function hasRunScripts(collection: Collection | undefined, requests: RequestItem[]) {
+  return Boolean(
+    collection &&
+    (hasScripts(collection.scripts) ||
+      requests.some(
+        (request) =>
+          hasScripts(request.scripts) ||
+          folderScripts(collection, request.folder, 'before').some(([, source]) => source.trim()) ||
+          folderScripts(collection, request.folder, 'after').some(([, source]) => source.trim()),
+      )),
+  );
+}
 
 export function isEnvironment(value: unknown): value is Environment {
   if (!value || typeof value !== 'object') return false;
@@ -523,6 +585,20 @@ export function validCollection(value: unknown): value is Collection {
     typeof c.description === 'string' &&
     Array.isArray(c.folders) &&
     c.folders.every((f) => typeof f === 'string') &&
+    [c.folderPreRequests, c.folderPostResponses].every(
+      (scripts) =>
+        scripts === undefined ||
+        (scripts !== null &&
+          typeof scripts === 'object' &&
+          !Array.isArray(scripts) &&
+          Object.entries(scripts).every(
+            ([path, sources]) =>
+              path !== '' &&
+              c.folders.includes(path) &&
+              Array.isArray(sources) &&
+              sources.every((source) => typeof source === 'string'),
+          )),
+    ) &&
     validPairs(c.variables) &&
     validAuth(c.auth) &&
     Array.isArray(c.requests) &&

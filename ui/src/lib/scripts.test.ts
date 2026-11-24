@@ -155,6 +155,9 @@ describe('JavaScript de requisição', () => {
         pm.expect(["a", "b"]).to.be.an("array").and.include("a");
         pm.expect(["a"]).to.have.lengthOf.above(0);
         pm.expect(2).to.be.above(1);
+        pm.expect(2).to.be.at.least(2);
+        pm.expect(3).to.be.at.least(2);
+        pm.expect(new Date('2026-01-02')).to.be.at.least(new Date('2026-01-01'));
         pm.expect(null).to.be.null;
         pm.expect(json.id).to.not.be.undefined;
         pm.expect({ a: [1, 2] }).to.eql({ a: [1, 2] });
@@ -162,6 +165,7 @@ describe('JavaScript de requisição', () => {
       pm.test("ausente", () => pm.expect(json).to.have.property("inexistente"));
       pm.test("diferente", () => pm.expect(json.nuVersao).to.eql(2));
       pm.test("negação", () => pm.expect([]).to.not.be.empty);
+      pm.test("abaixo do mínimo", () => pm.expect(1).to.be.at.least(2));
       `,
       newRequest(),
       {},
@@ -174,7 +178,14 @@ describe('JavaScript de requisição', () => {
       },
     );
     expect(output.error).toBeUndefined();
-    expect(output.tests.map(({ passed }) => passed)).toEqual([true, true, false, false, false]);
+    expect(output.tests.map(({ passed }) => passed)).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 
   it('executa testes e acessa a resposta sem globais da aplicação', async () => {

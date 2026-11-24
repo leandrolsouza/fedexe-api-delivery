@@ -178,25 +178,41 @@ export function renameWorkspaceVariable(
     ]),
     ...Object.values(drafts).map((request) => request.scripts),
   ];
-  if (
-    scripts.some((script) =>
-      [script?.before, script?.after].some(
-        (source) =>
-          source &&
-          scriptVariableArguments(source).some(
-            (argument) => argument.method === 'set' && argument.name === to,
-          ),
+  const sources = [
+    ...scripts.flatMap((script) => [script?.before, script?.after]),
+    ...workspace.collections.flatMap(({ folderPreRequests, folderPostResponses }) =>
+      [folderPreRequests, folderPostResponses].flatMap((scripts) =>
+        Object.values(scripts ?? {}).flat(),
       ),
+    ),
+  ];
+  if (
+    sources.some(
+      (source) =>
+        source &&
+        scriptVariableArguments(source).some(
+          (argument) => argument.method === 'set' && argument.name === to,
+        ),
     )
   )
     return 'collision';
   const variables = (rows: Pair[]) =>
     rows.map((row) => ({ ...row, key: row.key === from ? to : row.key }));
+  const renameFolderScripts = (scripts?: Record<string, string[]>) =>
+    scripts &&
+    Object.fromEntries(
+      Object.entries(scripts).map(([path, sources]) => [
+        path,
+        sources.map((source) => renameScript(source, from, to)),
+      ]),
+    );
   const collections = workspace.collections.map((collection) => ({
     ...collection,
     variables: variables(collection.variables),
     auth: renameAuth(collection.auth, from, to),
     scripts: renameScripts(collection.scripts, from, to),
+    folderPreRequests: renameFolderScripts(collection.folderPreRequests),
+    folderPostResponses: renameFolderScripts(collection.folderPostResponses),
     requests: collection.requests.map((request) => renameRequestReferences(request, from, to)),
   }));
   return {

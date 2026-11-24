@@ -3,7 +3,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { prepareCollection } from '../ui/src/lib/collection-runner';
-import { isEnvironment, requestsForRun, validCollection } from '../ui/src/lib/models';
+import {
+  hasRunScripts,
+  isEnvironment,
+  requestsForRun,
+  validCollection,
+} from '../ui/src/lib/models';
 
 const usage = `Usage: node fedexe.mjs run --collection FILE --environment FILE
   [--folder NAME] [--secret VARIABLE=ENV_NAME] [--stop-on-failure] [--report FILE]
@@ -129,11 +134,10 @@ async function main() {
   const executable = fileURLToPath(new URL(binary, import.meta.url));
   let report;
   try {
-    const scripts = (item) => item.scripts?.before?.trim() || item.scripts?.after?.trim();
     if (options?.collection_setup === true) {
       return fail('Running a collection pre-request script before load requires the desktop app.');
     }
-    if (load && (scripts(collection) || requests.some(scripts)) && options?.skip_scripts !== true) {
+    if (load && hasRunScripts(collection, requests) && options?.skip_scripts !== true) {
       return fail(
         'The selected flow contains JavaScript. Set skip_scripts to true in the scenario to run without scripts.',
       );

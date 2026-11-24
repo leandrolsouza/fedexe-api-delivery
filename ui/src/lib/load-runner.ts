@@ -78,7 +78,7 @@ export async function prepareLoadVariables(
   variables: Record<string, string>,
   signal: AbortSignal,
 ) {
-  const request = { ...first, scripts: undefined };
+  const request = { ...first, folder: '', scripts: undefined };
   const results: ScriptResult[] = [];
   const { item, failed, skipped } = await runScripts(
     'before',

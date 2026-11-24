@@ -63,6 +63,7 @@ describe('variable rename', () => {
     request.extract = { old: '/id' };
     c.auth.token = '{{old}}';
     c.scripts = { before: "pm.collectionVariables.get('old')" };
+    c.folderPreRequests = { [c.folders[0]]: ["pm.collectionVariables.set('old', 'value');"] };
     const other = {
       ...structuredClone(c),
       id: 'other',
@@ -103,6 +104,9 @@ describe('variable rename', () => {
     expect(renamed.requests[0].graphql?.variables).toBe('{"id":"{{renamed}}"}');
     expect(renamed.auth.token).toBe('{{renamed}}');
     expect(renamed.scripts?.before).toBe('pm.collectionVariables.get("renamed")');
+    expect(renamed.folderPreRequests?.[c.folders[0]]).toEqual([
+      'pm.collectionVariables.set("renamed", \'value\');',
+    ]);
     expect(result.workspace.collections[1].requests[0].url).toBe('{{renamed}}');
     expect(result.drafts[request.id].body).toBe('unsaved {{renamed}}');
     expect(workspace).toEqual(original);

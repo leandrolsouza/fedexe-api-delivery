@@ -63,7 +63,7 @@ describe('migração do Postman', () => {
     expect(collection.requests[0].folder).toBe('Flows / Cadastro');
     expect(result.issues).toEqual([]);
   });
-  it('copia scripts ativos da coleção e da requisição sem duplicar testes declarativos', () => {
+  it('preserva os scripts ativos de pasta, coleção e requisição', () => {
     const status = "pm.test('Status 200', () => pm.response.to.have.status(200));";
     const token = "pm.collectionVariables.set('token', pm.response.json().token);";
     const event = (listen: string, exec: unknown) => ({ listen, script: { exec } });
@@ -81,7 +81,12 @@ describe('migração do Postman', () => {
       item: [
         {
           name: 'Pasta',
-          event: [event('prerequest', 'folderScript();')],
+          event: [
+            event('prerequest', 'folderScript();'),
+            event('prerequest', ['anotherFolderScript();']),
+            { ...event('prerequest', 'disabled()'), disabled: true },
+            event('test', 'folderTest();'),
+          ],
           item: [
             {
               name: 'Login',
@@ -104,6 +109,10 @@ describe('migração do Postman', () => {
         '// Prepare requests\npm.variables.set("scope", "collection");\n;\npm.variables.set("order", "second");',
       after: status,
     });
+    expect(collection.folderPreRequests).toEqual({
+      Pasta: ['folderScript();', 'anotherFolderScript();'],
+    });
+    expect(collection.folderPostResponses).toEqual({ Pasta: ['folderTest();'] });
     expect(collection.requests[0]).toMatchObject({
       scripts: {
         before: 'pm.variables.set("request", "login");',
@@ -112,12 +121,11 @@ describe('migração do Postman', () => {
       tests: [],
       extract: {},
     });
-    expect(result.issues).toEqual([
-      'Pasta: some scripts were skipped.',
-      'Login: some scripts were skipped.',
-    ]);
+    expect(result.issues).toEqual(['Login: some scripts were skipped.']);
     const imported = importCollection(JSON.parse(JSON.stringify(collection)));
     expect(imported.scripts).toEqual(collection.scripts);
+    expect(imported.folderPreRequests).toEqual(collection.folderPreRequests);
+    expect(imported.folderPostResponses).toEqual(collection.folderPostResponses);
     expect(imported.requests[0].scripts).toEqual(collection.requests[0].scripts);
   });
 

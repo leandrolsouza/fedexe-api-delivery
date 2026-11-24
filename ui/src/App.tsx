@@ -98,7 +98,9 @@ import {
   addConsoleMasks,
   compileRequest,
   emptyAuth,
+  hasPostResponseScripts,
   loadWorkspace,
+  mapFolderScriptPaths,
   newRequest,
   RequestResolutionError,
   redactValues,
@@ -921,7 +923,7 @@ function WorkspaceApp({
     manualExecution.current = execution;
     const results: ScriptResult[] = [];
     const attempt = native ? consoleAttemptFactory('editor')(item.id) : undefined;
-    const hasPostScript = Boolean(collection.scripts?.after?.trim() || item.scripts?.after?.trim());
+    const hasPostScript = hasPostResponseScripts(collection, item);
     const deferredTrace =
       attempt && hasPostScript ? postResponseTrace(attempt.trace, attempt.script) : undefined;
     const scriptContext = {
@@ -1188,6 +1190,7 @@ function WorkspaceApp({
     updateCollection(c.id, (current) => ({
       ...current,
       folders: current.folders.map(relocatePath),
+      ...mapFolderScriptPaths(current, (path) => [relocatePath(path)]),
       requests: current.requests.map(relocateRequest),
     }));
     const requestIds = new Set(c.requests.map(({ id }) => id));
@@ -1560,6 +1563,9 @@ function WorkspaceApp({
                       ...current.folders,
                       ...current.folders.filter((f) => isInFolder(f, folder)).map(copyPath),
                     ],
+                    ...mapFolderScriptPaths(current, (path) =>
+                      isInFolder(path, folder) ? [path, copyPath(path)] : [path],
+                    ),
                     requests: [
                       ...current.requests,
                       ...branchRequests.map((r) => ({
@@ -1620,6 +1626,9 @@ function WorkspaceApp({
                       updateCollection(c.id, (current) => ({
                         ...current,
                         folders: current.folders.filter((f) => !isInFolder(f, folder)),
+                        ...mapFolderScriptPaths(current, (path) =>
+                          isInFolder(path, folder) ? [] : [path],
+                        ),
                         requests: current.requests.filter((r) => !isInFolder(r.folder, folder)),
                       }));
                       removeTabs(branchRequests.map((r) => r.id));

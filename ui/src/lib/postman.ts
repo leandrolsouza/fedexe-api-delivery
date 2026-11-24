@@ -118,7 +118,7 @@ export function importPostman(value: unknown) {
   function importEvents(
     value: Record<string, unknown>,
     label: string,
-    target?: Collection | Collection['requests'][number],
+    target: Collection | Collection['requests'][number] | string,
   ) {
     const sources: Record<keyof Scripts, string[]> = { before: [], after: [] };
     let skipped = false;
@@ -140,10 +140,19 @@ export function importPostman(value: unknown) {
         continue;
       }
       if (!source.trim()) continue;
-      if (phase && target) sources[phase].push(source);
+      if (phase) sources[phase].push(source);
       else skipped = true;
     }
-    if (target && (sources.before.length || sources.after.length)) {
+    if (typeof target === 'string') {
+      if (sources.before.length) {
+        const folderScripts = (collection.folderPreRequests ??= Object.create(null));
+        folderScripts[target] = sources.before;
+      }
+      if (sources.after.length) {
+        const folderScripts = (collection.folderPostResponses ??= Object.create(null));
+        folderScripts[target] = sources.after;
+      }
+    } else if (sources.before.length || sources.after.length) {
       target.scripts = {
         ...(sources.before.length ? { before: sources.before.join('\n;\n') } : {}),
         ...(sources.after.length ? { after: sources.after.join('\n;\n') } : {}),
@@ -164,12 +173,12 @@ export function importPostman(value: unknown) {
       const item = object(raw);
       const label = str(item.name) || t('Item Postman');
       if (Array.isArray(item.item)) {
-        importEvents(item, label);
         const base = folderPath(folder, label);
         let path = base;
         for (let suffix = 2; collection.folders.includes(path); suffix++)
           path = `${base} (${suffix})`;
         collection.folders.push(path);
+        importEvents(item, label, path);
         visit(item.item, path, auth(item.auth, path, parentAuth));
         continue;
       }

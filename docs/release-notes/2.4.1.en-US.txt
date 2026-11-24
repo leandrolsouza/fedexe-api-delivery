@@ -1,0 +1,5 @@
+Fedexe now imports Postman folder scripts and runs them in the request editor and collection Runner. Pre-request and post-response scripts run from the collection through each parent folder to the request.
+
+Imported scripts can read the current request name with pm.info.requestName, enumerate variables with toObject(), generate UUIDs with {{$guid}}, and use JSON and at.least assertions.
+
+Reimport the original Postman JSON to recover folder scripts omitted by earlier Fedexe versions.

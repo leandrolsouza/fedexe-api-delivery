@@ -7,7 +7,7 @@ import {
   renameLocalWorkspace,
   originalWorkspaceId,
 } from './local-workspaces';
-import { createEmptyWorkspace, STORAGE_KEY } from './models';
+import { createEmptyWorkspace, createWorkspace, STORAGE_KEY } from './models';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const id = 'a2123456-1234-4321-a123-b01234567890';
 let storage: Map<string, string>;
@@ -66,8 +66,13 @@ it('validates ids before removal and propagates native removal failures', async 
 it.each([false, true])(
   'renames only the chosen workspace and preserves credential references and unknown fields (native=%s)',
   async (native) => {
+    const [collection] = createWorkspace().collections;
+    collection.folderPreRequests = {
+      [collection.folders[0]]: ['pm.collectionVariables.set("ready", true);'],
+    };
     const saved = {
       ...createEmptyWorkspace('Before'),
+      collections: [collection],
       credentialSlots: ['logical-slot'],
       credentialRevisions: { 'logical-slot': 'private-revision' },
       retiredCredentials: [{ scope: 'revision', environment: '', variable: 'old-revision' }],

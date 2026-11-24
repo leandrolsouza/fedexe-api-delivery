@@ -8,6 +8,7 @@ import {
   resolveHttpRequest,
   addConsoleMasks,
   compileRequest,
+  hasPostResponseScripts,
   redactValues,
   type Collection,
   type Environment,
@@ -331,9 +332,7 @@ export async function runCollection(
         const needsJson =
           step.tests.some((test) => test.type === 'json') || Object.keys(step.extract).length > 0;
         errorReason = 'transport';
-        const hasPostScript = Boolean(
-          scripts?.collection.scripts?.after?.trim() || item?.scripts?.after?.trim(),
-        );
+        const hasPostScript = scripts && item && hasPostResponseScripts(scripts.collection, item);
         const captureBody = needsJson || hasPostScript;
         if (hasPostScript && attempt)
           deferredTrace = postResponseTrace(attempt.trace, attempt.script);

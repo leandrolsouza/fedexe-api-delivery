@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cancel, runCollection, send } from './transport';
-import type { NativeCollection } from './models';
+import { hasRunScripts, importCollection, type NativeCollection } from './models';
 import { importPostman } from './postman';
 import { prepareCollection } from './collection-runner';
 
@@ -11,7 +11,12 @@ beforeAll(async () => {
   server = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json');
     if (request.url === '/token') response.end('{"token":"test-session"}');
-    else if (request.url === '/m2m') {
+    else if (request.url === '/prospect') {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk: string) => (body += chunk));
+      request.on('end', () => response.end(body));
+    } else if (request.url === '/m2m') {
       let body = '';
       request.setEncoding('utf8');
       request.on('data', (chunk: string) => (body += chunk));
@@ -236,6 +241,125 @@ describe('adaptador HTTP para prévia no navegador', () => {
 });
 
 describe('runner com scripts', () => {
+  it('executa o pré-script de pasta do F37 com o nome da requisição e aproveita as variáveis', async () => {
+    const event = (listen: string, exec: string) => ({ listen, script: { exec } });
+    const before = (exec: string) => event('prerequest', exec);
+    const imported = importPostman({
+      info: {
+        name: 'F37',
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
+      },
+      variable: [{ key: 'f37_anterior', value: 'antigo' }],
+      event: [before('pm.collectionVariables.set("ordem", "coleção");')],
+      item: [
+        {
+          name: '00a',
+          event: [
+            before(`
+              const passo = pm.info.requestName.split('-')[1];
+              if (passo !== '01') throw new Error('Pré-script executado fora de 00a');
+              Object.keys(pm.collectionVariables.toObject())
+                .filter((key) => key.startsWith('f37_'))
+                .forEach((key) => pm.collectionVariables.unset(key));
+              const email = 'f37-' + passo + '@example.test';
+              const celular = '11900000001';
+              pm.collectionVariables.set('f37_prospect_a_body', JSON.stringify({ email, celular }));
+              pm.collectionVariables.set('f37_uuid_ausente', pm.variables.replaceIn('{{$guid}}'));
+              pm.collectionVariables.set('f37_email_a', email);
+              pm.collectionVariables.set('f37_celular_a', celular);
+              pm.collectionVariables.set('ordem', pm.collectionVariables.get('ordem') + '/00a');
+            `),
+            before(`
+              const passo = pm.info.requestName.split('-')[1];
+              if (passo === '01') pm.collectionVariables.set('ordem', pm.collectionVariables.get('ordem') + '/00a-2');
+            `),
+            event(
+              'test',
+              `
+              pm.test('Resposta JSON válida', () => { pm.response.to.be.json; });
+              pm.collectionVariables.set('f37_prospect_a', pm.response.json().email);
+            `,
+            ),
+          ],
+          item: [
+            {
+              name: 'Prospects',
+              event: [
+                before(`
+                  pm.collectionVariables.set('ordem', pm.collectionVariables.get('ordem') + '/Prospects');
+                `),
+              ],
+              item: [
+                {
+                  name: 'F37-01',
+                  request: {
+                    method: 'POST',
+                    url: base + '/prospect',
+                    body: {
+                      mode: 'raw',
+                      raw: '{{f37_prospect_a_body}}',
+                      options: { raw: { language: 'json' } },
+                    },
+                  },
+                  event: [
+                    before(`
+                      if (pm.collectionVariables.get('ordem') !== 'coleção/00a/00a-2/Prospects') {
+                        throw new Error('Ordem dos pré-scripts inválida');
+                      }
+                      if (pm.collectionVariables.has('f37_anterior')) throw new Error('Variável antiga não removida');
+                    `),
+                    event(
+                      'test',
+                      `
+                      pm.test('Dados enviados', () => pm.expect(pm.response.json()).to.eql({
+                        email: 'f37-01@example.test', celular: '11900000001',
+                      }));
+                    `,
+                    ),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          name: 'F37-02',
+          request: base + '/token',
+          event: [
+            before(`
+              const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+              if (!uuid.test(pm.collectionVariables.get('f37_uuid_ausente')) ||
+                  pm.collectionVariables.get('f37_email_a') !== 'f37-01@example.test' ||
+                  pm.collectionVariables.get('f37_prospect_a') !== 'f37-01@example.test' ||
+                  pm.collectionVariables.get('f37_celular_a') !== '11900000001') {
+                throw new Error('Variáveis não propagadas');
+              }
+            `),
+          ],
+        },
+      ],
+    })!;
+    expect(imported.issues).toEqual([]);
+    const collection = importCollection(JSON.parse(JSON.stringify(imported.collection)));
+    const { requests } = collection;
+    const folderOnly = { ...collection, scripts: undefined };
+    expect(hasRunScripts(folderOnly, [{ ...requests[0], scripts: undefined }])).toBe(true);
+    expect(hasRunScripts(folderOnly, [{ ...requests[1], scripts: undefined }])).toBe(false);
+    const environment = { id: 'dev', name: 'Dev', variables: [], color: '' };
+    const snapshot = { collection, environment, requests };
+    const run = await runCollection(
+      prepareCollection(collection, environment, requests, true),
+      () => {},
+      requests.map(({ id }) => id),
+      hasRunScripts(collection, requests) ? snapshot : undefined,
+    );
+    expect(run.results.map(({ status, failures }) => ({ status, failures }))).toEqual([
+      { status: 200, failures: [] },
+      { status: 200, failures: [] },
+    ]);
+    expect(run.results[0].checks_passed).toBe(2);
+  });
+
   it('aguarda o callback de pm.sendRequest antes de enviar a etapa protegida', async () => {
     const { collection } = importPostman({
       info: {

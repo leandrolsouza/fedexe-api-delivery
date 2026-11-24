@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  hasRunScripts,
   pair,
   DEFAULT_TIMEOUT_MS,
   redactSecrets,
@@ -62,7 +63,6 @@ import {
 } from '../lib/models';
 import { prepareCollection } from '../lib/collection-runner';
 import { cn, download, uid } from '../lib/utils';
-import { hasScripts } from '../lib/scripts';
 import { native, normalizeError, runCollection } from '../lib/transport';
 import { PairEditor } from './PairEditor';
 import { LoadRunner } from './LoadRunner';
@@ -798,10 +798,7 @@ export function RunnerView({
           }
         },
         snapshot.requests.map((request) => request.id),
-        hasScripts(snapshot.collection.scripts) ||
-          snapshot.requests.some((request) => hasScripts(request.scripts))
-          ? snapshot
-          : undefined,
+        hasRunScripts(snapshot.collection, snapshot.requests) ? snapshot : undefined,
       );
       const result = { ...outcome, results: redactRows(outcome.results) };
       setRows(result.results);

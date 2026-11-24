@@ -12,13 +12,13 @@ import {
   type LoadReport,
 } from '../lib/load-runner';
 import {
+  hasRunScripts,
   redactSecrets,
   type Collection,
   type Environment,
   type RequestDefaults,
   type RequestItem,
 } from '../lib/models';
-import { hasScripts } from '../lib/scripts';
 import { native, normalizeError } from '../lib/transport';
 import { download } from '../lib/utils';
 import { Button } from './ui/button';
@@ -121,8 +121,7 @@ export function LoadRunner({
     onShowResults(show);
   }
 
-  const scripts =
-    hasScripts(collection?.scripts) || requests.some((request) => hasScripts(request.scripts));
+  const scripts = hasRunScripts(collection, requests);
   const scriptScope = JSON.stringify([
     context,
     collection?.id,

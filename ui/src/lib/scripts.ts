@@ -1,6 +1,6 @@
 import type { QuickJSHandle } from 'quickjs-emscripten-core';
 import type { HttpRequest, HttpResponse, RequestItem, Collection } from './models';
-import { redactValues } from './models';
+import { folderScripts, redactValues } from './models';
 import { t } from './i18n';
 import { uid } from './utils';
 import { scriptHttpRequest } from './script-request';
@@ -32,10 +32,6 @@ function loadEngine() {
   return engine;
 }
 
-export function hasScripts(scripts?: Scripts) {
-  return Boolean(scripts?.before?.trim() || scripts?.after?.trim());
-}
-
 type HeaderEdit = { key: string; value?: string };
 type ScriptOutput = {
   tests: ScriptResult[];
@@ -61,16 +57,18 @@ const bootstrap = `
   const variableApi = Object.freeze({
     get: (key) => Object.hasOwn(variables, key) ? variables[key] : undefined,
     has: (key) => Object.hasOwn(variables, key),
+    toObject: () => ({ ...variables }),
     replaceIn(value) {
       return String(value).replace(/[{][{]([^{}]+)[}][}]/g, (match, name) => {
         const key = name.trim();
-        return Object.hasOwn(variables, key) ? variables[key] : match;
+        if (Object.hasOwn(variables, key)) return variables[key];
+        return key === '$guid' ? generateGuid() : match;
       });
     },
     set(key, value) {
       key = String(key);
       value = String(value);
-      Object.defineProperty(variables, key, { value, writable: true, configurable: true });
+      Object.defineProperty(variables, key, { value, writable: true, configurable: true, enumerable: true });
       writes.push([key, value]);
       protect(value);
     },
@@ -137,6 +135,12 @@ const bootstrap = `
       a(expected) { assert(kind === String(expected).toLowerCase()); return assertion; },
       an(expected) { return assertion.a(expected); },
       above(expected) { assert(typeof actual === 'number' && actual > expected); return assertion; },
+      least(expected) {
+        const numbers = typeof actual === 'number' && typeof expected === 'number';
+        const dates = actual instanceof Date && expected instanceof Date;
+        assert((numbers || dates) && actual >= expected);
+        return assertion;
+      },
       get empty() {
         assert((kind === 'array' || kind === 'string') ? length === 0 :
           kind === 'object' && Object.keys(actual).length === 0);
@@ -150,23 +154,28 @@ const bootstrap = `
       assert(typeof length === 'number' && length > expected);
       return assertion;
     };
-    for (const key of ['to', 'be', 'have', 'and', 'that']) assertion[key] = assertion;
+    for (const key of ['to', 'be', 'have', 'and', 'that', 'at']) assertion[key] = assertion;
     return assertion;
   }
   function responseApi(value) {
+    const json = () => {
+      if (value.truncated) throw new Error(input.truncated);
+      return JSON.parse(value.preview);
+    };
     return Object.freeze({
       code: value.status,
       responseTime: value.duration_ms,
       headers: Object.freeze({ get: (key) => headerGet(value.headers, key) }),
       text: () => value.preview,
-      json() {
-        if (value.truncated) throw new Error(input.truncated);
-        return JSON.parse(value.preview);
+      json,
+      to: {
+        have: { status(expected) { pm.expect(value.status).to.equal(expected); } },
+        be: { get json() { json(); } },
       },
-      to: { have: { status(expected) { pm.expect(value.status).to.equal(expected); } } },
     });
   }
   const pm = Object.freeze({
+    info: Object.freeze({ requestName: input.requestName }),
     variables: variableApi,
     environment: Object.freeze({ ...variableApi, name: input.environmentName }),
     collectionVariables: variableApi,
@@ -220,6 +229,7 @@ export async function executeScript(
 ): Promise<ScriptOutput> {
   const input = {
     variables,
+    requestName: item.name,
     environmentName: context.environmentName,
     request: {
       method: item.method,
@@ -248,6 +258,7 @@ export async function executeScript(
   try {
     using decodeBase64 = vm.newFunction('atob', (value) => vm.newString(atob(vm.getString(value))));
     vm.setProp(vm.global, 'atob', decodeBase64);
+    using generateGuid = vm.newFunction('generateGuid', () => vm.newString(uid()));
     using protect = vm.newFunction('protect', (value) => {
       diagnostics?.values.add(vm.getString(value));
     });
@@ -301,7 +312,7 @@ export async function executeScript(
     try {
       const build = vm.unwrapResult(
         vm.evalCode(
-          `(function (inputJson, script, queueRequest, skipExecution, protect) {
+          `(function (inputJson, script, queueRequest, skipExecution, protect, generateGuid) {
           const input = JSON.parse(inputJson);
           ${bootstrap}
           runSync(() => script(pm));
@@ -313,7 +324,16 @@ export async function executeScript(
       try {
         using data = vm.newString(JSON.stringify(input));
         using finish = vm.unwrapResult(
-          vm.callFunction(build, vm.undefined, data, script, queueRequest, skipExecution, protect),
+          vm.callFunction(
+            build,
+            vm.undefined,
+            data,
+            script,
+            queueRequest,
+            skipExecution,
+            protect,
+            generateGuid,
+          ),
         );
         for (const { payload, callback } of pending) {
           if (skipped) break;
@@ -415,6 +435,7 @@ export async function runScripts(
   let failed = false;
   for (const [scope, source] of [
     [t('Coleção'), collection.scripts?.[phase]],
+    ...folderScripts(collection, item.folder, phase),
     [t('Requisição'), item.scripts?.[phase]],
   ] as const) {
     context.signal?.throwIfAborted();

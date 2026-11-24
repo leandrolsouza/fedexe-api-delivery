@@ -43,6 +43,7 @@ import {
   effectiveAuth,
   exportableRequest,
   generatedHeaders,
+  hasScripts,
   headerEntries,
   isSecretHeader,
   DEFAULT_MAX_REDIRECTS,
@@ -67,7 +68,7 @@ import { Button } from './ui/button';
 import { Dropdown } from './ui/dropdown';
 import { PairEditor } from './PairEditor';
 import { CodeViewer } from './CodeViewer';
-import { hasScripts, type ScriptResult } from '../lib/scripts';
+import type { ScriptResult } from '../lib/scripts';
 import { checkResponse, isJsonPointer, responseJson } from '../lib/response-tests';
 import { AuthFields, AuthType, authLabel } from './AuthFields';
 import { VariableUrlInput, type EditableVariable, type VariableCreation } from './VariableUrlInput';

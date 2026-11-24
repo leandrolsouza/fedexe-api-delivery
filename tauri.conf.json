@@ -1,6 +1,6 @@
 {
   "productName": "Fedexe API",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "identifier": "app.fedexe.api",
   "build": {
     "beforeDevCommand": "npm run dev",
