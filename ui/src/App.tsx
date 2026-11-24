@@ -621,6 +621,9 @@ function WorkspaceApp({
   const [postmanOpen, setPostmanOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importingFiles, setImportingFiles] = useState(false);
+  const [pendingCollectionImport, setPendingCollectionImport] =
+    useState<Extract<ReturnType<typeof importDocument>, { kind: 'collection' }>>();
+  const [importTargetId, setImportTargetId] = useState('');
   type ImportReport = { name: string; issues: string[]; entries?: string[] };
   const [importReport, setImportReport] = useState<ImportReport>();
   const [importReports, setImportReports] = useState<Record<string, ImportReport>>({});
@@ -1703,6 +1706,56 @@ function WorkspaceApp({
     }
   }
 
+  function applyCollectionImport(
+    { collection: imported, issues }: NonNullable<typeof pendingCollectionImport>,
+    target?: Collection,
+  ) {
+    if (target) {
+      if (busy) {
+        toast.info(t('Aguarde a execução atual terminar.'));
+        return;
+      }
+      if (target.requests.some(({ id }) => drafts[id])) {
+        toast.error(t('Salve ou descarte os rascunhos da coleção antes de atualizá-la.'));
+        return;
+      }
+      const oldRequestIds = target.requests.map(({ id }) => id);
+      removeTabs(oldRequestIds);
+      setScriptResults((current) => {
+        const next = { ...current };
+        for (const id of oldRequestIds) delete next[id];
+        return next;
+      });
+      for (const id of oldRequestIds) requestEditorTabs.current.delete(id);
+      for (const key of scriptSessions.current.keys()) {
+        const [collectionId] = JSON.parse(key) as [string, string | null];
+        if (collectionId === target.id) scriptSessions.current.delete(key);
+      }
+      updateCollection(target.id, () => ({ ...imported, id: target.id }));
+    } else {
+      setWorkspace((current) => ({
+        ...current,
+        collections: [...current.collections, imported],
+      }));
+    }
+    setPendingCollectionImport(undefined);
+    setImportOpen(false);
+    setImportText('');
+    const id = target?.id ?? imported.id;
+    if (imported.requests[0]) openRequest(id, imported.requests[0].id);
+    else {
+      setActive({ collectionId: id, requestId: '' });
+      setView('collections');
+    }
+    if (issues) showImportReport({ name: imported.name, issues });
+    else addNotice('imported');
+    toast.success(
+      target
+        ? t('Coleção “{0}” atualizada', imported.name)
+        : t('{0}: {1} requisições importadas', imported.name, imported.requests.length),
+    );
+  }
+
   function importData(text: string) {
     try {
       if (isCurl(text)) {
@@ -1765,15 +1818,10 @@ function WorkspaceApp({
         setView('environments');
         return;
       }
-      const { collection: c, issues } = result;
-      if (issues) showImportReport({ name: c.name, issues });
-      else addNotice('imported');
-      setWorkspace((current) => ({ ...current, collections: [...current.collections, c] }));
-      setImportOpen(false);
-      setImportText('');
-      if (c.requests[0]) openRequest(c.id, c.requests[0].id);
-      else setActive({ collectionId: c.id, requestId: '' });
-      toast.success(t('{0}: {1} requisições importadas', c.name, c.requests.length));
+      if (workspace.collections.length) {
+        setImportTargetId('');
+        setPendingCollectionImport(result);
+      } else applyCollectionImport(result);
     } catch (error) {
       addNotice('importFailed');
       toast.error(normalizeError(error).message);
@@ -3291,7 +3339,7 @@ function WorkspaceApp({
         </div>
       </Dialog>
       <Dialog
-        open={importOpen}
+        open={importOpen && !pendingCollectionImport}
         onOpenChange={(open) => {
           if (!importingFiles) setImportOpen(open);
         }}
@@ -3381,6 +3429,54 @@ function WorkspaceApp({
           </Button>
         </div>
       </Dialog>
+      {pendingCollectionImport && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingCollectionImport(undefined);
+          }}
+          title={t('Importar coleção “{0}”', pendingCollectionImport.collection.name)}
+          description={t(
+            'Importe como nova ou escolha uma coleção existente para substituir suas requisições, configurações e credenciais pelo conteúdo do arquivo.',
+          )}
+        >
+          <label className="field-label">
+            {t('Coleção de destino')}
+            <select
+              className="input"
+              value={importTargetId}
+              onChange={(event) => setImportTargetId(event.target.value)}
+            >
+              <option value="">{t('Selecione uma coleção')}</option>
+              {workspace.collections.map(({ id, name }, index) => (
+                <option key={id} value={id}>
+                  {workspace.collections.some((c) => c.id !== id && c.name === name)
+                    ? t('{0} (posição {1} na lista)', name, index + 1)
+                    : name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="dialog-footer">
+            <Button
+              variant="outline"
+              onClick={() => applyCollectionImport(pendingCollectionImport)}
+            >
+              {t('Importar como nova')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!importTargetId}
+              onClick={() => {
+                const target = workspace.collections.find(({ id }) => id === importTargetId);
+                if (target) applyCollectionImport(pendingCollectionImport, target);
+              }}
+            >
+              {t('Atualizar coleção existente')}
+            </Button>
+          </div>
+        </Dialog>
+      )}
       {postmanOpen && (
         <PostmanWorkspaceDialog
           onClose={() => setPostmanOpen(false)}

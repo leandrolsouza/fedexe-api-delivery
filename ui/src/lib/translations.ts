@@ -2432,6 +2432,47 @@ export const translations: Record<keyof typeof messages, Translation> = {
     fr: 'Importer une collection',
     de: 'Sammlung importieren',
   },
+  'Importar coleção “{0}”': {
+    es: 'Importar la colección «{0}»',
+    fr: 'Importer la collection « {0} »',
+    de: 'Sammlung „{0}“ importieren',
+  },
+  'Importe como nova ou escolha uma coleção existente para substituir suas requisições, configurações e credenciais pelo conteúdo do arquivo.':
+    {
+      es: 'Importa como nueva o elige una colección existente para sustituir sus solicitudes, ajustes y credenciales por el contenido del archivo.',
+      fr: 'Importez une nouvelle collection ou choisissez une collection existante pour remplacer ses requêtes, paramètres et identifiants par le contenu du fichier.',
+      de: 'Importiere eine neue Sammlung oder wähle eine vorhandene Sammlung aus, um ihre Anfragen, Einstellungen und Zugangsdaten durch den Dateiinhalt zu ersetzen.',
+    },
+  'Coleção de destino': {
+    es: 'Colección de destino',
+    fr: 'Collection de destination',
+    de: 'Zielsammlung',
+  },
+  '{0} (posição {1} na lista)': {
+    es: '{0} (posición {1} en la lista)',
+    fr: '{0} (position {1} dans la liste)',
+    de: '{0} (Position {1} in der Liste)',
+  },
+  'Importar como nova': {
+    es: 'Importar como nueva',
+    fr: 'Importer comme nouvelle collection',
+    de: 'Als neue Sammlung importieren',
+  },
+  'Atualizar coleção existente': {
+    es: 'Actualizar colección existente',
+    fr: 'Mettre à jour la collection existante',
+    de: 'Vorhandene Sammlung aktualisieren',
+  },
+  'Salve ou descarte os rascunhos da coleção antes de atualizá-la.': {
+    es: 'Guarda o descarta los borradores de la colección antes de actualizarla.',
+    fr: 'Enregistrez ou abandonnez les brouillons de la collection avant de la mettre à jour.',
+    de: 'Speichere oder verwerfe die Entwürfe der Sammlung, bevor du sie aktualisierst.',
+  },
+  'Coleção “{0}” atualizada': {
+    es: 'Colección «{0}» actualizada',
+    fr: 'Collection « {0} » mise à jour',
+    de: 'Sammlung „{0}“ aktualisiert',
+  },
   'O arquivo excede o limite de importação de 10 MB.': {
     es: 'El archivo supera el límite de importación de 10 MB.',
     fr: 'Le fichier dépasse la limite d’importation de 10 Mo.',

@@ -1,3 +1,5 @@
+Ao importar um JSON de coleção do Fedexe ou do Postman, escolha Atualizar coleção existente para substituir uma coleção no workspace ou Importar como nova para manter uma cópia separada. Salve ou descarte os rascunhos da coleção de destino antes de atualizá-la.
+
 O Fedexe API agora oferece espanhol, francês e alemão. Escolha seu idioma em Configurações do aplicativo → Aparência. A preferência é salva e vale para o editor, os diálogos de importação, o runner de coleções e as mensagens de validação do desktop.
 
 As abas de configurações exibem o título completo. O atalho Executar coleção fica visível enquanto as abas rolam, e os resumos de execuções concluídas acompanham o idioma atual da interface.

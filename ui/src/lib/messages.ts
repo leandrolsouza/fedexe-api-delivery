@@ -428,6 +428,16 @@ export const messages = {
     'Create, organize, and test your APIs in one workspace.',
   'No seu ritmo. No seu dispositivo.': 'Work at your own pace, on your device.',
   'Importar coleção': 'Import collection',
+  'Importar coleção “{0}”': 'Import “{0}” collection',
+  'Importe como nova ou escolha uma coleção existente para substituir suas requisições, configurações e credenciais pelo conteúdo do arquivo.':
+    'Import as new or choose an existing collection to replace its requests, settings, and credentials with the file contents.',
+  'Coleção de destino': 'Destination collection',
+  '{0} (posição {1} na lista)': '{0} (position {1} in the list)',
+  'Importar como nova': 'Import as new',
+  'Atualizar coleção existente': 'Update existing collection',
+  'Salve ou descarte os rascunhos da coleção antes de atualizá-la.':
+    'Save or discard the collection’s drafts before updating it.',
+  'Coleção “{0}” atualizada': 'Collection “{0}” updated',
   'Feito para ser leve': 'Lightweight',
   'Livre e open source': 'Free and open source',
   'Verifique o armazenamento': 'Check storage',

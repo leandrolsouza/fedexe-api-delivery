@@ -1,3 +1,5 @@
+When you import a Fedexe or Postman collection JSON, choose Update existing collection to replace a collection in your workspace, or Import as new to keep a separate copy. Save or discard any drafts in the destination collection before updating it.
+
 Fedexe API now supports Spanish, French, and German. Choose your language under Application settings → Appearance. Your choice is saved and applies to the editor, import dialogs, collection runner, and desktop validation messages.
 
 Settings tabs show their full titles. The Run collection shortcut stays visible while open tabs scroll, and completed run summaries follow the current interface language.
