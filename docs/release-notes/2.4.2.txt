@@ -1,0 +1,5 @@
+Clique com o botão direito em uma aba, use o botão de reticências ou pressione Shift+F10 com a aba em foco para abrir seu menu. Crie ou duplique requisições, localize uma requisição no painel de coleções ou feche a aba selecionada, as outras ou todas.
+
+O fechamento de abas pede confirmação quando há alterações não salvas. As opções de fechamento forçado descartam essas alterações na hora. O Runner permanece aberto durante uma execução.
+
+No Windows, use Ctrl+T para criar uma requisição, Ctrl+W para fechar a aba atual e Ctrl+Alt+W para forçar o fechamento.

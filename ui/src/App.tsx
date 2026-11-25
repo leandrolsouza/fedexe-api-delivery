@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from 'react';
 import {
   ArrowDown,
@@ -612,6 +613,16 @@ function WorkspaceApp({
     setSidebarWidth(Math.round(Math.max(180, Math.min(440, window.innerWidth * 0.4, width))));
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [treeMenu, setTreeMenu] = useState<string>();
+  const [tabMenu, setTabMenu] = useState<string>();
+  const [revealedRequest, setRevealedRequest] = useState<string>();
+  const collectionTreeRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!revealedRequest) return;
+    collectionTreeRef.current
+      ?.querySelector(`[data-request-id="${CSS.escape(revealedRequest)}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    setRevealedRequest(undefined);
+  }, [revealedRequest]);
   const [runnerFolder, setRunnerFolder] = useState<RunnerFolder>();
   const [treeSearch, setTreeSearch] = useState('');
   const [showTreeSearch, setShowTreeSearch] = useState(false);
@@ -1080,36 +1091,6 @@ function WorkspaceApp({
     [active.collectionId, workspace.collections],
   );
 
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey)) return;
-      if (updates.progress || switching) return;
-      if (event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        setCommandOpen((current) => !current);
-      }
-      if (document.querySelector('[role="dialog"]')) return;
-      if (event.key.toLowerCase() === 's') {
-        event.preventDefault();
-        if (view === 'collections') save();
-      }
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        if (view === 'collections') void sendRequest();
-      }
-      if (event.key.toLowerCase() === 'n') {
-        event.preventDefault();
-        addRequest();
-      }
-      if (event.key === '\\') {
-        event.preventDefault();
-        setSidebarHidden((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [save, sendRequest, addRequest, view, updates.progress, switching]);
-
   function askName(
     title: string,
     description: string,
@@ -1231,33 +1212,233 @@ function WorkspaceApp({
       return { ...current, requests };
     });
   }
-  function removeTabs(ids: string[]) {
-    setTabs((current) => current.filter((t) => !ids.includes(t.requestId)));
-    setResponses((current) =>
-      Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
+  const removeTabs = useCallback(
+    (ids: string[]) => {
+      setTabs((current) => current.filter((t) => !ids.includes(t.requestId)));
+      setResponses((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
+      );
+      setErrors((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
+      );
+      setDrafts((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
+      );
+      if (ids.includes(active.requestId)) {
+        const next = tabs.find((t) => !ids.includes(t.requestId));
+        setActive(next || { collectionId: active.collectionId, requestId: '' });
+      }
+    },
+    [active, tabs],
+  );
+
+  const closeTabs = useCallback(
+    (requests: OpenTab[], tools: ToolView[], force = false) => {
+      const requestIds = requests.map(({ requestId }) => requestId);
+      const closingTools = tools.filter((id) => id !== 'runner' || !busy);
+      const modified = requestIds.filter((id) => drafts[id]).length;
+      const finish = () => {
+        if (requestIds.length) removeTabs(requestIds);
+        if (closingTools.length) {
+          setOpenTools((current) => current.filter((id) => !closingTools.includes(id)));
+          if (isToolView(view) && closingTools.includes(view)) setView('collections');
+        }
+      };
+      if (!force && modified)
+        setConfirmDialog({
+          title: t('Descartar alterações?'),
+          description:
+            requests.length === 1 && !closingTools.length
+              ? t('Esta requisição tem alterações que ainda não foram salvas.')
+              : t('Requisições com alterações não salvas: {0}.', modified),
+          label: t('Descartar e fechar'),
+          action: finish,
+        });
+      else finish();
+    },
+    [busy, drafts, removeTabs, setView, view],
+  );
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (updates.progress || switching || event.defaultPrevented || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        setCommandOpen((current) => !current);
+      }
+      if (document.querySelector('[role="dialog"], .dropdown-content[data-state="open"]')) return;
+      if (key === 's') {
+        event.preventDefault();
+        if (view === 'collections') save();
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (view === 'collections') void sendRequest();
+      }
+      if ((key === 'n' || (native && key === 't')) && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        if (!event.repeat) addRequest();
+      }
+      if (native && key === 'w' && !event.shiftKey && !event.getModifierState('AltGraph')) {
+        const current =
+          view === 'collections' && tabs.find((tab) => tab.requestId === active.requestId);
+        if (current || isToolView(view)) {
+          event.preventDefault();
+          if (!event.repeat)
+            closeTabs(current ? [current] : [], isToolView(view) ? [view] : [], event.altKey);
+        }
+      }
+      if (event.key === '\\') {
+        event.preventDefault();
+        setSidebarHidden((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [
+    active.requestId,
+    addRequest,
+    closeTabs,
+    save,
+    sendRequest,
+    switching,
+    tabs,
+    updates.progress,
+    view,
+  ]);
+
+  function revealRequest(c: Collection, item: RequestItem) {
+    const folderKeys = new Set(
+      c.folders
+        .filter((folder) => isInFolder(item.folder, folder))
+        .map((folder) => `${c.id}:${folder}`),
     );
-    setErrors((current) =>
-      Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
-    );
-    setDrafts((current) =>
-      Object.fromEntries(Object.entries(current).filter(([key]) => !ids.includes(key))),
-    );
-    if (ids.includes(active.requestId)) {
-      const next = tabs.find((t) => !ids.includes(t.requestId));
-      setActive(next || { collectionId: active.collectionId, requestId: '' });
-    }
+    setCollapsed((current) => current.filter((key) => key !== c.id && !folderKeys.has(key)));
+    setSidebarHidden(false);
+    setTreeSearch('');
+    setShowTreeSearch(false);
+    openRequest(c.id, item.id);
+    setRevealedRequest(item.id);
   }
-  function closeTab(tab: OpenTab) {
-    const finish = () => removeTabs([tab.requestId]);
-    if (drafts[tab.requestId])
-      setConfirmDialog({
-        title: t('Descartar alterações?'),
-        description: t('Esta requisição tem alterações que ainda não foram salvas.'),
-        label: t('Descartar e fechar'),
-        action: finish,
-      });
-    else finish();
+
+  function renderTab(
+    target: OpenTab | ToolView,
+    name: string,
+    content: ReactNode,
+    requestEntry?: { collection: Collection; saved: RequestItem },
+  ) {
+    const tool = typeof target === 'string' ? target : undefined;
+    const tab = typeof target === 'string' ? undefined : target;
+    const key = tab ? `request:${tab.requestId}` : `tool:${tool}`;
+    const selected = tab
+      ? view === 'collections' && active.requestId === tab.requestId
+      : view === tool;
+    const canClose = tool !== 'runner' || !busy;
+    const otherRequests = tabs.filter(({ requestId }) => requestId !== tab?.requestId);
+    const otherTools = openTools.filter((id) => id !== tool);
+    const canCloseTools = (ids: ToolView[]) => ids.some((id) => id !== 'runner' || !busy);
+    const close = (force = false) => closeTabs(tab ? [tab] : [], tool ? [tool] : [], force);
+    return (
+      <div
+        key={key}
+        className={cn('request-tab', tool && 'tool-tab', selected && 'active')}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setTabMenu(key);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            setTabMenu(key);
+          }
+        }}
+      >
+        <button
+          aria-current={selected ? 'page' : undefined}
+          onClick={() => {
+            if (tab) {
+              setActive(tab);
+              setView('collections');
+            } else if (tool) setView(tool);
+          }}
+        >
+          {content}
+        </button>
+        <Dropdown
+          open={tabMenu === key}
+          onOpenChange={(open) =>
+            setTabMenu((current) => (open ? key : current === key ? undefined : current))
+          }
+          trigger={
+            <button className="tab-more" aria-label={t('Ações da aba {0}', name)}>
+              <MoreHorizontal size={14} />
+            </button>
+          }
+          items={[
+            {
+              label: t('Nova requisição'),
+              shortcut: native ? 'Ctrl+T' : 'Ctrl+N',
+              action: () => addRequest(tab?.collectionId),
+            },
+            {
+              label: t('Duplicar aba'),
+              disabled: !requestEntry,
+              action: () =>
+                requestEntry && duplicateRequest(requestEntry.collection, requestEntry.saved),
+            },
+            {
+              label: t('Fechar aba'),
+              shortcut: native ? 'Ctrl+W' : undefined,
+              separatorBefore: true,
+              disabled: !canClose,
+              action: () => close(),
+            },
+            {
+              label: t('Forçar fechamento da aba'),
+              shortcut: native ? 'Ctrl+Alt+W' : undefined,
+              disabled: !canClose,
+              danger: true,
+              action: () => close(true),
+            },
+            {
+              label: t('Fechar outras abas'),
+              disabled: !otherRequests.length && !canCloseTools(otherTools),
+              action: () => closeTabs(otherRequests, otherTools),
+            },
+            {
+              label: t('Fechar todas as abas'),
+              disabled: !tabs.length && !canCloseTools(openTools),
+              action: () => closeTabs(tabs, openTools),
+            },
+            {
+              label: t('Forçar fechamento de todas as abas'),
+              disabled: !tabs.length && !canCloseTools(openTools),
+              danger: true,
+              action: () => closeTabs(tabs, openTools, true),
+            },
+            {
+              label: t('Mostrar no painel de coleções'),
+              separatorBefore: true,
+              disabled: !requestEntry,
+              action: () =>
+                requestEntry && revealRequest(requestEntry.collection, requestEntry.saved),
+            },
+          ]}
+        />
+        <button
+          className="close-tab"
+          aria-label={t('Fechar aba {0}', name)}
+          disabled={!canClose}
+          onClick={() => close()}
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
   }
+
   function deleteRequest(c: Collection, item: RequestItem) {
     setConfirmDialog({
       title: t('Excluir requisição?'),
@@ -1375,6 +1556,7 @@ function WorkspaceApp({
           dragged?.requestId === item.id && 'dragging',
         )}
         key={item.id}
+        data-request-id={item.id}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = 'move';
@@ -2537,7 +2719,7 @@ function WorkspaceApp({
             </button>
           </div>
         )}
-        <div className="collection-tree">
+        <div className="collection-tree" ref={collectionTreeRef}>
           {workspace.collections.map((c) => (
             <div className="tree-collection-group" key={c.id}>
               <div
@@ -2780,67 +2962,32 @@ function WorkspaceApp({
                   const saved = c?.requests.find((r) => r.id === tab.requestId);
                   const item = drafts[tab.requestId] || saved;
                   return (
-                    item && (
-                      <div
-                        className={cn(
-                          'request-tab',
-                          view === 'collections' && active.requestId === tab.requestId && 'active',
-                        )}
-                        key={tab.requestId}
-                      >
-                        <button
-                          aria-current={
-                            view === 'collections' && active.requestId === tab.requestId
-                              ? 'page'
-                              : undefined
-                          }
-                          onClick={() => {
-                            setActive(tab);
-                            setView('collections');
-                          }}
-                        >
-                          <MethodBadge method={item.method} small />
-                          <span>{item.name}</span>
-                          {drafts[item.id] && <span className="dirty-dot" />}
-                        </button>
-                        <button
-                          className="close-tab"
-                          aria-label={t('Fechar aba {0}', item.name)}
-                          onClick={() => closeTab(tab)}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
+                    c &&
+                    saved &&
+                    item &&
+                    renderTab(
+                      tab,
+                      item.name,
+                      <>
+                        <MethodBadge method={item.method} small />
+                        <span>{item.name}</span>
+                        {drafts[item.id] && <span className="dirty-dot" />}
+                      </>,
+                      { collection: c, saved },
                     )
                   );
                 })}
                 {openTools.map((id) => {
                   const tab = toolTabs.find((item) => item.id === id)!;
                   const Icon = tab.icon;
-                  return (
-                    <div
-                      key={id}
-                      className={cn('request-tab', 'tool-tab', view === id && 'active')}
-                    >
-                      <button
-                        aria-current={view === id ? 'page' : undefined}
-                        onClick={() => setView(id)}
-                      >
-                        <Icon size={14} />
-                        <span>{t(tab.label)}</span>
-                      </button>
-                      <button
-                        className="close-tab"
-                        aria-label={t('Fechar aba {0}', t(tab.label))}
-                        disabled={id === 'runner' && busy}
-                        onClick={() => {
-                          setOpenTools((current) => current.filter((item) => item !== id));
-                          if (view === id) setView('collections');
-                        }}
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
+                  const name = t(tab.label);
+                  return renderTab(
+                    id,
+                    name,
+                    <>
+                      <Icon size={14} />
+                      <span>{name}</span>
+                    </>,
                   );
                 })}
                 <button
@@ -3618,7 +3765,13 @@ function WorkspaceApp({
             { label: t('Buscar em todo o workspace'), keys: ['Ctrl', 'K'] },
             { label: t('Enviar requisição'), keys: ['Ctrl', 'Enter'] },
             { label: t('Salvar requisição'), keys: ['Ctrl', 'S'] },
-            { label: t('Nova requisição'), keys: ['Ctrl', 'N'] },
+            { label: t('Nova requisição'), keys: ['Ctrl', native ? 'N / T' : 'N'] },
+            ...(native
+              ? [
+                  { label: t('Fechar aba'), keys: ['Ctrl', 'W'] },
+                  { label: t('Forçar fechamento da aba'), keys: ['Ctrl', 'Alt', 'W'] },
+                ]
+              : []),
             { label: t('Voltar à requisição'), keys: ['Alt', '←'] },
             { label: t('Alternar painel de coleções'), keys: ['Ctrl', '\\'] },
             { label: t('Fechar diálogo'), keys: ['Esc'] },

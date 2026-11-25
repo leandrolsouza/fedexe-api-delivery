@@ -17,6 +17,7 @@ export function Dropdown({
     danger?: boolean;
     disabled?: boolean;
     separatorBefore?: boolean;
+    shortcut?: string;
   }[];
 }) {
   return (
@@ -31,9 +32,11 @@ export function Dropdown({
                 disabled={item.disabled}
                 className={`dropdown-item ${item.danger ? 'danger' : ''}`}
                 onSelect={item.action}
+                textValue={item.label}
               >
                 {item.icon}
                 {item.label}
+                {item.shortcut && <kbd className="dropdown-shortcut">{item.shortcut}</kbd>}
               </Menu.Item>
             </Fragment>
           ))}

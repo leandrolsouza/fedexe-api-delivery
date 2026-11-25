@@ -1,0 +1,5 @@
+Right-click a tab, select its ellipsis button, or press Shift+F10 on a focused tab to open its action menu. Create or duplicate requests, reveal a request in the collections sidebar, or close the selected tab, other tabs, or all tabs.
+
+Closing tabs asks for confirmation if any have unsaved changes. Force-close actions discard those changes immediately. The Runner stays open while it is executing.
+
+On Windows, use Ctrl+T for a new request, Ctrl+W to close the current tab, and Ctrl+Alt+W to force it closed.

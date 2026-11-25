@@ -1203,7 +1203,8 @@ kbd {
   left: 0;
   right: 0;
 }
-.close-tab {
+.close-tab,
+.tab-more {
   min-width: 24px;
   justify-content: center;
   background: none;
@@ -1212,6 +1213,10 @@ kbd {
   align-items: center;
   color: #b2b1c3;
   padding: 3px;
+}
+.tab-more:hover,
+.tab-more[aria-expanded='true'] {
+  color: var(--accent-text);
 }
 .close-tab:hover {
   color: var(--red);
@@ -4414,6 +4419,13 @@ button.history-row:hover {
   background: var(--border);
 }
 .dropdown-item > svg {
+  color: var(--muted);
+}
+.dropdown-shortcut {
+  margin-inline-start: auto;
+  padding-inline-start: 12px;
+  white-space: nowrap;
+  font-size: 10px;
   color: var(--muted);
 }
 .dropdown-item[data-highlighted] {

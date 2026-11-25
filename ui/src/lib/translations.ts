@@ -2713,6 +2713,51 @@ export const translations: Record<keyof typeof messages, Translation> = {
     fr: 'Nouvelle requête (Ctrl N)',
     de: 'Neue Anfrage (Strg N)',
   },
+  'Ações da aba {0}': {
+    es: 'Acciones de la pestaña {0}',
+    fr: 'Actions de l’onglet {0}',
+    de: 'Aktionen für Tab {0}',
+  },
+  'Duplicar aba': {
+    es: 'Duplicar pestaña',
+    fr: 'Dupliquer l’onglet',
+    de: 'Tab duplizieren',
+  },
+  'Fechar aba': {
+    es: 'Cerrar pestaña',
+    fr: 'Fermer l’onglet',
+    de: 'Tab schließen',
+  },
+  'Forçar fechamento da aba': {
+    es: 'Forzar el cierre de la pestaña',
+    fr: 'Forcer la fermeture de l’onglet',
+    de: 'Schließen des Tabs erzwingen',
+  },
+  'Fechar outras abas': {
+    es: 'Cerrar las demás pestañas',
+    fr: 'Fermer les autres onglets',
+    de: 'Andere Tabs schließen',
+  },
+  'Fechar todas as abas': {
+    es: 'Cerrar todas las pestañas',
+    fr: 'Fermer tous les onglets',
+    de: 'Alle Tabs schließen',
+  },
+  'Forçar fechamento de todas as abas': {
+    es: 'Forzar el cierre de todas las pestañas',
+    fr: 'Forcer la fermeture de tous les onglets',
+    de: 'Schließen aller Tabs erzwingen',
+  },
+  'Mostrar no painel de coleções': {
+    es: 'Mostrar en el panel de colecciones',
+    fr: 'Afficher dans le panneau des collections',
+    de: 'In der Sammlungsleiste anzeigen',
+  },
+  'Requisições com alterações não salvas: {0}.': {
+    es: 'Solicitudes con cambios sin guardar: {0}.',
+    fr: 'Requêtes avec des modifications non enregistrées : {0}.',
+    de: 'Anfragen mit ungespeicherten Änderungen: {0}.',
+  },
   'Executar coleção': {
     es: 'Ejecutar colección',
     fr: 'Exécuter la collection',
